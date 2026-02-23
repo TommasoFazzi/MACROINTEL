@@ -784,7 +784,10 @@ TITOLO: [titolo descrittivo, max 8 parole, in italiano, specifico e informativo]
 RIASSUNTO: [riassunto di 3-5 frasi che descrive la narrativa principale]"""
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(
+                prompt,
+                request_options={"timeout": 60}
+            )
             text = response.text.strip()
 
             # Parse response
