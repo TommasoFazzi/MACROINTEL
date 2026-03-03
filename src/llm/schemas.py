@@ -6,7 +6,8 @@ Sprint 2.2: Full schema with nested models (trade signals, impact scores)
 """
 
 from pydantic import BaseModel, Field, ValidationError
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Dict, Any
+from enum import Enum
 
 
 class IntelligenceReportMVP(BaseModel):
@@ -445,3 +446,36 @@ class MacroAnalysisResult(BaseModel):
                 "watch_items": ["HY spreads", "Yield curve flattening"]
             }
         }
+
+
+# ─── Oracle 2.0 Schemas ───────────────────────────────────────────────────────
+
+class QueryIntent(str, Enum):
+    FACTUAL = "factual"
+    ANALYTICAL = "analytical"
+    NARRATIVE = "narrative"
+    MARKET = "market"
+    COMPARATIVE = "comparative"
+
+
+class QueryComplexity(str, Enum):
+    SIMPLE = "simple"
+    MEDIUM = "medium"
+    COMPLEX = "complex"
+
+
+class ExecutionStep(BaseModel):
+    tool_name: str
+    parameters: Dict[str, Any]
+    is_critical: bool = True
+    description: str = ""
+
+
+class QueryPlan(BaseModel):
+    intent: QueryIntent
+    complexity: QueryComplexity
+    tools: List[str]
+    execution_steps: List[ExecutionStep]
+    estimated_time: float
+    requires_decomposition: bool = False
+    sub_queries: Optional[List[str]] = None

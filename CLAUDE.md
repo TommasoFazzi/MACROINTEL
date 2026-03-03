@@ -106,14 +106,17 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 - `src/nlp/processing.py` (~610 lines) — NLP pipeline: cleaning, chunking, NER, embeddings
 - `src/nlp/relevance_filter.py` — LLM-based article relevance classification (Gemini)
 - `src/integrations/openbb_service.py` (~1026 lines) — OpenBB financial data integration
-- `src/llm/oracle_engine.py` (~566 lines) — Intelligence scoring engine
-- `src/api/main.py` + `src/api/auth.py` + `src/api/routers/` — FastAPI backend: X-API-Key auth (`secrets.compare_digest`), CORS, slowapi rate limiting, routers for dashboard/reports/stories/map
+- `src/llm/oracle_engine.py` (~566 lines) — Oracle 1.0 RAG chat engine (backward-compat, used by Streamlit HITL)
+- `src/llm/oracle_orchestrator.py` — **Oracle 2.0 main coordinator**: ToolRegistry + QueryRouter + ConversationMemory + caching + LLM synthesis + anti-hallucination; `get_oracle_orchestrator_singleton()` for FastAPI
+- `src/llm/query_router.py` — Intent classification (Gemini 2.5 Flash) + QueryPlan generation; double-layer SQL injection defense
+- `src/llm/tools/` — Tool package: RAGTool, SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool
+- `src/api/main.py` + `src/api/auth.py` + `src/api/routers/` — FastAPI backend: X-API-Key auth (`secrets.compare_digest`), CORS (GET+POST), slowapi rate limiting, routers for dashboard/reports/stories/map/**oracle**
 
 ### Web Platform (Next.js)
 
 Located in `web-platform/`. Uses Next.js 16 App Router, React 19, Tailwind CSS 4, Shadcn/ui (Radix), Mapbox GL for intelligence map, **react-force-graph-2d** for narrative graph visualization, SWR for data fetching, Framer Motion for animations.
 
-**Routes:** `/` (landing), `/dashboard` (reports list), `/dashboard/report/[id]` (detail), `/map` (geospatial intelligence map), **`/stories` (narrative storyline graph)**
+**Routes:** `/` (landing), `/dashboard` (reports list), `/dashboard/report/[id]` (detail), `/map` (geospatial intelligence map), **`/stories` (narrative storyline graph)**, **`/oracle` (Oracle 2.0 chat)**
 
 **API communication:** Frontend → FastAPI backend (`src/api/main.py`) with `X-API-Key` header authentication.
 
@@ -183,7 +186,10 @@ When updating documentation, always check for and update context.md files in sub
 - **DB views:** `v_active_storylines` and `v_storyline_graph` are the primary data sources for API and report narrative context.
 - **UTF-8 surrogate bytes:** Web scraping can produce invalid UTF-8 bytes (e.g. truncated multibyte sequences) that PostgreSQL rejects. `database.py` has `_sanitize_text()` applied in `save_article()`. `narrative_processor.py` `_evolve_narrative_summary()` has a fallback query without `LEFT(full_text, 200)` snippet on encoding error.
 - **generate_content() hang:** With `transport='rest'`, calling `generate_content()` without `request_options={"timeout": N}` causes ~900s hang on network issues. Always specify timeout (30s for 2.0-flash, 60s for 2.5-flash).
-- **Gemini model split:** NLP layer (`narrative_processor.py`, `relevance_filter.py`) → `gemini-2.0-flash` (speed-critical, structured tasks); LLM layer (`report_generator.py`, `query_analyzer.py`, `oracle_engine.py`) → `gemini-2.5-flash` (deep reasoning).
+- **Gemini model split:** NLP layer (`narrative_processor.py`, `relevance_filter.py`) → `gemini-2.0-flash` (speed-critical, structured tasks); LLM layer (`report_generator.py`, `query_analyzer.py`, `oracle_engine.py`, `oracle_orchestrator.py`, `query_router.py`) → `gemini-2.5-flash` (deep reasoning).
+- **Oracle 2.0 singleton:** `get_oracle_orchestrator_singleton()` in `oracle_orchestrator.py` is thread-safe (double-checked locking). The singleton holds 400MB embedding model and LLM connection — never re-initialize per request.
+- **SQLTool safety layers:** sqlparse token-level detection → forbidden keywords → max 3 JOINs → LIMIT enforcement → EXPLAIN cost check (≤10000) → 5s `statement_timeout`. SQLTool's `_execute` wraps all in BaseTool.execute() which catches all exceptions.
+- **oracle_query_log table:** Migration `013_oracle_query_log.sql`. If table doesn't exist, `log_oracle_query()` in `database.py` silently no-ops (non-critical).
 - **Migrations are manual:** SQL files in `migrations/` applied via `psql` or `load_to_database.py --init-only`.
 - **CI test config:** GitHub Actions test step needs `GEMINI_API_KEY: "ci-fake-key-for-unit-tests"` env var + `--ignore=tests/test_sprint2_full.py` (e2e test requiring real DB).
 

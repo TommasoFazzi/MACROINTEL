@@ -176,7 +176,8 @@ JSON OUTPUT:"""
                     "response_mime_type": "application/json",
                     "temperature": 0.1,  # Very low for deterministic extraction
                     "max_output_tokens": 500  # Short response expected
-                }
+                },
+                request_options={"timeout": 30}
             )
 
             raw_output = response.text

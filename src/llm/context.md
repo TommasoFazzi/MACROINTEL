@@ -24,14 +24,44 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Temporal constraints, entity filters, category filters
   - Uses Gemini Flash for low latency (<500ms)
 
-- `oracle_engine.py` - Hybrid RAG chat engine
-  - `OracleEngine` class - Interactive Q&A over intelligence database
+- `oracle_engine.py` - Oracle 1.0 hybrid RAG chat engine (backward-compatible)
+  - `OracleEngine` class - Interactive Q&A, used by Streamlit HITL dashboard
   - Three search modes: `both`, `factual`, `strategic`
   - XML-like context injection for anti-hallucination
+
+- `oracle_orchestrator.py` - **Oracle 2.0 main coordinator** (new)
+  - `OracleOrchestrator` class - Entry point for all Oracle 2.0 queries
+  - Manages: ToolRegistry (5 tools), QueryRouter, ConversationMemory, caching, LLM synthesis
+  - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
+  - `TTLCache` for intent (10min), SQL results (5min), embeddings (1h)
+  - Anti-hallucination guard: returns structured "no data found" when all tools return empty
+  - Logs queries to `oracle_query_log` DB table
+  - `get_oracle_orchestrator_singleton()` — lazy thread-safe singleton
+
+- `query_router.py` - **Oracle 2.0 query routing** (new)
+  - `QueryRouter` class - Intent classification (Gemini 2.5 Flash, JSON mode) + QueryPlan
+  - 5 intent types: FACTUAL, ANALYTICAL, NARRATIVE, MARKET, COMPARATIVE
+  - 3 complexity levels: SIMPLE, MEDIUM, COMPLEX (rule-based heuristic)
+  - Double-layer SQL injection defense: `_sanitize_user_query()` before LLM + SQLTool validates after
+  - Intent cache via TTLCache (10min)
+
+- `conversation_memory.py` - **Oracle 2.0 conversation context** (new)
+  - `ConversationContext` class - deque buffer (maxlen=10), entity tracking, follow-up detection
+  - In-memory only, TTL managed by OracleOrchestrator cleanup thread
+
+- `tools/` - **Oracle 2.0 tool registry** (new package)
+  - `base.py` - `BaseTool` ABC + `ToolResult` Pydantic model
+  - `registry.py` - `ToolRegistry` with lazy instantiation
+  - `rag_tool.py` - `RAGTool` - refactors oracle_engine.py hybrid search logic
+  - `sql_tool.py` - `SQLTool` - LLM-generated SQL with 5-layer safety (sqlparse, forbidden keywords, max 3 JOINs, LIMIT enforcement, EXPLAIN cost check ≤10000, 5s timeout)
+  - `aggregation_tool.py` - `AggregationTool` - pre-parametrized stats (trend_over_time, top_n, distribution, statistics)
+  - `graph_tool.py` - `GraphTool` - recursive CTE graph traversal on `storyline_edges`
+  - `market_tool.py` - `MarketTool` - trade_signals and macro_indicators analysis
 
 - `schemas.py` - Pydantic schemas for structured LLM output
   - `IntelligenceReportMVP`, `IntelligenceReport`, `TradeSignal`, `ImpactScore`
   - `MacroCondensedContext`, `MacroDashboardItem`, `ExtractedFilters`
+  - **Oracle 2.0 schemas**: `QueryIntent`, `QueryComplexity`, `ExecutionStep`, `QueryPlan`
 
 ## Dependencies
 
@@ -41,6 +71,9 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - `pydantic` - Structured output validation
   - `sentence-transformers` - Embeddings and Cross-Encoder reranking
   - `numpy` - Vector operations
+  - `sqlparse` - Safe SQL parsing for SQLTool (token-level keyword detection)
+  - `tenacity` - LLM retry with exponential backoff (2 attempts, 2–10s wait)
+  - `cachetools` - TTLCache for intent/SQL/embedding caching
 
 ## Data Flow
 

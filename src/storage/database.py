@@ -1921,6 +1921,48 @@ class DatabaseManager:
 
         return fused
 
+    # ===================================================================
+    # Oracle 2.0 — Query Logging
+    # ===================================================================
+
+    def log_oracle_query(
+        self,
+        session_id: str,
+        query: str,
+        intent: str,
+        complexity: str,
+        tools_used: list,
+        execution_time: float,
+        success: bool,
+        metadata: dict = None,
+    ):
+        """Insert a record into oracle_query_log. Silently no-ops if table doesn't exist."""
+        import json as _json
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO oracle_query_log
+                            (session_id, query, intent, complexity, tools_used,
+                             execution_time, success, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            session_id,
+                            query,
+                            intent,
+                            complexity,
+                            tools_used,
+                            execution_time,
+                            success,
+                            _json.dumps(metadata or {}),
+                        ),
+                    )
+        except Exception as e:
+            # Non-critical — log silently
+            logger.debug(f"log_oracle_query failed: {e}")
+
 
 if __name__ == "__main__":
     # Example usage

@@ -62,8 +62,16 @@ See `components/StorylineGraph/context.md` for full detail.
 - `DashboardSkeleton.tsx` - Loading skeletons
 - `ErrorState.tsx` - Error handling states
 
+#### Oracle Chat Components (`app/oracle/page.tsx`)
+- `OraclePage` — `'use client'`, 2-column layout: chat + sources sidebar
+  - `UserBubble` / `AssistantBubble` (react-markdown rendering with custom styles)
+  - `TypingIndicator` — 3-dot bouncing animation while loading
+  - `QueryPlanBadges` — shows intent + complexity + tool badges per assistant message
+  - `SourceCard` — shows REPORT/ARTICOLO badge, similarity %, preview
+  - Suggestion chips on empty state; auto-scroll to latest message
+
 #### Landing Components (`components/landing/`)
-- `Navbar.tsx` - Navigation with links to Dashboard, **Storylines**, Intelligence Map
+- `Navbar.tsx` - Navigation with links to Dashboard, **Storylines**, Intelligence Map, **Oracle**
 - `Hero.tsx`, `Features.tsx`, `Footer.tsx` - Landing page sections
 
 #### UI Components (`components/ui/`)
@@ -80,18 +88,26 @@ See `components/StorylineGraph/context.md` for full detail.
 - `tsconfig.json` - TypeScript config
 
 ### API Proxy (`app/api/proxy/[...path]/route.ts`)
-Next.js Route Handler that forwards GET requests from the browser to the FastAPI backend without exposing credentials to the client.
+Next.js Route Handler that forwards GET/POST requests from the browser to the FastAPI backend without exposing credentials to the client.
 
 - **URL pattern**: `GET /api/proxy/<path...>` → `GET http://<INTELLIGENCE_API_URL>/api/v1/<path...>`
-- **Security**: Path traversal rejection (`..`, leading `/`); prefix whitelist (`dashboard`, `reports`, `stories`, `map`)
+- **POST support**: Only `oracle/*` paths allowed via POST (120s timeout)
+- **Security**: Path traversal rejection (`..`, leading `/`); prefix whitelist (`dashboard`, `reports`, `stories`, `map`, `oracle`)
 - **Auth header**: Adds `X-API-Key: <INTELLIGENCE_API_KEY>` to every upstream request (server-side env var only, never in browser bundle)
-- **Query string**: Forwarded verbatim to upstream
-- **Timeout**: 300 s (`AbortController`) → 504 on abort, 502 on connection failure
+- **Query string**: Forwarded verbatim to upstream (GET only)
+- **Timeout**: GET = 300 s, POST = 120 s (`AbortController`) → 504 on abort, 502 on connection failure
 - **Env vars consumed**: `INTELLIGENCE_API_URL` (default `http://localhost:8000`), `INTELLIGENCE_API_KEY`
 
 ### Types & Hooks
 - `types/entities.ts` - Entity TypeScript interfaces
 - `types/dashboard.ts` - Dashboard TypeScript interfaces
+- **`types/oracle.ts`** - Oracle 2.0 TypeScript interfaces:
+  - `OracleSource`, `QueryPlan`, `ExecutionStep`, `OracleResponse`, `OracleChatMessage`, `OracleChatFilters`
+- **`hooks/useOracleChat.ts`** - Oracle chat state management:
+  - `useOracleChat()` → `{ messages, isLoading, error, sendMessage, clearMessages, lastAssistantMessage }`
+  - Stable `session_id` via `crypto.randomUUID()` (persists within browser session, reset on `clearMessages`)
+  - POST to `/api/proxy/oracle/chat` with 120s `AbortController` timeout
+  - Optimistic user message insertion before API response
 - **`types/stories.ts`** - Storyline graph TypeScript interfaces:
   - `NarrativeStatus` — `'emerging' | 'active' | 'stabilized'`
   - `StorylineNode` — id, title, summary, category, narrative_status, momentum_score, article_count, key_entities, start_date, last_update, days_active
@@ -167,4 +183,5 @@ npm run dev
 #   http://localhost:3000/stories   - Storyline graph
 #   http://localhost:3000/map       - Tactical intelligence map
 #   http://localhost:3000/dashboard - Dashboard with reports
+#   http://localhost:3000/oracle    - Oracle 2.0 chat
 ```

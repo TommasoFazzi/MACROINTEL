@@ -433,8 +433,9 @@ RISPOSTA DETTAGLIATA:"""
             )
 
             response = self.llm.generate_content(
-                prompt, 
-                generation_config=gen_config
+                prompt,
+                generation_config=gen_config,
+                request_options={"timeout": 60}
             )
             answer = response.text
 

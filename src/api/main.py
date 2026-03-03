@@ -20,7 +20,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
-from src.api.routers import dashboard, reports, stories
+from src.api.routers import dashboard, reports, stories, oracle
 from src.api.auth import verify_api_key
 
 logger = get_logger(__name__)
@@ -47,7 +47,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
@@ -55,6 +55,7 @@ app.add_middleware(
 app.include_router(dashboard.router)
 app.include_router(reports.router)
 app.include_router(stories.router)
+app.include_router(oracle.router)
 
 # Initialize database
 db = DatabaseManager()
