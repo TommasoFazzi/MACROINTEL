@@ -97,6 +97,11 @@ def main():
         action='store_true',
         help='With --macro-first, only extract report-level signals (faster, lower cost)'
     )
+    parser.add_argument(
+        '--sequential',
+        action='store_true',
+        help='Use sequential 5-call architecture (Cyber→Tech→Geo→Econ→Synthesis) instead of monolithic LLM call'
+    )
 
     args = parser.parse_args()
 
@@ -166,6 +171,91 @@ def main():
     logger.info(f"\n[STEP 2] Focus areas:")
     for area in focus_areas:
         logger.info(f"  - {area}")
+
+    # Check if sequential 5-call architecture is enabled
+    if args.sequential:
+        logger.info("\n" + "=" * 80)
+        logger.info("[SEQUENTIAL MODE] 5-call architecture: Cyber→Tech→Geo→Econ→Synthesis")
+        if from_time or to_time:
+            logger.info(f"Time window: {from_time or 'N/A'} → {to_time or 'N/A'}")
+        else:
+            logger.info(f"Time window: last {args.days} day(s)")
+        logger.info("=" * 80)
+
+        # Fetch macro context (same pattern as generate_report())
+        import os as _os
+        from datetime import date as _date
+        macro_dashboard_text = ""
+        macro_context_text = ""
+
+        try:
+            from src.integrations.openbb_service import OpenBBMarketService
+            openbb_svc = OpenBBMarketService(generator.db)
+            today = _date.today()
+            openbb_svc.ensure_daily_macro_data(today)
+            macro_context_text = openbb_svc.get_macro_context_text(today)
+            if macro_context_text:
+                macro_result = generator._generate_macro_analysis(macro_context_text, today)
+                if macro_result.get('success') or macro_result.get('result'):
+                    macro_dashboard_text = generator._format_macro_dashboard(
+                        macro_result.get('result', {}), today
+                    )
+                    logger.info(f"✓ Macro dashboard ready ({len(macro_dashboard_text)} chars)")
+        except Exception as e:
+            logger.warning(f"Macro context unavailable (non-blocking): {e}")
+
+        try:
+            report = generator.generate_report_sequential(
+                focus_areas=focus_areas,  # ← FIX: passa le focus_areas definite sopra
+                days=args.days,
+                from_time=from_time,
+                to_time=to_time,
+                top_articles=args.top_articles,
+                min_similarity=args.min_similarity,
+                min_fallback=args.min_articles,
+                macro_dashboard_text=macro_dashboard_text,
+                macro_context_text=macro_context_text,
+            )
+        except Exception as e:
+            logger.error(f"Sequential pipeline failed: {e}", exc_info=True)
+            return 1
+
+        if not report['success']:
+            logger.error(f"Sequential pipeline failed: {report.get('error')}")
+            return 1
+
+        # Save report to file
+        if not args.no_save:
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                out_dir = _Path(args.output_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                report_path = out_dir / f"sequential_report_{timestamp}.md"
+                report_path.write_text(report['report_text'], encoding='utf-8')
+                logger.info(f"✓ Report saved to {report_path}")
+            except Exception as e:
+                logger.error(f"Error saving report: {e}")
+
+        # Save to database (pass full report dict — same keys as generate_report())
+        try:
+            report_id = generator.db.save_report(report)
+            if report_id:
+                logger.info(f"✓ Report saved to database with ID: {report_id}")
+        except Exception as e:
+            logger.warning(f"Could not save report to database: {e}")
+
+        print("\n" + "=" * 80)
+        print("SEQUENTIAL INTELLIGENCE REPORT")
+        print("=" * 80)
+        print(report['report_text'])
+        meta = report.get('metadata', {})
+        logger.info(f"\n✓ Sequential pipeline complete! "
+                    f"articles={meta.get('recent_articles_count', '?')} "
+                    f"chunks={meta.get('historical_chunks_count', '?')} "
+                    f"storylines={meta.get('narrative_storylines', '?')}")
+        return 0
 
     # Check if macro-first pipeline is enabled
     if args.macro_first:

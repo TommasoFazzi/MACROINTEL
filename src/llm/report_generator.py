@@ -122,6 +122,9 @@ class ReportGenerator:
             total_tickers = sum(len(tickers) for tickers in self.ticker_whitelist.values())
             logger.info(f"  Ticker whitelist: {total_tickers} tickers loaded across {len(self.ticker_whitelist)} categories")
 
+        # Check hybrid search availability (Migration 007)
+        self.hybrid_search_available = self._check_hybrid_search_support()
+
         logger.info(f"✓ Report generator initialized with {model_name}")
         if enable_query_expansion:
             logger.info(f"  Query expansion: ENABLED ({expansion_variants} variants, dedup threshold: {dedup_similarity})")
@@ -169,6 +172,29 @@ class ReportGenerator:
             logger.error(f"Failed to load ticker whitelist: {e}")
             return {}
 
+    def _check_hybrid_search_support(self) -> bool:
+        """
+        Check if hybrid search is available (requires Migration 007).
+        Cache result to avoid repeated warning logs.
+
+        Returns:
+            True if hybrid_search() can be used, False otherwise
+        """
+        try:
+            # Test query with minimal overhead
+            self.db.hybrid_search(
+                query="test",
+                query_embedding=[0.0] * 384,
+                top_k=1,
+                vector_top_k=1,
+                keyword_top_k=1
+            )
+            logger.info("  Hybrid search (BM25 + vector): AVAILABLE")
+            return True
+        except Exception:
+            logger.warning("  Hybrid search: UNAVAILABLE (Migration 007 not applied) — using semantic_search fallback")
+            return False
+
     def _format_ticker_whitelist(self) -> str:
         """
         Format ticker whitelist for prompt context
@@ -208,12 +234,23 @@ class ReportGenerator:
         # Generate embedding for query
         query_embedding = self.nlp.embedding_model.encode(query).tolist()
 
-        # Semantic search in database
-        results = self.db.semantic_search(
-            query_embedding=query_embedding,
-            top_k=top_k,
-            category=category
-        )
+        # Hybrid search (vector + BM25 RRF) — cached availability check
+        if self.hybrid_search_available:
+            results = self.db.hybrid_search(
+                query=query,
+                query_embedding=query_embedding,
+                top_k=top_k,
+                vector_top_k=top_k * 3,
+                keyword_top_k=top_k * 3,
+                fusion_method="rrf",
+            )
+        else:
+            # Fallback to semantic search (Migration 007 not applied)
+            results = self.db.semantic_search(
+                query_embedding=query_embedding,
+                top_k=top_k,
+                category=category,
+            )
 
         logger.info(f"✓ Found {len(results)} relevant chunks (similarity threshold applied)")
         return results
@@ -1509,10 +1546,19 @@ Respond with JSON only:"""
 
         # Step 2d: Reranking (if enabled)
         if self.enable_reranking and unique_rag_results and rag_queries:
-            # Rerank using the original (first) query
-            primary_query = rag_queries[0]
+            # Rerank using a composite query that balances coverage and coherence:
+            # - Full first query for semantic anchor
+            # - Top 5 keywords from each additional query for breadth
+            primary = rag_queries[0]
+            secondary_keywords = []
+            for q in rag_queries[1:4]:  # Up to 3 additional queries
+                words = q.split()[:5]  # Top 5 keywords each
+                secondary_keywords.extend(words)
+            
+            composite_query = primary + " " + " ".join(secondary_keywords)
+            
             unique_rag_results = self._rerank_chunks(
-                query=primary_query,
+                query=composite_query,
                 chunks=unique_rag_results,
                 top_k=self.reranking_top_k * len(rag_queries)  # Scale by number of queries
             )
@@ -1681,9 +1727,11 @@ If no storyline data is provided, skip this section entirely.
         try:
             response = self.model.generate_content(
                 prompt,
-                generation_config={
-                    "temperature": 0.35,  # Slightly higher for narrative flow
-                }
+                generation_config=genai.GenerationConfig(
+                    temperature=0.35,  # Slightly higher for narrative flow
+                    max_output_tokens=8192,
+                ),
+                request_options={"timeout": 120},
             )
             report_text = response.text
             logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
@@ -2683,6 +2731,537 @@ Respond with JSON only:"""
         logger.info(f"Token savings (condensed context): ~{5000 - condensed_result.get('token_estimate', 500)} tokens/article")
 
         return report
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Sequential 5-call architecture (B, C, D, E, F2/F3, G)
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── B: Standardized LLM call helper ───────────────────────────────────
+
+    def _call_llm(
+        self,
+        prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 8192,
+        timeout: int = 120,
+        label: str = "LLM",
+        max_retries: int = 2,
+    ) -> str:
+        """
+        Standardized LLM call with timeout, max_tokens ceiling, and exponential retry.
+        Prevents 900s hangs, truncation, and rate-limit failures.
+        """
+        import time
+        last_error: Exception = RuntimeError("No attempt made")
+
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    wait = 2 ** (attempt - 1)  # 1s, 2s, 4s ...
+                    logger.warning(
+                        f"  [{label}] retry {attempt}/{max_retries} after {wait}s "
+                        f"(prev error: {last_error})"
+                    )
+                    time.sleep(wait)
+
+                logger.info(
+                    f"  [{label}] prompt={len(prompt):,} chars | "
+                    f"T={temperature} | max_tokens={max_tokens} | timeout={timeout}s"
+                )
+                response = self.model.generate_content(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    ),
+                    request_options={"timeout": timeout},
+                )
+                result = response.text
+                logger.info(f"  [{label}] ✓ {len(result.split()):,} words")
+                return result
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"  [{label}] attempt {attempt + 1} failed: {e}")
+
+        raise last_error
+
+    # ── C: Domain section definitions ─────────────────────────────────────
+
+    _DAILY_SECTION_DEFS: Dict[int, Dict] = {
+        1: {
+            "header": "**Cybersecurity**",
+            "word_target": "200-250 words",
+            "domain_rag_query": (
+                "cybersecurity APT ransomware critical infrastructure attack zero-day "
+                "malware attribution nation-state cyber espionage supply chain compromise"
+            ),
+            "focus": (
+                "- Active threat actors: APT groups, ransomware gangs, state-sponsored operators — "
+                "name them by group and attribution confidence\n"
+                "- Attack vectors, targeted sectors (energy, finance, gov, defense, telecoms)\n"
+                "- Attribution quality: TTPs overlap, infrastructure reuse, government indictments\n"
+                "- Defensive actions: patches, takedowns, law enforcement — specific actors + timelines\n"
+                "- New CVEs or zero-days exploited in the wild"
+            ),
+            "requirements": (
+                "- ATTRIBUTION: always qualify with confidence level — 'attributed to [Group] "
+                "[High/Medium/Low confidence] based on [TTP overlap/infrastructure/indictment]'\n"
+                "- OPERATIONAL INTENT: distinguish espionage vs. pre-positioning for sabotage "
+                "vs. financial gain — each has different strategic implications for the reader\n"
+                "- CAUSAL CHAIN: connect each attack to its geopolitical context "
+                "('linked to X-Y bilateral tensions') or economic motive\n"
+                "- SPECIFICITY: malware family names, CVE numbers if confirmed, named sectors — "
+                "never 'cyberattack on critical infrastructure' without specifics\n"
+                "- SOURCE FIDELITY: 'attributed to' ≠ 'confirmed as'; 'intrusion detected' ≠ 'attack succeeded'\n"
+                "- CHAIN-OF-THOUGHT: Before writing each paragraph, reason step by step — "
+                "identify the threat actor, connect to geopolitical motive, then assess operational impact. "
+                "Do not jump to conclusions.\n"
+                "**KEY TAKEAWAYS** (append 3 bullets at the very end of this section):\n"
+                "  • Top threat actor + attributed intent (confidence level)\n"
+                "  • Most significant attack vector or CVE exploited in the wild\n"
+                "  • Primary defensive/policy implication for the reader"
+            ),
+        },
+        2: {
+            "header": "**Technology**",
+            "word_target": "200-250 words",
+            "domain_rag_query": (
+                "semiconductor chip AI artificial intelligence quantum computing dual-use "
+                "export controls TSMC ASML strategic technology competition supply chain"
+            ),
+            "focus": (
+                "- Semiconductor supply chain: fab capacity, TSMC/Samsung/Intel/ASML moves, "
+                "rare earth dependencies, advanced packaging\n"
+                "- AI strategic competition: frontier model deployments, military AI, autonomous systems, "
+                "compute clusters, export control enforcement\n"
+                "- Dual-use technology transfers, BIS enforcement, entity list updates\n"
+                "- Quantum, space, hypersonics — verified milestones with strategic implications"
+            ),
+            "requirements": (
+                "- STRATEGIC FRAME: for every tech development → who gains what strategic advantage "
+                "and on what timeline? Never describe tech in isolation\n"
+                "- CHOKEPOINTS: identify critical single-point dependencies "
+                "('ASML controls 100% of EUV — without it, no 7nm+ chips outside ASML customer base')\n"
+                "- TIMELINE: explicitly distinguish 'commercially deployed now', '2-5 years', "
+                "'decade+' — no vague 'could soon'\n"
+                "- ECONOMIC-SECURITY NEXUS: connect R&D milestones to defense procurement, "
+                "export controls, or supply chain shifts\n"
+                "- SOURCE FIDELITY: 'prototype tested' ≠ 'operational'; 'announced' ≠ 'deployed'\n"
+                "- CHAIN-OF-THOUGHT: Before writing each paragraph, reason step by step — "
+                "identify the technology actor, connect to strategic advantage or control mechanism, "
+                "then assess timeline and economic-security implication. Do not jump to conclusions.\n"
+                "**KEY TAKEAWAYS** (append 3 bullets at the very end of this section):\n"
+                "  • Critical chokepoint or single-point dependency identified today\n"
+                "  • Strategic actor gaining or losing advantage + timeline\n"
+                "  • Investment/policy implication (export controls, procurement, supply chain)"
+            ),
+        },
+        3: {
+            "header": "**Geopolitical Events**",
+            "word_target": "200-250 words",
+            "domain_rag_query": (
+                "geopolitical military conflict great power competition NATO China Russia "
+                "Indo-Pacific Middle East escalation regional security proxy war territorial"
+            ),
+            "focus": (
+                "- Military posture shifts: troop movements, exercises with strategic signaling, "
+                "procurement decisions, doctrine changes\n"
+                "- Great power competition dynamics: US-China, Russia-NATO, regional hegemony\n"
+                "- Peripheral strategic events (Myanmar, Horn of Africa, Central Asia, Arctic, "
+                "Pacific islands) — flag and explain geographic/resource amplifier\n"
+                "- Escalation/de-escalation: what SPECIFICALLY changed vs. last week's trajectory?"
+            ),
+            "requirements": (
+                "- PRIORITIZATION: use implicit scoring — Immediate Impact × Escalation Potential × "
+                "Actor Weight. Surface the reasoning ('this matters because X actor controls Y chokepoint')\n"
+                "- PERIPHERAL STRATEGIC BONUS: for events in Myanmar/Horn of Africa/Central Asia/Arctic — "
+                "explain why seemingly minor location has outsized strategic significance\n"
+                "- ACTOR MOTIVATIONS: never impersonal — 'Russia is doing X because Y', "
+                "not 'tensions are rising in the region'\n"
+                "- PATTERN BREAK: explicitly flag if event breaks a 5+ year pattern vs. confirms trend. "
+                "Pattern breaks score highest in priority\n"
+                "- SOURCE FIDELITY: 'military exercises near border' ≠ 'invasion preparation'; "
+                "'diplomatic signal' ≠ 'policy decision'\n"
+                "- CHAIN-OF-THOUGHT: Before writing each paragraph, reason step by step — "
+                "identify the actor and their motivation, connect to regional power dynamics or alliance structure, "
+                "then assess escalation potential. Do not jump to conclusions.\n"
+                "**KEY TAKEAWAYS** (append 3 bullets at the very end of this section):\n"
+                "  • Primary actor + stated vs. actual motivation\n"
+                "  • Pattern break or trend confirmation (flag explicitly)\n"
+                "  • Escalation/de-escalation signal + next concrete indicator to watch"
+            ),
+        },
+        4: {
+            "header": "**Economic Events**",
+            "word_target": "200-250 words",
+            "domain_rag_query": (
+                "sanctions energy markets supply chain commodity prices trade policy "
+                "central bank monetary policy inflation economic coercion OPEC"
+            ),
+            "focus": (
+                "- Sanctions: new designations, evasion mechanisms (name intermediaries/vessels "
+                "if publicly confirmed), enforcement actions and gaps\n"
+                "- Energy: OPEC production decisions, LNG dynamics, oil price drivers, "
+                "pipeline geopolitics, transition policy\n"
+                "- Supply chain stress: critical materials, semiconductor shortage, "
+                "shipping route disruptions, strategic stockpiles\n"
+                "- Macro: central bank decisions with geopolitical drivers, sovereign debt risk "
+                "in conflict zones, currency stress"
+            ),
+            "requirements": (
+                "- CAUSAL CHAIN: always trace economic event → political consequence → security implication. "
+                "Full chain required, not just the headline\n"
+                "- DATA PRECISION: note reference period for any figure "
+                "('inflation at X% as of [month/quarter from source]' — not presented as real-time)\n"
+                "- SANCTIONS MECHANICS: explain HOW evasion works (which jurisdiction, which instrument) — "
+                "not just that evasion is occurring\n"
+                "- GEOPOLITICAL NEXUS: connect economic pressure to regime stability, proxy funding "
+                "capacity, or military procurement constraints\n"
+                "- SOURCE FIDELITY: 'proposed tariff' ≠ 'implemented'; 'announced' ≠ 'in force today'\n"
+                "- CHAIN-OF-THOUGHT: Before writing each paragraph, reason step by step — "
+                "identify the economic event, trace the causal chain to political consequence, "
+                "then assess security implication. Do not jump to conclusions.\n"
+                "**KEY TAKEAWAYS** (append 3 bullets at the very end of this section):\n"
+                "  • Primary economic pressure point + mechanism (sanctions, energy, trade)\n"
+                "  • Causal chain: economic event → political consequence → security implication\n"
+                "  • Market signal: ticker/commodity/currency most directly impacted with causal justification"
+            ),
+        },
+    }
+
+    # ── D: Epistemic constants ─────────────────────────────────────────────
+
+    _DAILY_GUARDRAIL = (
+        "\n**GUARDRAIL**: If no material developments exist for this domain today, write:\n"
+        "> 'No significant developments in this reporting period for [domain].'\n"
+        "Add only the most recent relevant historical context from RAG sources.\n"
+        "Do NOT pad with generic background. Stop when the section's content is exhausted.\n"
+    )
+
+    _DAILY_CITATION_RULES = (
+        "**CITATION**: Every factual claim → [Article N]. "
+        "Historical context → [RAG: Title, Date]. Analytical inference → [Assessment].\n"
+        "**CONFIDENCE**: [High confidence] = ≥2 independent sources; "
+        "[Medium confidence] = single credible source; [Unverified/Reported] = single source.\n"
+        "**EPISTEMIC DISCIPLINE**:\n"
+        "  • VERIFIED FACT (named source, directly stated): cite plainly → [Article N]\n"
+        "  • SINGLE SOURCE / UNVERIFIED: → 'reportedly', 'according to [Source]', 'allegedly'\n"
+        "  • ASSESSMENT (analytical inference): → 'appears to', 'suggests', 'likely', "
+        "'may indicate' → [Assessment]\n"
+        "  • FORECAST: ALWAYS conditional → 'could', 'may', 'if X then Y'. Never certain.\n"
+        "**SOURCE FIDELITY** — FEW-SHOT:\n"
+        "  ✗ 'China seized the disputed zone' → ✓ 'Chinese forces reportedly entered the zone' [Article N]\n"
+        "  ✗ 'The group launched an attack' → ✓ 'The intrusion, attributed to [group] by [researcher], targeted...'\n"
+        "  ✗ 'NATO decided to deploy' → ✓ 'NATO members are in discussions over deployment options'\n"
+        "  Rule: use the source's exact verb. Exercises ≠ invasion. Discussed ≠ decided.\n"
+        "**TEMPORAL**: Date events concretely. Calculate deadlines from event date, not today's date.\n"
+        "**STYLE**: Analytical, neutral. ZERO moral/narrative language: "
+        "'alarming', 'reckless', 'provocative', 'desperate', 'brutal'. "
+        "Report events; do not dramatize.\n"
+    )
+
+    # ── E1: Domain prompt builder ──────────────────────────────────────────
+
+    def _build_daily_domain_prompt(
+        self,
+        section_num: int,
+        shared_context: str,
+        previous_sections: str,
+        report_date: str,
+        start_date: str,
+        macro_summary: str = "",
+    ) -> str:
+        defn = self._DAILY_SECTION_DEFS[section_num]
+        prev_block = ""
+        if previous_sections.strip():
+            prev_block = (
+                "\n**SECTIONS ALREADY WRITTEN** "
+                "(read for cross-domain consistency — do NOT repeat their content):\n"
+                f"{previous_sections.strip()}\n\n---\n"
+            )
+        macro_block = f"\n**MACRO SNAPSHOT**: {macro_summary}\n\n" if macro_summary else ""
+
+        return (
+            "You are a senior intelligence analyst (ISW/RAND/CSIS caliber). "
+            "Write a single section of a daily intelligence brief.\n\n"
+            f"**REPORT DATE**: {report_date} | **ANALYSIS PERIOD**: {start_date} – {report_date}\n"
+            f"{shared_context}"
+            f"{prev_block}"
+            f"{macro_block}"
+            f"**YOUR TASK**: Write ONLY the section below ({defn['word_target']}).\n\n"
+            f"**Focus Areas**:\n{defn['focus']}\n\n"
+            f"**Analytical Requirements**:\n{defn['requirements']}\n\n"
+            f"{self._DAILY_GUARDRAIL}\n"
+            f"{self._DAILY_CITATION_RULES}\n\n"
+            f"Output ONLY this section. Begin directly with \"{defn['header']}\".\n"
+            "Do not add section headers before or after — just the content of this section."
+        )
+
+    # ── E2: Synthesis prompt builder ───────────────────────────────────────
+
+    def _build_daily_synthesis_prompt(
+        self,
+        d1: str,
+        d2: str,
+        d3: str,
+        d4: str,
+        macro_dashboard_text: str,
+        report_date: str,
+        narrative_xml: str,
+    ) -> str:
+        def extract_section_input(text: str, fallback_chars: int = 600) -> str:
+            """Extract **KEY TAKEAWAYS** block if present, else return first fallback_chars chars."""
+            import re
+            match = re.search(r'\*\*KEY TAKEAWAYS\*\*.*?(?=\n\n|\Z)', text, re.DOTALL)
+            if match:
+                return match.group(0).strip()
+            return text[:fallback_chars] + ("\n[...truncated...]" if len(text) > fallback_chars else "")
+
+        return (
+            "You are a senior intelligence analyst. Four domain sections have been written. "
+            "Your task: produce the OPENING and CLOSING sections of today's daily intelligence brief.\n\n"
+            "**DOMAIN SECTIONS** (Key Takeaways extracted from each — synthesize across all four, "
+            "do not repeat their content verbatim):\n\n"
+            f"[CYBERSECURITY]:\n{extract_section_input(d1)}\n\n"
+            f"[TECHNOLOGY]:\n{extract_section_input(d2)}\n\n"
+            f"[GEOPOLITICAL EVENTS]:\n{extract_section_input(d3)}\n\n"
+            f"[ECONOMIC EVENTS]:\n{extract_section_input(d4)}\n\n"
+            f"**MACRO CONTEXT**:\n{macro_dashboard_text or 'Unavailable.'}\n\n"
+            f"**ACTIVE STORYLINES**:\n{narrative_xml or 'No active storylines.'}\n\n"
+            "---\n\n"
+            "Generate EXACTLY the following, using these output markers for assembly:\n\n"
+            "<<ES>>\n"
+            "**Executive Summary**\n"
+            "[200-300 words BLUF. Bold key actors. [Article N] references. "
+            "Cover top development from each domain. Active voice; hedge unverified with 'reportedly'. "
+            "Connect cross-domain dynamics explicitly.]\n"
+            "<<ES_END>>\n\n"
+            "<<CLOSING>>\n"
+            "**Trend Analysis**\n"
+            "[250-300 words. Connect today's events to historical patterns from RAG context and storylines. "
+            "Explicitly state: does each key event CONFIRM or BREAK existing trends? "
+            "Reference momentum shifts in active storylines. "
+            "Focus on second-order effects and 3-6 month trajectory.]\n\n"
+            "---\n\n"
+            "**Actionable Insights: Investment Implications**\n"
+            "[CROSS-VALIDATION: Before writing this section, verify each ticker you plan to mention "
+            "is directly supported by evidence in the DOMAIN SECTIONS KEY TAKEAWAYS above. "
+            "If a ticker lacks a clear causal link to a specific development in D1-D4, omit it.]\n"
+            "[Top 3 developments across all domains. For each:\n"
+            "**Level 1 - Direct Beneficiaries**: specific companies, exact tickers, "
+            "contract/revenue impact, quarter timeline\n"
+            "**Level 2 - Supply Chain & Correlated Markets**: full causal chain "
+            "(event → input shortage → company revision → end market effect)\n"
+            "**Level 3 - Macro Market Impacts**: currencies, bonds, commodities, capital flows\n"
+            "Each signal: tickers, concrete catalyst with figures, timing, next monitor date.]\n\n"
+            "---\n\n"
+            "**Strategic Storyline Tracker**\n"
+            "[Top 5 storylines by momentum. For each:\n"
+            "- **Status**: narrative_status + momentum direction (accelerating/stable/decelerating)\n"
+            "- **Today's Impact**: how today's domain sections specifically advance or challenge this storyline\n"
+            "- **Cross-Domain Links**: connected storylines + intersection meaning\n"
+            "- **Watch Indicators**: next concrete event, metric, or date to monitor]\n"
+            "<<CLOSING_END>>\n\n"
+            f"**TODAY**: {report_date}\n"
+            "Output ONLY the two blocks above (<<ES>>...<<ES_END>> and <<CLOSING>>...<<CLOSING_END>>). "
+            "Active voice; hedge unverified claims. Do not dramatize."
+        )
+
+    # ── F2/F3: Per-domain RAG reranking ───────────────────────────────────
+
+    def _rag_for_domain(
+        self,
+        global_chunks: List[Dict[str, Any]],
+        domain_query: str,
+        top_k: int = 8,
+    ) -> List[Dict[str, Any]]:
+        """
+        Rerank the pre-fetched global RAG pool for a specific domain.
+        CPU-only cross-encoder reranking — no additional DB or embedding calls.
+        """
+        if self.enable_reranking and global_chunks:
+            try:
+                return self._rerank_chunks(domain_query, global_chunks, top_k=top_k)
+            except Exception as e:
+                logger.warning(f"Domain reranking failed ({e}), using top-k fallback")
+                return global_chunks[:top_k]
+        return global_chunks[:top_k]
+
+    # ── G: Sequential 5-call orchestration ────────────────────────────────
+
+    def generate_report_sequential(
+        self,
+        focus_areas: Optional[List[str]] = None,
+        days: int = 1,
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
+        top_articles: int = 60,
+        min_similarity: float = 0.30,
+        min_fallback: int = 10,
+        macro_dashboard_text: str = "",
+        macro_context_text: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Sequential 5-call daily report (replaces single-call generate_report()).
+        Output format: identical to current generate_report() — zero frontend changes required.
+
+        Calls:
+          D1 Cybersecurity    — focused context, no prior sections
+          D2 Technology       — + D1 for cross-domain consistency
+          D3 Geopolitical     — + D1+D2
+          D4 Economic Events  — + D1+D2+D3
+          Synthesis           — KEY TAKEAWAYS(D1-D4) + macro + storylines → ES + closing sections
+        """
+        from datetime import timedelta
+        import re as _re
+
+        now = datetime.now()
+        report_date = now.strftime('%B %d, %Y')
+        start_date = (now - timedelta(days=days)).strftime('%B %d, %Y')
+        datetime_str = now.strftime('%Y-%m-%d %H:%M:%S')
+
+        domain_rag_queries = [d["domain_rag_query"] for d in self._DAILY_SECTION_DEFS.values()]
+
+        # ── STEP 1: Articles ──────────────────────────────────────────────
+        logger.info("\n[SEQ-1] Fetching and filtering articles...")
+        all_articles = self.db.get_recent_articles(
+            days=days, from_time=from_time, to_time=to_time
+        )
+        recent_articles = self.filter_relevant_articles(
+            articles=all_articles,
+            focus_areas=focus_areas or domain_rag_queries,
+            top_n=top_articles,
+            min_similarity=min_similarity,
+            min_fallback=min_fallback,
+        )
+        if not recent_articles:
+            return {"success": False, "error": "No relevant articles found"}
+        logger.info(f"  ✓ {len(recent_articles)} relevant articles")
+
+        # ── STEP 2: Global RAG pool + per-domain reranking ────────────────
+        logger.info("\n[SEQ-2] Fetching global RAG pool (4 domain queries)...")
+        all_rag: List[Dict[str, Any]] = []
+        for q in domain_rag_queries:
+            all_rag.extend(self.get_rag_context(q, top_k=10))
+        global_rag = self.deduplicate_chunks_advanced(all_rag)
+        logger.info(f"  ✓ {len(global_rag)} unique RAG chunks")
+
+        d1_rag = self._rag_for_domain(global_rag, domain_rag_queries[0], top_k=8)
+        d2_rag = self._rag_for_domain(global_rag, domain_rag_queries[1], top_k=8)
+        d3_rag = self._rag_for_domain(global_rag, domain_rag_queries[2], top_k=8)
+        d4_rag = self._rag_for_domain(global_rag, domain_rag_queries[3], top_k=8)
+
+        # ── STEP 2.5: Narrative storylines ────────────────────────────────
+        logger.info("\n[SEQ-2.5] Fetching narrative storylines...")
+        narrative_ctx = self._get_narrative_context(days=days, top_n=10)
+        narrative_xml = self._format_narrative_xml(narrative_ctx)
+
+        # ── STEP 3: Shared context builders ──────────────────────────────
+        articles_text = self.format_recent_articles(recent_articles)
+        macro_summary = macro_context_text[:800] if macro_context_text else ""
+
+        def _section_context(rag_domain: List[Dict[str, Any]]) -> str:
+            return (
+                f"\n**INTELLIGENCE SOURCES** (last {days} day(s)):\n{articles_text}\n\n"
+                f"**HISTORICAL CONTEXT (domain-specific):**\n"
+                f"{self.format_rag_context(rag_domain)}\n\n"
+                f"**ACTIVE STORYLINES:**\n{narrative_xml}\n"
+            )
+
+        # ── STEP 4: Sequential domain calls ──────────────────────────────
+        logger.info("\n[SEQ-4] Sequential domain calls...")
+
+        d1 = self._call_llm(
+            self._build_daily_domain_prompt(1, _section_context(d1_rag), "", report_date, start_date, macro_summary),
+            temperature=0.25, max_tokens=8192, timeout=120, label="D1-Cyber",
+        )
+        d2 = self._call_llm(
+            self._build_daily_domain_prompt(2, _section_context(d2_rag), d1, report_date, start_date, macro_summary),
+            temperature=0.25, max_tokens=8192, timeout=120, label="D2-Tech",
+        )
+        d3 = self._call_llm(
+            self._build_daily_domain_prompt(3, _section_context(d3_rag), d1 + "\n\n" + d2, report_date, start_date, macro_summary),
+            temperature=0.25, max_tokens=8192, timeout=120, label="D3-Geo",
+        )
+        d4 = self._call_llm(
+            self._build_daily_domain_prompt(4, _section_context(d4_rag), d1 + "\n\n" + d2 + "\n\n" + d3, report_date, start_date, macro_summary),
+            temperature=0.25, max_tokens=8192, timeout=120, label="D4-Econ",
+        )
+
+        # ── STEP 5: Synthesis ─────────────────────────────────────────────
+        logger.info("\n[SEQ-5] Synthesis (ES + Trend + Signals + Storylines)...")
+        synthesis_raw = self._call_llm(
+            self._build_daily_synthesis_prompt(d1, d2, d3, d4, macro_dashboard_text, report_date, narrative_xml),
+            temperature=0.2, max_tokens=8192, timeout=150, label="Synthesis",
+        )
+
+        # Split synthesis on markers (fallback: raw text if markers missing)
+        es_match = _re.search(r'<<ES>>(.*?)<<ES_END>>', synthesis_raw, _re.DOTALL)
+        cl_match = _re.search(r'<<CLOSING>>(.*?)<<CLOSING_END>>', synthesis_raw, _re.DOTALL)
+        executive_summary = es_match.group(1).strip() if es_match else synthesis_raw[:1500].strip()
+        closing_sections = cl_match.group(1).strip() if cl_match else synthesis_raw[1500:].strip()
+
+        # ── STEP 6: Assemble — format preservato al 100% ─────────────────
+        sep = "\n\n---\n\n"
+        report_text = (
+            f"# Intelligence Report - {datetime_str}\n\n"
+            f"## Daily Intelligence Briefing\n\n"
+            + (f"{macro_dashboard_text}\n\n---\n\n" if macro_dashboard_text else "")
+            + executive_summary
+            + sep
+            + "**Key Developments by Category**\n\n"
+            + d1.strip() + "\n\n"
+            + d2.strip() + "\n\n"
+            + d3.strip() + "\n\n"
+            + d4.strip()
+            + sep
+            + closing_sections
+        )
+
+        logger.info(f"\n  ✓ Sequential report assembled: {len(report_text.split()):,} words")
+
+        # Build sources in the same format as generate_report() so save_report() / frontend work identically
+        recent_articles_sources = [
+            {
+                "article_id": a.get("id", 0),
+                "title": a.get("title", ""),
+                "link": a.get("link", ""),
+                "source": a.get("source", ""),
+                "published_date": str(a.get("published_date", "")),
+                "relevance_score": a.get("relevance_score") or a.get("similarity"),
+            }
+            for a in recent_articles
+        ]
+        historical_sources = [
+            {
+                "article_id": c.get("article_id", 0),
+                "title": c.get("title", ""),
+                "link": c.get("link", ""),
+                "source": c.get("source", ""),
+                "published_date": str(c.get("published_date", "")),
+                "relevance_score": c.get("similarity"),
+            }
+            for c in global_rag[:20]
+        ]
+
+        return {
+            "success": True,
+            "report_text": report_text,
+            "timestamp": now.isoformat(),
+            "metadata": {
+                "architecture": "sequential_5call",
+                "model_used": self.model.model_name,
+                "recent_articles_count": len(recent_articles),
+                "historical_chunks_count": len(global_rag),
+                "narrative_storylines": len(narrative_ctx.get("storylines", [])),
+                "days_covered": days,
+            },
+            "sources": {
+                "recent_articles": recent_articles_sources,
+                "historical_context": historical_sources,
+            },
+        }
 
 
 if __name__ == "__main__":
