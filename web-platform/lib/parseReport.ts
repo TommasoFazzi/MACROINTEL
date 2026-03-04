@@ -179,9 +179,12 @@ function parseSections(markdown: string): { sections: ReportSection[]; toc: TOCE
     contentBuffer = [];
   }
 
+  // If LLM used ### for top-level sections (no ## present), promote ### to H2
+  const hasH2 = lines.some(l => /^##\s/.test(l) && !/^###\s/.test(l));
+
   for (const line of lines) {
-    const h2Match = line.match(/^##\s+(.+)/);
-    const h3Match = line.match(/^###\s+(.+)/);
+    const h2Match = hasH2 ? line.match(/^##\s+(.+)/) : line.match(/^###\s+(.+)/);
+    const h3Match = hasH2 ? line.match(/^###\s+(.+)/) : line.match(/^####\s+(.+)/);
 
     if (h2Match) {
       flushContent();
