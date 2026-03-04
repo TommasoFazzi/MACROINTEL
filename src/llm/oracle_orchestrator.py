@@ -8,6 +8,7 @@ Entry point for all Oracle 2.0 queries. Manages:
 - Caching (intent, SQL results, embeddings via TTLCache)
 - LLM synthesis with retry/fallback
 - Anti-hallucination guard for empty results
+- BYOK (Bring Your Own Key): user-supplied Gemini API key for all LLM calls
 - Logging to oracle_query_log table
 """
 
@@ -50,6 +51,12 @@ logger = get_logger(__name__)
 SESSION_TTL_SECONDS = 7200       # 2 hours
 SESSION_CLEANUP_INTERVAL = 600   # 10 minutes
 
+# Module-level lock for BYOK genai.configure() calls.
+# Phase 1 (single user): acceptable — serializes BYOK requests, latency is fine.
+# Phase 2 (multi-user): migrate to google-genai new SDK (google.genai.Client(api_key=key))
+# which supports per-client isolation without global state mutation. Remove lock at that point.
+_byok_lock = threading.Lock()
+
 
 class OracleOrchestrator:
     """
@@ -68,7 +75,7 @@ class OracleOrchestrator:
         self.tool_registry = ToolRegistry()
         self._register_tools()
 
-        # Query router
+        # Default query router (uses self.llm — not used for BYOK requests)
         self.router = QueryRouter(llm)
 
         # Session storage: {session_id: (ConversationContext, last_active_ts)}
@@ -127,25 +134,75 @@ class OracleOrchestrator:
         query: str,
         session_id: str = "default",
         ui_filters: Optional[Dict] = None,
+        user_context: Optional[Any] = None,  # UserContext from oracle_auth; Any avoids circular import
     ) -> Dict[str, Any]:
         """
-        Process a user query end-to-end:
-        1. Get/create session context
-        2. Route query → QueryPlan
-        3. Execute tools
-        4. Synthesize answer
-        5. Log to oracle_query_log
+        Process a user query end-to-end.
+
+        If user_context contains a gemini_api_key, all LLM calls (routing + synthesis)
+        use that key (BYOK). Otherwise, uses the singleton's default LLM.
         """
+        user_gemini_key = getattr(user_context, "gemini_api_key", None)
+        user_id = getattr(user_context, "user_id", None) or session_id
+
+        if user_gemini_key:
+            return self._process_with_byok_key(
+                query, session_id, ui_filters, user_gemini_key, user_id
+            )
+        return self._process_internal(
+            query, session_id, ui_filters, llm=self.llm, user_id=user_id
+        )
+
+    def _process_with_byok_key(
+        self,
+        query: str,
+        session_id: str,
+        ui_filters: Optional[Dict],
+        user_key: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Thread-safe BYOK: temporarily configure genai globally with the user's key,
+        create a fresh LLM model instance, then restore the original key.
+
+        NOTE Phase 1 (single user): lock serializes BYOK requests — latency is acceptable.
+        NOTE Phase 2 (multi-user): migrate to google-genai new SDK (google.genai.Client)
+        which supports per-client isolation without this global state mutation. Remove lock.
+        """
+        with _byok_lock:
+            orig_key = os.getenv("GEMINI_API_KEY", "")
+            genai.configure(api_key=user_key, transport="rest")
+            try:
+                user_llm = genai.GenerativeModel("gemini-2.5-flash")
+                return self._process_internal(
+                    query, session_id, ui_filters, llm=user_llm, user_id=user_id
+                )
+            finally:
+                genai.configure(api_key=orig_key, transport="rest")
+
+    def _process_internal(
+        self,
+        query: str,
+        session_id: str,
+        ui_filters: Optional[Dict],
+        llm: Any,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Core query processing pipeline. Uses the supplied llm for all LLM calls."""
         start_time = time.time()
         ctx = self._get_or_create_session(session_id)
         is_follow_up = ctx.detect_follow_up(query)
 
-        # Merge UI filters into router context
         filters = ui_filters or {}
+
+        # Use a router scoped to the given llm (supports BYOK key for routing too)
+        router = QueryRouter(llm) if llm is not self.llm else self.router
 
         # ── Step 1: Route ───────────────────────────────────────────────────
         try:
-            query_plan = self.router.route(query, context=ctx.get_context_for_llm() if is_follow_up else None)
+            query_plan = router.route(
+                query, context=ctx.get_context_for_llm() if is_follow_up else None
+            )
         except Exception as e:
             logger.warning(f"QueryRouter failed ({e}), using FACTUAL fallback")
             from .schemas import QueryComplexity, ExecutionStep
@@ -202,7 +259,9 @@ class OracleOrchestrator:
             tool_results.append((tool_name, result))
 
         # ── Step 3: Anti-hallucination empty results guard ─────────────────
-        answer = self._check_empty_and_synthesize(query, query_plan, tool_results, ctx, is_follow_up)
+        answer = self._check_empty_and_synthesize(
+            query, query_plan, tool_results, ctx, is_follow_up, llm=llm
+        )
 
         # ── Step 4: Collect sources (from RAGTool results) ─────────────────
         sources: List[Dict] = []
@@ -235,6 +294,7 @@ class OracleOrchestrator:
             query_plan=query_plan,
             execution_time=execution_time,
             success=True,
+            user_id=user_id,
         )
 
         return {
@@ -261,6 +321,7 @@ class OracleOrchestrator:
         tool_results: List[Tuple[str, ToolResult]],
         ctx: ConversationContext,
         is_follow_up: bool,
+        llm: Any = None,
     ) -> str:
         # Anti-hallucination: check if all results are empty
         all_empty = all(
@@ -281,7 +342,7 @@ class OracleOrchestrator:
                 "- La query è troppo specifica — prova a riformularla in modo più generico"
             )
 
-        return self._synthesize(query, query_plan, tool_results, ctx, is_follow_up)
+        return self._synthesize(query, query_plan, tool_results, ctx, is_follow_up, llm=llm)
 
     def _synthesize(
         self,
@@ -290,6 +351,7 @@ class OracleOrchestrator:
         tool_results: List[Tuple[str, ToolResult]],
         ctx: ConversationContext,
         is_follow_up: bool,
+        llm: Any = None,
     ) -> str:
         # Build tool results block
         results_block = ""
@@ -326,7 +388,7 @@ CRITICAL: If tool results are empty or contain no relevant data, EXPLICITLY STAT
 RISPOSTA DETTAGLIATA:"""
 
         try:
-            result = self._synthesis_llm_call(prompt)
+            result = self._synthesis_llm_call(prompt, llm=llm)
             return result.text
         except Exception as e:
             logger.error(f"Synthesis LLM failed: {e}")
@@ -343,8 +405,9 @@ RISPOSTA DETTAGLIATA:"""
             google.api_core.exceptions.ServiceUnavailable,
         )),
     )
-    def _synthesis_llm_call(self, prompt: str):
-        return self.llm.generate_content(
+    def _synthesis_llm_call(self, prompt: str, llm: Any = None):
+        model = llm if llm is not None else self.llm
+        return model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
                 max_output_tokens=4096,
@@ -363,8 +426,12 @@ RISPOSTA DETTAGLIATA:"""
         query_plan: QueryPlan,
         execution_time: float,
         success: bool,
+        user_id: Optional[str] = None,
     ):
         try:
+            metadata: Dict[str, Any] = {"query_plan": query_plan.model_dump()}
+            if user_id and user_id != session_id:
+                metadata["user_id"] = user_id
             self.db.log_oracle_query(
                 session_id=session_id,
                 query=query,
@@ -373,7 +440,7 @@ RISPOSTA DETTAGLIATA:"""
                 tools_used=query_plan.tools,
                 execution_time=execution_time,
                 success=success,
-                metadata={"query_plan": query_plan.model_dump()},
+                metadata=metadata,
             )
         except Exception as e:
             logger.debug(f"oracle_query_log insert failed (non-critical): {e}")

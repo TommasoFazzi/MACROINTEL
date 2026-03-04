@@ -20,6 +20,9 @@ const COMPLEXITY_COLORS: Record<string, string> = {
   complex: 'bg-red-500/20 text-red-300 border-red-500/30',
 };
 
+// Loose frontend validation matching the backend regex
+const GEMINI_KEY_RE = /^AIza[0-9A-Za-z\-_]{30,50}$/;
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function QueryPlanBadges({ plan }: { plan: QueryPlan }) {
@@ -126,11 +129,114 @@ function AssistantBubble({ msg }: { msg: OracleChatMessage }) {
   );
 }
 
+// ── BYOK Panel ────────────────────────────────────────────────────────────────
+
+function ByokPanel({
+  geminiApiKey,
+  setGeminiApiKey,
+}: {
+  geminiApiKey: string;
+  setGeminiApiKey: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(geminiApiKey);
+  const [showKey, setShowKey] = useState(false);
+
+  const isValid = draft === '' || GEMINI_KEY_RE.test(draft);
+  const isActive = GEMINI_KEY_RE.test(geminiApiKey);
+
+  const handleSave = () => {
+    if (!isValid) return;
+    setGeminiApiKey(draft);
+  };
+
+  return (
+    <div className="border-b border-white/10 bg-[#0d1d35]">
+      {/* Collapsed header */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-6 py-2 text-xs text-gray-400 hover:text-white transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span>⚙ Gemini API Key</span>
+          {isActive && (
+            <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 border border-green-500/30 text-[10px] font-medium">
+              BYOK attivo
+            </span>
+          )}
+        </div>
+        <span className="text-gray-500">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {/* Expanded body */}
+      {open && (
+        <div className="px-6 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="AIza..."
+                className={`w-full bg-[#1a2a4a] border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none pr-10 ${
+                  isValid ? 'border-white/10 focus:border-[#FF6B35]/50' : 'border-red-500/50'
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-xs"
+                title={showKey ? 'Nascondi' : 'Mostra'}
+              >
+                {showKey ? '🙈' : '👁'}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!isValid}
+              className="px-3 py-2 rounded-lg bg-[#FF6B35]/80 text-white text-xs font-medium hover:bg-[#FF6B35] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+            >
+              Salva
+            </button>
+            {geminiApiKey && (
+              <button
+                type="button"
+                onClick={() => { setDraft(''); setGeminiApiKey(''); }}
+                className="px-3 py-2 rounded-lg border border-white/10 text-gray-400 hover:text-white text-xs transition-colors whitespace-nowrap"
+              >
+                Rimuovi
+              </button>
+            )}
+          </div>
+
+          {!isValid && draft !== '' && (
+            <p className="mt-1 text-xs text-red-400">Formato non valido — atteso: AIza + 30-50 caratteri</p>
+          )}
+
+          <p className="mt-1.5 text-[10px] text-gray-600">
+            ⚠ Salvata in localStorage — non usare su computer condivisi. Non viene inviata ai log del server.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function OraclePage() {
-  const { messages, isLoading, error, sendMessage, clearMessages, lastAssistantMessage } =
-    useOracleChat();
+  const {
+    messages,
+    isLoading,
+    error,
+    byokError,
+    sendMessage,
+    clearMessages,
+    lastAssistantMessage,
+    geminiApiKey,
+    setGeminiApiKey,
+  } = useOracleChat();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -172,6 +278,17 @@ export default function OraclePage() {
           Nuova sessione
         </button>
       </header>
+
+      {/* BYOK Panel */}
+      <ByokPanel geminiApiKey={geminiApiKey} setGeminiApiKey={setGeminiApiKey} />
+
+      {/* 402 BYOK error banner */}
+      {byokError && (
+        <div className="mx-6 mt-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
+          <strong>Errore Gemini API key:</strong> La tua chiave non è valida o ha quota esaurita.{' '}
+          <span className="text-amber-400/70 text-xs">({byokError})</span>
+        </div>
+      )}
 
       {/* Main layout */}
       <div className="flex-1 flex overflow-hidden">

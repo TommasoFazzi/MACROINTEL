@@ -23,13 +23,34 @@ export function useOracleChat() {
   const [messages, setMessages] = useState<OracleChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [byokError, setByokError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Gemini API key stored in localStorage — never sent to server logs
+  const [geminiApiKey, setGeminiApiKeyState] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('oracle_gemini_key') ?? '';
+    }
+    return '';
+  });
+
+  const setGeminiApiKey = useCallback((key: string) => {
+    setGeminiApiKeyState(key);
+    if (typeof window !== 'undefined') {
+      if (key) {
+        localStorage.setItem('oracle_gemini_key', key);
+      } else {
+        localStorage.removeItem('oracle_gemini_key');
+      }
+    }
+  }, []);
 
   const sendMessage = useCallback(
     async (query: string, filters?: OracleChatFilters) => {
       if (!query.trim() || isLoading) return;
 
       setError(null);
+      setByokError(null);
 
       // Optimistic user message
       const userMsg: OracleChatMessage = {
@@ -65,6 +86,7 @@ export function useOracleChat() {
             end_date: filters?.end_date ?? null,
             categories: filters?.categories ?? null,
             gpe_filter: filters?.gpe_filter ?? null,
+            gemini_api_key: geminiApiKey || null,
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -73,7 +95,12 @@ export function useOracleChat() {
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          throw new Error(err.detail ?? `HTTP ${response.status}`);
+          const detail = err.detail ?? `HTTP ${response.status}`;
+          if (response.status === 402) {
+            setByokError(detail);
+            return;
+          }
+          throw new Error(detail);
         }
 
         const json = await response.json();
@@ -100,12 +127,13 @@ export function useOracleChat() {
         abortControllerRef.current = null;
       }
     },
-    [isLoading]
+    [isLoading, geminiApiKey]
   );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
+    setByokError(null);
     // Rotate session ID so new conversation starts fresh
     _sessionId = null;
   }, []);
@@ -119,8 +147,11 @@ export function useOracleChat() {
     messages,
     isLoading,
     error,
+    byokError,
     sendMessage,
     clearMessages,
     lastAssistantMessage,
+    geminiApiKey,
+    setGeminiApiKey,
   };
 }

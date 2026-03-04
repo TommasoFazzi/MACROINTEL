@@ -17,6 +17,12 @@ class OracleChatRequest(BaseModel):
         "GEOPOLITICS", "DEFENSE", "ECONOMY", "CYBER", "ENERGY"
     ]]] = None
     gpe_filter: Optional[List[str]] = None
+    gemini_api_key: Optional[str] = Field(
+        default=None,
+        min_length=39,
+        max_length=45,
+        description="BYOK: user's Gemini API key. Never logged server-side.",
+    )
 
 
 class OracleSource(BaseModel):

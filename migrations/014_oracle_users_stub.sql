@@ -1,0 +1,20 @@
+-- migrations/014_oracle_users_stub.sql
+-- PHASE 2 STUB — do NOT apply in Phase 1.
+-- Uncomment and run via psql when implementing login + billing.
+--
+-- CREATE TABLE oracle_users (
+--     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--     email               TEXT UNIQUE NOT NULL,
+--     password_hash       TEXT NOT NULL,
+--     tier                TEXT NOT NULL DEFAULT 'free',   -- free | premium | admin
+--     daily_quota         INT  NOT NULL DEFAULT 10,       -- queries/day
+--     stripe_customer_id  TEXT,
+--     created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+-- );
+--
+-- CREATE INDEX idx_oracle_users_email ON oracle_users (email);
+--
+-- ALTER TABLE oracle_query_log
+--     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES oracle_users(id);
+--
+-- CREATE INDEX idx_oracle_query_log_user ON oracle_query_log (user_id);

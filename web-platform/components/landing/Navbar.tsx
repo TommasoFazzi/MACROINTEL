@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Menu, X, Map, GitBranch, MessageSquare } from 'lucide-react';
+import { Menu, X, Map, GitBranch } from 'lucide-react';
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -82,12 +82,6 @@ export default function Navbar() {
                 Storylines
               </Link>
             </Button>
-            <Button asChild variant="outline" className="border-purple-500/30 text-purple-300 hover:bg-purple-500/10 hover:text-purple-300">
-              <Link href="/oracle" className="flex items-center gap-2">
-                <MessageSquare size={16} />
-                Oracle
-              </Link>
-            </Button>
             <Button asChild variant="outline" className="border-[#00A8E8]/30 text-[#00A8E8] hover:bg-[#00A8E8]/10 hover:text-[#00A8E8]">
               <Link href="/map" className="flex items-center gap-2">
                 <Map size={16} />
@@ -135,12 +129,6 @@ export default function Navbar() {
                 <Link href="/stories" className="flex items-center justify-center gap-2">
                   <GitBranch size={16} />
                   Storylines
-                </Link>
-              </Button>
-              <Button asChild variant="outline" className="w-full mt-2 border-purple-500/30 text-purple-300 hover:bg-purple-500/10 hover:text-purple-300">
-                <Link href="/oracle" className="flex items-center justify-center gap-2">
-                  <MessageSquare size={16} />
-                  Oracle
                 </Link>
               </Button>
               <Button asChild variant="outline" className="w-full mt-2 border-[#00A8E8]/30 text-[#00A8E8] hover:bg-[#00A8E8]/10 hover:text-[#00A8E8]">

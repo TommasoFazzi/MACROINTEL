@@ -14,19 +14,16 @@ import os
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
 from src.api.routers import dashboard, reports, stories, oracle
 from src.api.auth import verify_api_key
+from src.api.limiter import limiter
 
 logger = get_logger(__name__)
-
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 # Initialize FastAPI app
 app = FastAPI(
