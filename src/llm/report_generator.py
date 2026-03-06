@@ -1550,36 +1550,19 @@ Use them to:
         # Step 4: Construct prompt (with macro dashboard + raw data for reference)
         report_date = datetime.now().strftime('%Y-%m-%d')
 
-        # Build header section with macro dashboard (if available)
+        # Build header section for prompt context (raw macro data only — LLM reference)
+        # The formatted macro dashboard is prepended programmatically AFTER generation
+        # to guarantee consistent ticker format regardless of LLM output variability.
         header_section = ""
-        if macro_dashboard_text:
-            header_section = f"""# 🌍 Daily Intelligence Briefing - {report_date}
-
-{macro_dashboard_text}
-
----
-
-"""
-            logger.info("  Macro dashboard injected into prompt header")
-
-            # Also include raw macro data for LLM reference (but after dashboard)
-            if macro_context_text:
-                header_section += f"""
-=== RAW MACRO DATA (for LLM reference - DO NOT include in report) ===
-{macro_context_text}
-
----
-
-"""
-        elif macro_context_text:
-            # Fallback: use raw context if dashboard generation failed
+        if macro_context_text:
             header_section = f"""
+=== MACRO DATA CONTEXT (for LLM reference only - DO NOT reproduce in output) ===
 {macro_context_text}
 
 ---
 
 """
-            logger.info("  Raw macro context injected (dashboard unavailable)")
+            logger.info("  Macro context injected as reference for LLM")
 
         prompt = f"""{header_section}You are an intelligence analyst generating a daily intelligence briefing.
 
@@ -1676,7 +1659,7 @@ If no storyline data is provided, skip this section entirely.
 
 {narrative_section}
 
-**Now generate the intelligence report:**
+**Now generate the intelligence report body. Start DIRECTLY from `## 1. Executive Summary` — do NOT include a title line, do NOT reproduce the macro dashboard (it is pre-built and will be prepended automatically):**
 """
 
         # Step 5: Generate report with Gemini (temperature 0.35 for narrative quality)
@@ -1690,6 +1673,14 @@ If no storyline data is provided, skip this section entirely.
             )
             report_text = response.text
             logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
+
+            # Prepend pre-built title + macro dashboard programmatically
+            # This guarantees consistent ticker format regardless of LLM variability.
+            if macro_dashboard_text:
+                report_header = f"# 🌍 Daily Intelligence Briefing - {report_date}\n\n{macro_dashboard_text}\n\n---\n\n"
+            else:
+                report_header = f"# 🌍 Daily Intelligence Briefing - {report_date}\n\n"
+            report_text = report_header + report_text
         except Exception as e:
             logger.error(f"Failed to generate report: {e}")
             return {
