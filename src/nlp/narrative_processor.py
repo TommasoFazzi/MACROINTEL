@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any, Set
 from collections import defaultdict, Counter
 import numpy as np
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 try:
     from sklearn.cluster import HDBSCAN
@@ -968,42 +968,47 @@ RIASSUNTO: [riassunto di 3-5 frasi che descrive la narrativa principale]"""
 
                 source_entities = set(e.lower() for e in row[0])
 
-                # Get all other active storylines' entities
+                # Pre-filter at DB level: only fetch storylines that share at least
+                # one entity with this storyline. EXISTS+unnest short-circuits at
+                # the first match, reducing candidates from ~3000+ to ~10-50.
+                source_entities_list = list(source_entities)
                 cur.execute("""
                     SELECT id, key_entities
                     FROM storylines
                     WHERE narrative_status IN ('emerging', 'active')
                     AND id != %s
                     AND key_entities IS NOT NULL
-                """, (storyline_id,))
-                others = cur.fetchall()
+                    AND EXISTS (
+                        SELECT 1 FROM unnest(key_entities) AS e
+                        WHERE LOWER(e) = ANY(%s)
+                    )
+                """, (storyline_id, source_entities_list))
+                candidates = cur.fetchall()
 
-                for other_id, other_entities_raw in others:
+                # Compute Jaccard for each candidate and collect valid edges
+                new_edges = []
+                for other_id, other_entities_raw in candidates:
                     if not other_entities_raw:
                         continue
-
                     target_entities = set(e.lower() for e in other_entities_raw)
-
-                    # Jaccard index
                     intersection = len(source_entities & target_entities)
                     union = len(source_entities | target_entities)
                     jaccard = intersection / union if union > 0 else 0
-
                     if jaccard >= self.ENTITY_JACCARD_THRESHOLD:
-                        # UPSERT edge
-                        cur.execute("""
-                            INSERT INTO storyline_edges (source_story_id, target_story_id, weight, relation_type)
-                            VALUES (%s, %s, %s, 'relates_to')
-                            ON CONFLICT (source_story_id, target_story_id)
-                            DO UPDATE SET weight = %s, updated_at = NOW()
-                        """, (storyline_id, other_id, jaccard, jaccard))
-                        edges_modified += 1
-                    else:
-                        # Remove edge if it exists and score dropped below threshold
-                        cur.execute("""
-                            DELETE FROM storyline_edges
-                            WHERE source_story_id = %s AND target_story_id = %s
-                        """, (storyline_id, other_id))
+                        new_edges.append((storyline_id, other_id, jaccard))
+
+                # Replace all outgoing edges in one DELETE, then bulk-insert valid ones
+                cur.execute("""
+                    DELETE FROM storyline_edges WHERE source_story_id = %s
+                """, (storyline_id,))
+
+                if new_edges:
+                    execute_values(cur, """
+                        INSERT INTO storyline_edges
+                            (source_story_id, target_story_id, weight, relation_type)
+                        VALUES %s
+                    """, [(s, t, w, 'relates_to') for s, t, w in new_edges])
+                    edges_modified = len(new_edges)
 
                 # Update last_graph_update
                 cur.execute("""
