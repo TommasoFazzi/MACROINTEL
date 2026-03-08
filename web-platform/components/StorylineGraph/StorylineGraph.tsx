@@ -172,8 +172,11 @@ export default function StorylineGraph() {
       const isGhost = baseColor === OTHER_COLOR;
       const color = (isEgoActive && isNeighbor && isGhost) ? EGO_HIGHLIGHT : baseColor;
 
-      // Dim non-neighbor nodes when ego mode is active
-      const alpha = isEgoActive && !isNeighbor ? 0.08 : 1.0;
+      // Dim non-neighbor nodes when ego mode is active.
+      // Momentum-as-brightness: low momentum = dimmer, high = full.
+      // Clamped to [0.5, 1.0] so even dormant nodes stay visible.
+      const momentumBrightness = Math.max(0.5, Math.min(1.0, 0.5 + momentum_score * 0.5));
+      const alpha = isEgoActive && !isNeighbor ? 0.08 : momentumBrightness;
       ctx.globalAlpha = alpha;
 
       // Node radius based on momentum (min 4, max 16)

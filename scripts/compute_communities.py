@@ -40,7 +40,7 @@ logger = get_logger(__name__)
 
 def compute_and_save_communities(
     min_weight: float = 0.08,
-    resolution: float = 0.5,
+    resolution: float = 0.2,
     dry_run: bool = False,
 ) -> dict:
     """
@@ -157,8 +157,8 @@ def main():
         help="Min edge weight to include in community graph (default: 0.08)"
     )
     parser.add_argument(
-        "--resolution", type=float, default=0.5,
-        help="Louvain resolution: lower = larger communities (default: 0.5)"
+        "--resolution", type=float, default=0.2,
+        help="Louvain resolution: lower = larger communities (default: 0.2)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
