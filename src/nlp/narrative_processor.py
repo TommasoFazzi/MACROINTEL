@@ -1058,7 +1058,7 @@ ENTITÀ: [lista di 5-10 entità chiave separate da virgola — solo nomi propri:
                 cur.execute("""
                     SELECT id, key_entities
                     FROM storylines
-                    WHERE narrative_status IN ('emerging', 'active')
+                    WHERE narrative_status IN ('emerging', 'active', 'stabilized')
                     AND id != %s
                     AND key_entities IS NOT NULL
                     AND EXISTS (

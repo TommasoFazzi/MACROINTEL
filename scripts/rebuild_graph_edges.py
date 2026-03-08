@@ -80,9 +80,24 @@ def main():
         print(f"  Cleaned {deleted} stale edges (archived >30 days)")
         print()
 
+    # Load IDF weights once (entity_idf materialized view)
+    idf_weights = None
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                idf_weights = processor._load_entity_idf(cur)
+        if idf_weights:
+            print(f"  IDF weights loaded: {len(idf_weights)} entities")
+            print(f"  Threshold (TF-IDF weighted Jaccard): {processor.ENTITY_JACCARD_THRESHOLD}")
+        else:
+            print("  WARNING: No IDF weights — using plain Jaccard (threshold 0.30)")
+    except Exception as e:
+        print(f"  WARNING: Could not load IDF weights: {e}")
+    print()
+
     total_edges = 0
     for i, sid in enumerate(ids):
-        n = processor._update_graph_connections(sid)
+        n = processor._update_graph_connections(sid, idf_weights)
         total_edges += n or 0
         if (i + 1) % 100 == 0:
             print(f"  {i+1}/{len(ids)} storylines processed ({total_edges} edges so far)")
