@@ -138,7 +138,7 @@ function ByokPanel({
   geminiApiKey: string;
   setGeminiApiKey: (key: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!GEMINI_KEY_RE.test(geminiApiKey));
   const [draft, setDraft] = useState(geminiApiKey);
   const [showKey, setShowKey] = useState(false);
 
@@ -159,9 +159,13 @@ function ByokPanel({
       >
         <div className="flex items-center gap-2">
           <span>⚙ Gemini API Key</span>
-          {isActive && (
+          {isActive ? (
             <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 border border-green-500/30 text-[10px] font-medium">
               BYOK active
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-medium animate-pulse">
+              KEY REQUIRED
             </span>
           )}
         </div>
@@ -215,7 +219,10 @@ function ByokPanel({
           )}
 
           <p className="mt-1.5 text-[10px] text-gray-600">
-            ⚠ Saved in localStorage — do not use on shared computers. Not sent to server logs.
+            🔑 A Gemini API key is required to use Oracle. Get one free at{' '}
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline text-gray-500 hover:text-white">
+              aistudio.google.com/apikey
+            </a>. Saved in localStorage only.
           </p>
         </div>
       )}
@@ -282,11 +289,23 @@ export default function OraclePage() {
       {/* BYOK Panel */}
       <ByokPanel geminiApiKey={geminiApiKey} setGeminiApiKey={setGeminiApiKey} />
 
-      {/* 402 BYOK error banner */}
+      {/* BYOK error banner (422 = key required, 402 = key invalid/exhausted) */}
       {byokError && (
         <div className="mx-6 mt-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
-          <strong>Gemini API key error:</strong> Your key is invalid or has exhausted its quota.{' '}
-          <span className="text-amber-400/70 text-xs">({byokError})</span>
+          {byokError.toLowerCase().includes('required') ? (
+            <>
+              <strong>API key required:</strong> You must configure your own Gemini API key to use Oracle.
+              Open the <strong>⚙ Gemini API Key</strong> panel above and paste your key.{' '}
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline text-amber-200 hover:text-white">
+                Get a free key →
+              </a>
+            </>
+          ) : (
+            <>
+              <strong>Gemini API key error:</strong> Your key is invalid or has exhausted its quota.{' '}
+              <span className="text-amber-400/70 text-xs">({byokError})</span>
+            </>
+          )}
         </div>
       )}
 

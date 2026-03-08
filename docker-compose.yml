@@ -63,6 +63,7 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://macrointel.net}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      ORACLE_REQUIRE_GEMINI_KEY: ${ORACLE_REQUIRE_GEMINI_KEY:-true}
       REPORT_OUTPUT_DIR: /app/reports
       DATA_DIR: /app/data
     volumes:

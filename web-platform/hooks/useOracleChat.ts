@@ -96,7 +96,7 @@ export function useOracleChat() {
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
           const detail = err.detail ?? `HTTP ${response.status}`;
-          if (response.status === 402) {
+          if (response.status === 402 || response.status === 422) {
             setByokError(detail);
             return;
           }
