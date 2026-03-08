@@ -32,6 +32,18 @@ class GraphStats(BaseModel):
     total_nodes: int
     total_edges: int
     avg_momentum: float
+    communities_count: int = 0
+    avg_edges_per_node: float = 0.0
+
+
+class CommunityInfo(BaseModel):
+    """Summary of a Louvain graph community."""
+    community_id: int
+    size: int
+    label: str
+    top_storylines: list["StorylineNode"] = []
+    key_entities: list[str] = []
+    avg_momentum: float = 0.0
 
 
 class GraphNetwork(BaseModel):

@@ -20,6 +20,7 @@ interface GraphNode {
   article_count: number;
   category: string | null;
   community_id?: number | null;
+  key_entities?: string[];
   x?: number;
   y?: number;
 }
@@ -43,6 +44,7 @@ export default function StorylineGraph() {
   const { graph, isLoading, error, refresh } = useGraphNetwork();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [minMomentum, setMinMomentum] = useState(0);
 
   // Ego-network state: loaded on node click, overlay on top of frozen global graph
   const { egoNetwork } = useEgoNetwork(selectedId, 0.05);
@@ -51,11 +53,11 @@ export default function StorylineGraph() {
     return new Set([selectedId, ...egoNetwork.neighbors.map((n) => n.id)]);
   }, [egoNetwork, selectedId]);
 
-  // Transform API data for react-force-graph
+  // Transform API data for react-force-graph (with momentum filter)
   const graphData = useMemo(() => {
     if (!graph) return { nodes: [], links: [] };
 
-    const nodes: GraphNode[] = graph.nodes.map((n) => ({
+    const allNodes: GraphNode[] = graph.nodes.map((n) => ({
       id: n.id,
       title: n.title,
       narrative_status: n.narrative_status as NarrativeStatus,
@@ -63,11 +65,16 @@ export default function StorylineGraph() {
       article_count: n.article_count,
       category: n.category,
       community_id: n.community_id ?? null,
+      key_entities: n.key_entities,
     }));
 
-    const nodeIds = new Set(nodes.map((n) => n.id));
+    const filteredNodes = minMomentum > 0
+      ? allNodes.filter((n) => n.momentum_score >= minMomentum)
+      : allNodes;
+    const filteredIds = new Set(filteredNodes.map((n) => n.id));
+
     const links: GraphLink[] = graph.links
-      .filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target))
+      .filter((l) => filteredIds.has(l.source as number) && filteredIds.has(l.target as number))
       .map((l) => ({
         source: l.source,
         target: l.target,
@@ -75,8 +82,56 @@ export default function StorylineGraph() {
         relation_type: l.relation_type,
       }));
 
-    return { nodes, links };
-  }, [graph]);
+    return { nodes: filteredNodes, links };
+  }, [graph, minMomentum]);
+
+  // Compute community labels from visible node data (top 10 by size)
+  const communityLabels = useMemo(() => {
+    const communityMap = new Map<number, { count: number; entities: Map<string, number> }>();
+
+    for (const node of graphData.nodes) {
+      const cid = node.community_id;
+      if (cid == null) continue;
+      if (!communityMap.has(cid)) {
+        communityMap.set(cid, { count: 0, entities: new Map() });
+      }
+      const entry = communityMap.get(cid)!;
+      entry.count++;
+      for (const e of (node.key_entities || []).slice(0, 5)) {
+        entry.entities.set(e, (entry.entities.get(e) || 0) + 1);
+      }
+    }
+
+    return Array.from(communityMap.entries())
+      .map(([cid, { count, entities }]) => {
+        const topEntity = [...entities.entries()]
+          .sort((a, b) => b[1] - a[1])[0]?.[0] || `Community ${cid}`;
+        return { cid, label: topEntity, count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [graphData.nodes]);
+
+  // Compute community centroids for canvas labels (only communities with 3+ nodes)
+  const communityCentroids = useMemo(() => {
+    const groups = new Map<number, { xs: number[]; ys: number[] }>();
+    for (const node of graphData.nodes) {
+      const cid = node.community_id;
+      if (cid == null || node.x == null || node.y == null) continue;
+      if (!groups.has(cid)) groups.set(cid, { xs: [], ys: [] });
+      groups.get(cid)!.xs.push(node.x);
+      groups.get(cid)!.ys.push(node.y);
+    }
+    return new Map(
+      [...groups.entries()]
+        .filter(([, g]) => g.xs.length >= 3)
+        .map(([cid, g]) => [cid, {
+          x: g.xs.reduce((a, b) => a + b, 0) / g.xs.length,
+          y: g.ys.reduce((a, b) => a + b, 0) / g.ys.length,
+          label: communityLabels.find((c) => c.cid === cid)?.label || '',
+        }])
+    );
+  }, [graphData.nodes, communityLabels]);
 
   // Node rendering
   const paintNode = useCallback(
@@ -150,6 +205,27 @@ export default function StorylineGraph() {
     [selectedId, hoveredNode, egoNeighborIds]
   );
 
+  // Community label overlay drawn after all nodes
+  const paintFramePost = useCallback(
+    (ctx: CanvasRenderingContext2D) => {
+      if (communityCentroids.size === 0) return;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (const [cid, { x, y, label }] of communityCentroids) {
+        if (!label) continue;
+        const color = COMMUNITY_COLORS[cid % COMMUNITY_COLORS.length];
+        ctx.font = 'bold 18px monospace';
+        ctx.globalAlpha = 0.22;
+        ctx.fillStyle = color;
+        ctx.fillText(label.toUpperCase(), x, y);
+      }
+      ctx.restore();
+    },
+    [communityCentroids]
+  );
+
   // Link rendering
   const paintLink = useCallback(
     (link: any, ctx: CanvasRenderingContext2D) => {
@@ -179,12 +255,10 @@ export default function StorylineGraph() {
 
   const handleNodeClick = useCallback((node: any) => {
     setSelectedId((prev) => (prev === node.id ? null : node.id));
-    // egoNetwork is loaded automatically by useEgoNetwork when selectedId changes
   }, []);
 
   const handleNavigate = useCallback((id: number) => {
     setSelectedId(id);
-    // Center on the node
     if (graphRef.current) {
       const node = graphData.nodes.find((n) => n.id === id);
       if (node && node.x !== undefined && node.y !== undefined) {
@@ -210,6 +284,7 @@ export default function StorylineGraph() {
           ctx.fill();
         }}
         linkCanvasObject={paintLink}
+        onRenderFramePost={paintFramePost}
         onNodeClick={handleNodeClick}
         onNodeHover={(node: any) => setHoveredNode(node || null)}
         backgroundColor="#0A1628"
@@ -236,28 +311,56 @@ export default function StorylineGraph() {
             <div className="space-y-1 text-xs font-mono text-gray-400">
               <div>NODES: <span className="text-white">{graph.stats.total_nodes}</span></div>
               <div>EDGES: <span className="text-white">{graph.stats.total_edges}</span></div>
+              <div>COMMUNITIES: <span className="text-white">{graph.stats.communities_count || '—'}</span></div>
               <div>AVG MOMENTUM: <span className="text-white">{graph.stats.avg_momentum.toFixed(2)}</span></div>
+              <div>EDGES/NODE: <span className="text-white">{graph.stats.avg_edges_per_node?.toFixed(1) || '—'}</span></div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Legend - Top Right */}
-      <div className="absolute top-4 right-4 pointer-events-none">
+      {/* Momentum filter + Dynamic community legend - Top Right */}
+      <div className="absolute top-4 right-4 pointer-events-auto">
         {!selectedId && (
-          <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-white/10 rounded px-4 py-3">
-            <div className="text-xs font-mono text-gray-500 mb-2 uppercase">Status Legend</div>
-            <div className="space-y-1.5">
-              {Object.entries(STATUS_COLORS).map(([status, color]) => (
-                <div key={status} className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-xs font-mono text-gray-300 capitalize">{status}</span>
-                </div>
-              ))}
+          <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-white/10 rounded px-4 py-3 min-w-[190px]">
+            {/* Momentum slider */}
+            <div className="mb-3">
+              <div className="flex justify-between text-xs font-mono text-gray-500 mb-1">
+                <span className="uppercase">Min Momentum</span>
+                <span className="text-white">{minMomentum.toFixed(1)}</span>
+              </div>
+              <input
+                type="range"
+                aria-label="Minimum momentum filter"
+                min={0}
+                max={1}
+                step={0.1}
+                value={minMomentum}
+                onChange={(e) => setMinMomentum(parseFloat(e.target.value))}
+                className="w-full h-1 accent-[#FF6B35] cursor-pointer"
+              />
             </div>
+
+            {/* Dynamic community legend */}
+            {communityLabels.length > 0 && (
+              <>
+                <div className="text-xs font-mono text-gray-500 mb-2 uppercase">Communities</div>
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
+                  {communityLabels.map(({ cid, label, count }) => (
+                    <div key={cid} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: COMMUNITY_COLORS[cid % COMMUNITY_COLORS.length] }}
+                      />
+                      <span className="text-xs font-mono text-gray-300 truncate max-w-[120px]">
+                        {label}
+                      </span>
+                      <span className="text-xs font-mono text-gray-600 ml-auto">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

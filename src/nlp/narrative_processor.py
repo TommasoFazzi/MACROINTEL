@@ -90,7 +90,7 @@ class NarrativeProcessor:
     MATCH_THRESHOLD = 0.75           # Min hybrid score to match a storyline
     TIME_DECAY_FACTOR = 0.05         # Score penalty per day of storyline inactivity
     ENTITY_BOOST = 0.10              # Bonus when entity Jaccard > 0.3
-    ENTITY_JACCARD_THRESHOLD = 0.10  # Min TF-IDF weighted Jaccard for graph edges (lower than plain Jaccard because IDF weights reduce scores for common entities)
+    ENTITY_JACCARD_THRESHOLD = 0.20  # Min TF-IDF weighted Jaccard for graph edges (raised from 0.10 to reduce hairball edges)
     HDBSCAN_MIN_CLUSTER_SIZE = 2     # Min events to form a new storyline
     HDBSCAN_MIN_SAMPLES = 2
     DRIFT_WEIGHT_OLD = 0.85          # Weight for existing storyline embedding
@@ -1042,18 +1042,46 @@ RIASSUNTO: [riassunto di 3-5 frasi che descrive la narrativa principale]"""
                     if score >= threshold:
                         new_edges.append((storyline_id, other_id, score))
 
-                # Replace all outgoing edges in one DELETE, then bulk-insert valid ones
+                # Delete all outgoing edges for this storyline
                 cur.execute("""
                     DELETE FROM storyline_edges WHERE source_story_id = %s
                 """, (storyline_id,))
 
                 if new_edges:
-                    execute_values(cur, """
-                        INSERT INTO storyline_edges
-                            (source_story_id, target_story_id, weight, relation_type)
-                        VALUES %s
-                    """, [(s, t, w, 'relates_to') for s, t, w in new_edges])
-                    edges_modified = len(new_edges)
+                    # Check which reverse edges already exist (B→A where we want A→B).
+                    # Keep the higher-weight direction to avoid bidirectional duplicates.
+                    target_ids = [t for _, t, _ in new_edges]
+                    cur.execute("""
+                        SELECT source_story_id, weight
+                        FROM storyline_edges
+                        WHERE source_story_id = ANY(%s) AND target_story_id = %s
+                    """, (target_ids, storyline_id))
+                    reverse_edges = {row[0]: row[1] for row in cur.fetchall()}
+
+                    filtered_edges = []
+                    for s, t, w in new_edges:
+                        reverse_weight = reverse_edges.get(t)
+                        if reverse_weight is not None:
+                            # Reverse edge B→A exists. Keep whichever has higher weight.
+                            if w > reverse_weight:
+                                # Our edge is stronger: remove reverse, insert ours
+                                cur.execute(
+                                    "DELETE FROM storyline_edges "
+                                    "WHERE source_story_id = %s AND target_story_id = %s",
+                                    (t, storyline_id)
+                                )
+                                filtered_edges.append((s, t, w))
+                            # else: reverse is stronger or equal, skip this direction
+                        else:
+                            filtered_edges.append((s, t, w))
+
+                    if filtered_edges:
+                        execute_values(cur, """
+                            INSERT INTO storyline_edges
+                                (source_story_id, target_story_id, weight, relation_type)
+                            VALUES %s
+                        """, [(s, t, w, 'relates_to') for s, t, w in filtered_edges])
+                    edges_modified = len(filtered_edges)
 
                 # Update last_graph_update
                 cur.execute("""
@@ -1112,13 +1140,13 @@ RIASSUNTO: [riassunto di 3-5 frasi che descrive la narrativa principale]"""
                 """)
                 stats['archived'] = cur.rowcount
 
-                # 4. Emerging for 14 days without reaching 3 articles → archived
+                # 4. Emerging for 5 days without reaching 3 articles → archived
                 cur.execute("""
                     UPDATE storylines
                     SET narrative_status = 'archived'
                     WHERE narrative_status = 'emerging'
                     AND article_count < 3
-                    AND created_at < NOW() - INTERVAL '14 days'
+                    AND created_at < NOW() - INTERVAL '5 days'
                     RETURNING id
                 """)
                 stats['archived'] += cur.rowcount

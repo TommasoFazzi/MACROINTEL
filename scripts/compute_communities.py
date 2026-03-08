@@ -8,7 +8,8 @@ largest community (stable color assignment across nightly runs).
 
 Usage:
     python scripts/compute_communities.py
-    python scripts/compute_communities.py --min-weight 0.15
+    python scripts/compute_communities.py --min-weight 0.25
+    python scripts/compute_communities.py --resolution 0.8
     python scripts/compute_communities.py --dry-run
 """
 
@@ -30,13 +31,18 @@ try:
 except ImportError:
     LOUVAIN_AVAILABLE = False
 
+from psycopg2.extras import execute_values
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False) -> dict:
+def compute_and_save_communities(
+    min_weight: float = 0.25,
+    resolution: float = 0.8,
+    dry_run: bool = False,
+) -> dict:
     """
     Load edge graph from DB, run Louvain, save community_id to storylines.
 
@@ -53,7 +59,7 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
         )
 
     db = DatabaseManager()
-    stats = {"nodes": 0, "edges_loaded": 0, "communities": 0, "updated": 0}
+    stats = {"nodes": 0, "edges_loaded": 0, "communities": 0, "updated": 0, "modularity": None}
 
     # Load edges from DB
     with db.get_connection() as conn:
@@ -79,9 +85,15 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
         return stats
 
     # Build undirected weighted graph
+    # Only include edges where BOTH endpoints are in the active set.
+    # nx.Graph.add_edge() auto-creates missing nodes — filtering prevents
+    # archived/deleted storylines from sneaking in via stale edges.
     G = nx.Graph()
     G.add_nodes_from(all_ids)
+    active_ids = set(all_ids)
     for source, target, weight in edges:
+        if source not in active_ids or target not in active_ids:
+            continue
         # For undirected graph, keep max weight if edge already exists
         if G.has_edge(source, target):
             G[source][target]['weight'] = max(G[source][target]['weight'], weight)
@@ -89,7 +101,13 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
             G.add_edge(source, target, weight=weight)
 
     # Run Louvain with fixed seed for reproducible community IDs
-    partition = community_louvain.best_partition(G, random_state=42, weight='weight')
+    partition = community_louvain.best_partition(
+        G, random_state=42, weight='weight', resolution=resolution
+    )
+
+    # Compute modularity score (higher = better community structure; target > 0.4)
+    modularity = community_louvain.modularity(partition, G, weight='weight')
+    stats["modularity"] = round(modularity, 4)
 
     # Renumber: community with most members = 0, then descending by size
     freq = Counter(partition.values())
@@ -98,8 +116,9 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
 
     stats["communities"] = len(freq)
     logger.info(
-        "Louvain found %d communities from %d nodes (%d edges loaded, min_weight=%.2f)",
-        stats["communities"], stats["nodes"], stats["edges_loaded"], min_weight
+        "Louvain found %d communities from %d nodes (%d edges, min_weight=%.2f, resolution=%.2f) — modularity=%.3f",
+        stats["communities"], stats["nodes"], stats["edges_loaded"],
+        min_weight, resolution, modularity
     )
 
     if dry_run:
@@ -107,14 +126,16 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
         stats["updated"] = len(partition)
         return stats
 
-    # Save to DB in batches
+    # Save to DB using a single batch UPDATE
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            for storyline_id, cid in partition.items():
-                cur.execute(
-                    "UPDATE storylines SET community_id = %s WHERE id = %s",
-                    (cid, storyline_id)
-                )
+            execute_values(cur, """
+                UPDATE storylines AS s
+                SET community_id = v.cid
+                FROM (VALUES %s) AS v(sid, cid)
+                WHERE s.id = v.sid
+            """, [(sid, cid) for sid, cid in partition.items()])
+
             # Null out any storyline not in partition (e.g. archived since last run)
             if partition:
                 cur.execute(
@@ -132,8 +153,12 @@ def compute_and_save_communities(min_weight: float = 0.15, dry_run: bool = False
 def main():
     parser = argparse.ArgumentParser(description="Compute Louvain communities on narrative graph")
     parser.add_argument(
-        "--min-weight", type=float, default=0.15,
-        help="Min edge weight to include in community graph (default: 0.15)"
+        "--min-weight", type=float, default=0.25,
+        help="Min edge weight to include in community graph (default: 0.25)"
+    )
+    parser.add_argument(
+        "--resolution", type=float, default=0.8,
+        help="Louvain resolution: lower = larger communities (default: 0.8)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -145,12 +170,14 @@ def main():
     print("COMMUNITY DETECTION")
     print("=" * 60)
     print(f"  Min edge weight: {args.min_weight}")
+    print(f"  Resolution:      {args.resolution}")
     print(f"  Dry run:         {args.dry_run}")
     print()
 
     try:
         stats = compute_and_save_communities(
             min_weight=args.min_weight,
+            resolution=args.resolution,
             dry_run=args.dry_run,
         )
     except RuntimeError as e:
@@ -160,6 +187,7 @@ def main():
     print(f"Storylines (nodes):  {stats['nodes']}")
     print(f"Edges loaded:        {stats['edges_loaded']}")
     print(f"Communities found:   {stats['communities']}")
+    print(f"Modularity:          {stats.get('modularity', 'N/A')}")
     print(f"Storylines updated:  {stats['updated']}")
     if args.dry_run:
         print("\n[DRY RUN] No changes written to database.")

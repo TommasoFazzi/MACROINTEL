@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime
 from typing import Optional
@@ -9,7 +10,7 @@ from typing import Optional
 from ..schemas.common import APIResponse, PaginationMeta
 from ..schemas.stories import (
     StorylineNode, StorylineEdge, GraphStats, GraphNetwork,
-    StorylineDetail, RelatedStoryline, LinkedArticle,
+    StorylineDetail, RelatedStoryline, LinkedArticle, CommunityInfo,
 )
 from ...storage.database import DatabaseManager
 from ..auth import verify_api_key
@@ -25,15 +26,15 @@ router = APIRouter(prefix="/api/v1/stories", tags=["Stories"])
 _graph_cache: dict = {}
 
 
-def _get_cached_graph(min_weight: float) -> Optional[dict]:
-    entry = _graph_cache.get(min_weight)
+def _get_cached_graph(min_weight: float, min_momentum: float) -> Optional[dict]:
+    entry = _graph_cache.get((min_weight, min_momentum))
     if entry and time.time() < entry["expires_at"]:
         return entry["data"]
     return None
 
 
-def _set_cached_graph(data: dict, min_weight: float, ttl: int = 3600) -> None:
-    _graph_cache[min_weight] = {"data": data, "expires_at": time.time() + ttl}
+def _set_cached_graph(data: dict, min_weight: float, min_momentum: float, ttl: int = 3600) -> None:
+    _graph_cache[(min_weight, min_momentum)] = {"data": data, "expires_at": time.time() + ttl}
 
 
 def get_db() -> DatabaseManager:
@@ -43,7 +44,8 @@ def get_db() -> DatabaseManager:
 
 @router.get("/graph")
 async def get_graph_network(
-    min_edge_weight: float = Query(0.35, description="Min TF-IDF weighted Jaccard for global view (default: 0.35)"),
+    min_edge_weight: float = Query(0.40, description="Min TF-IDF weighted Jaccard for global view (default: 0.40)"),
+    min_momentum: float = Query(0.0, description="Exclude nodes below this momentum score (default: 0.0)"),
     api_key: str = Depends(verify_api_key),
 ):
     """
@@ -54,7 +56,7 @@ async def get_graph_network(
     for denser graphs, higher (e.g. 0.50) for cleaner but sparser views.
     Response is cached for 1 hour per min_edge_weight value.
     """
-    cached = _get_cached_graph(min_edge_weight)
+    cached = _get_cached_graph(min_edge_weight, min_momentum)
     if cached:
         return cached
 
@@ -127,9 +129,16 @@ async def get_graph_network(
             connected_ids.add(link.target)
         nodes = [n for n in nodes if n.id in connected_ids]
 
+        # Optional momentum filter
+        if min_momentum > 0:
+            nodes = [n for n in nodes if n.momentum_score >= min_momentum]
+
         avg_momentum = round(
             sum(n.momentum_score for n in nodes) / len(nodes), 3
         ) if nodes else 0.0
+
+        community_ids = set(n.community_id for n in nodes if n.community_id is not None)
+        avg_epn = round(len(links) / len(nodes), 1) if nodes else 0.0
 
         graph = GraphNetwork(
             nodes=nodes,
@@ -138,6 +147,8 @@ async def get_graph_network(
                 total_nodes=len(nodes),
                 total_edges=len(links),
                 avg_momentum=avg_momentum,
+                communities_count=len(community_ids),
+                avg_edges_per_node=avg_epn,
             ),
         )
 
@@ -146,11 +157,83 @@ async def get_graph_network(
             "data": graph.model_dump(),
             "generated_at": datetime.utcnow().isoformat(),
         }
-        _set_cached_graph(response, min_edge_weight)
+        _set_cached_graph(response, min_edge_weight, min_momentum)
         return response
 
     except Exception as e:
         logger.error("Graph network error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/communities")
+async def list_communities(
+    api_key: str = Depends(verify_api_key),
+):
+    """
+    List all detected Louvain communities with their top storylines and key entities.
+    Communities are sorted by size (largest first).
+    """
+    db = get_db()
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT community_id,
+                           COUNT(*) AS size,
+                           AVG(momentum_score) AS avg_momentum,
+                           ARRAY_AGG(id ORDER BY momentum_score DESC) AS storyline_ids,
+                           ARRAY_AGG(title ORDER BY momentum_score DESC) AS titles,
+                           ARRAY_AGG(key_entities ORDER BY momentum_score DESC) AS all_entities
+                    FROM storylines
+                    WHERE narrative_status IN ('emerging', 'active')
+                      AND community_id IS NOT NULL
+                    GROUP BY community_id
+                    ORDER BY COUNT(*) DESC
+                """)
+                rows = cur.fetchall()
+
+        communities = []
+        for r in rows:
+            cid, size, avg_mom, sids, titles, all_ents = r
+
+            # Aggregate entities across all storylines in community
+            entity_counter: Counter = Counter()
+            for ent_list in all_ents:
+                if isinstance(ent_list, list):
+                    entity_counter.update(e.lower() for e in ent_list)
+                elif isinstance(ent_list, str):
+                    try:
+                        parsed = json.loads(ent_list)
+                        if isinstance(parsed, list):
+                            entity_counter.update(e.lower() for e in parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            top_entities = [e for e, _ in entity_counter.most_common(10)]
+            label = top_entities[0].title() if top_entities else f"Community {cid}"
+
+            # Top 5 storylines by momentum (lightweight summary)
+            top_storylines = [
+                {"id": sids[i], "title": titles[i]}
+                for i in range(min(5, len(sids)))
+            ]
+
+            communities.append({
+                "community_id": cid,
+                "size": size,
+                "label": label,
+                "top_storylines": top_storylines,
+                "key_entities": top_entities,
+                "avg_momentum": round(avg_mom or 0, 3),
+            })
+
+        return {
+            "success": True,
+            "data": {"communities": communities, "total": len(communities)},
+            "generated_at": datetime.utcnow().isoformat(),
+        }
+
+    except Exception as e:
+        logger.error("Communities error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

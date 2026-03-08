@@ -186,6 +186,30 @@ export default function StorylineDossier({ storylineId, onClose, onNavigate }: S
               </div>
             )}
 
+            {/* Community */}
+            {detail.storyline.community_id != null && (
+              <div className="border border-purple-500/20 bg-gray-800/50 p-4 rounded">
+                <h3 className="text-sm font-mono text-purple-400 uppercase mb-3 flex items-center gap-2">
+                  <GitBranch size={14} />
+                  Community
+                </h3>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded-full flex-shrink-0"
+                    style={{
+                      backgroundColor: [
+                        '#FF6B35', '#00A8E8', '#39D353', '#FFD700',
+                        '#FF4081', '#7B61FF', '#00E5CC', '#FF7043',
+                      ][detail.storyline.community_id % 8],
+                    }}
+                  />
+                  <span className="text-sm text-gray-300 font-mono">
+                    Community #{detail.storyline.community_id}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Related Storylines */}
             {detail.related_storylines.length > 0 && (
               <div className="border border-[#00A8E8]/20 bg-gray-800/50 p-4 rounded">

@@ -28,6 +28,8 @@ export interface GraphStats {
   total_nodes: number;
   total_edges: number;
   avg_momentum: number;
+  communities_count: number;
+  avg_edges_per_node: number;
 }
 
 export interface GraphNetwork {
