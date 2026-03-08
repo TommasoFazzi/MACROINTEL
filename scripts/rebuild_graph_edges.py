@@ -58,6 +58,28 @@ def main():
         print("[DRY RUN] No changes written to database.")
         return
 
+    # Step 0: Clean up stale edges involving old archived storylines (>30 days)
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM storyline_edges
+                WHERE source_story_id IN (
+                    SELECT id FROM storylines
+                    WHERE narrative_status = 'archived'
+                    AND last_update < NOW() - INTERVAL '30 days'
+                )
+                OR target_story_id IN (
+                    SELECT id FROM storylines
+                    WHERE narrative_status = 'archived'
+                    AND last_update < NOW() - INTERVAL '30 days'
+                )
+            """)
+            deleted = cur.rowcount
+            conn.commit()
+    if deleted:
+        print(f"  Cleaned {deleted} stale edges (archived >30 days)")
+        print()
+
     total_edges = 0
     for i, sid in enumerate(ids):
         n = processor._update_graph_connections(sid)

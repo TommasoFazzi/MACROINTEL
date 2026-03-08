@@ -90,7 +90,7 @@ class NarrativeProcessor:
     MATCH_THRESHOLD = 0.75           # Min hybrid score to match a storyline
     TIME_DECAY_FACTOR = 0.05         # Score penalty per day of storyline inactivity
     ENTITY_BOOST = 0.10              # Bonus when entity Jaccard > 0.3
-    ENTITY_JACCARD_THRESHOLD = 0.20  # Min TF-IDF weighted Jaccard for graph edges
+    ENTITY_JACCARD_THRESHOLD = 0.05  # Min TF-IDF weighted Jaccard for graph edges
     HDBSCAN_MIN_CLUSTER_SIZE = 2     # Min events to form a new storyline
     HDBSCAN_MIN_SAMPLES = 2
     DRIFT_WEIGHT_OLD = 0.85          # Weight for existing storyline embedding
