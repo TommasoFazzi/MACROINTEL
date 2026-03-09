@@ -328,3 +328,20 @@
     background: var(--color-orange-500);
   }
 }
+
+/* ============================================
+   Intelligence Map — Tooltip styling
+   ============================================ */
+.entity-tooltip .mapboxgl-popup-content {
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 168, 232, 0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.entity-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(15, 23, 42, 0.95);
+  border-bottom-color: rgba(15, 23, 42, 0.95);
+}

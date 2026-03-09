@@ -156,6 +156,8 @@ class NarrativeProcessor:
             'micro_clusters': 0,
             'events_matched': 0,
             'events_orphaned': 0,
+            'orphans_recovered': 0,
+            'orphans_buffered': 0,
             'new_storylines': 0,
             'summaries_evolved': 0,
             'validated_on_scope': 0,
@@ -185,6 +187,14 @@ class NarrativeProcessor:
         # 3. Load active storylines for matching
         active_storylines = self._load_active_storylines()
         logger.info(f"Active storylines for matching: {len(active_storylines)}")
+
+        # 3.5. Retry orphan pool against active storylines
+        if not dry_run:
+            orphan_recovery = self._retry_orphan_pool(active_storylines)
+            stats['orphans_recovered'] = orphan_recovery['recovered']
+            if orphan_recovery['recovered'] > 0:
+                # Reload storylines so events/embeddings reflect absorbed orphans
+                active_storylines = self._load_active_storylines()
 
         # 4. Match events to existing storylines
         matched_events = []     # (event, storyline_id) tuples
@@ -224,9 +234,11 @@ class NarrativeProcessor:
             self._assign_event_to_storyline(event, storyline_id)
             updated_storyline_ids.add(storyline_id)
 
-        # 6. Cluster orphaned events with HDBSCAN → new storylines
-        new_storyline_ids = self._cluster_residuals(orphaned_events)
+        # 6. Cluster orphaned events with HDBSCAN → new storylines (noise → orphan buffer)
+        cluster_result = self._cluster_residuals(orphaned_events)
+        new_storyline_ids = cluster_result['created_ids']
         stats['new_storylines'] = len(new_storyline_ids)
+        stats['orphans_buffered'] = cluster_result['buffered_count']
         updated_storyline_ids.update(new_storyline_ids)
 
         # 7. Evolve narrative summaries for all updated storylines
@@ -596,29 +608,28 @@ class NarrativeProcessor:
     # STAGE 3: HDBSCAN DISCOVERY
     # =========================================================================
 
-    def _cluster_residuals(self, orphaned_events: List[Dict]) -> List[int]:
+    def _cluster_residuals(self, orphaned_events: List[Dict]) -> Dict[str, Any]:
         """
         Apply HDBSCAN to orphaned events to discover new storylines.
+        Noise events (label == -1) are sent to the orphan buffer pool
+        instead of creating singleton storylines.
 
-        Returns list of created storyline IDs.
+        Returns dict with 'created_ids' and 'buffered_count'.
         """
+        result = {'created_ids': [], 'buffered_count': 0}
+
         if len(orphaned_events) < self.HDBSCAN_MIN_CLUSTER_SIZE:
-            # Too few events — create individual storylines for each
-            created_ids = []
-            for event in orphaned_events:
-                sid = self._create_storyline_from_events([event])
-                if sid:
-                    created_ids.append(sid)
-            return created_ids
+            # Too few events to cluster — send to orphan buffer
+            self._store_orphan_events(orphaned_events)
+            result['buffered_count'] = len(orphaned_events)
+            logger.info(f"HDBSCAN: too few events ({len(orphaned_events)}), buffered as orphans")
+            return result
 
         if not HDBSCAN_AVAILABLE:
-            logger.warning("HDBSCAN not available (sklearn < 1.3). Creating individual storylines.")
-            created_ids = []
-            for event in orphaned_events:
-                sid = self._create_storyline_from_events([event])
-                if sid:
-                    created_ids.append(sid)
-            return created_ids
+            logger.warning("HDBSCAN not available (sklearn < 1.3). Buffering as orphans.")
+            self._store_orphan_events(orphaned_events)
+            result['buffered_count'] = len(orphaned_events)
+            return result
 
         # Build normalized embedding matrix (euclidean on unit vectors ≈ cosine)
         embeddings = np.array([e['embedding'] for e in orphaned_events])
@@ -657,13 +668,14 @@ class NarrativeProcessor:
                     f"  Cluster {cluster_label}: {len(cluster_events)} events → storyline #{sid}"
                 )
 
-        # Noise events become individual storylines
-        for event in noise_events:
-            sid = self._create_storyline_from_events([event])
-            if sid:
-                created_ids.append(sid)
+        # Noise events → orphan buffer pool (NOT singleton storylines)
+        if noise_events:
+            self._store_orphan_events(noise_events)
+            logger.info(f"  {n_noise} noise events → orphan buffer pool")
 
-        return created_ids
+        result['created_ids'] = created_ids
+        result['buffered_count'] = n_noise
+        return result
 
     def _create_storyline_from_events(self, events: List[Dict]) -> Optional[int]:
         """Create a new storyline from one or more events."""
@@ -737,6 +749,173 @@ class NarrativeProcessor:
         except Exception as e:
             logger.error(f"Error creating storyline: {e}")
             return None
+
+    # =========================================================================
+    # STAGE 3b: ORPHAN BUFFER POOL
+    # =========================================================================
+
+    def _store_orphan_events(self, events: List[Dict]) -> int:
+        """
+        Store unmatched events in the orphan buffer pool for future retry.
+
+        Args:
+            events: List of event dicts (article_ids, embedding, entities, etc.)
+
+        Returns:
+            Number of events stored.
+        """
+        if not events:
+            return 0
+
+        stored = 0
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    for event in events:
+                        # Compute centroid for single-event (already a centroid for micro-cluster)
+                        embedding = event['embedding']
+                        norm = np.linalg.norm(embedding)
+                        if norm > 0:
+                            embedding = embedding / norm
+
+                        entities = [
+                            self._clean_entity(e) for e in event.get('entities', [])
+                            if not self._is_garbage_entity(self._clean_entity(e))
+                        ]
+
+                        cur.execute("""
+                            INSERT INTO orphan_events (
+                                article_ids, representative_title,
+                                centroid_embedding, key_entities, category
+                            ) VALUES (%s, %s, %s::vector, %s, %s)
+                        """, (
+                            event['article_ids'],
+                            event.get('representative_title', '')[:200],
+                            embedding.tolist(),
+                            Json(entities[:15]),
+                            event.get('category'),
+                        ))
+                        stored += 1
+
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to store orphan events: {e}")
+
+        if stored:
+            logger.info(f"Stored {stored} events in orphan buffer pool")
+        return stored
+
+    def _retry_orphan_pool(self, active_storylines: List[Dict]) -> Dict[str, int]:
+        """
+        Try matching buffered orphan events against active storylines.
+        Orphans that match are assigned to the storyline and removed from the pool.
+        Orphans older than 14 days are discarded.
+
+        Args:
+            active_storylines: Current active storylines (from _load_active_storylines)
+
+        Returns:
+            Dict with 'recovered', 'expired', 'remaining' counts.
+        """
+        result = {'recovered': 0, 'expired': 0, 'remaining': 0}
+
+        if not active_storylines:
+            return result
+
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # 1. Expire old orphans (14 days)
+                    cur.execute("""
+                        DELETE FROM orphan_events
+                        WHERE created_at < NOW() - INTERVAL '14 days'
+                        RETURNING id
+                    """)
+                    result['expired'] = cur.rowcount
+                    if result['expired']:
+                        logger.info(f"Orphan pool: expired {result['expired']} stale orphans (>14 days)")
+
+                    # 2. Load remaining orphans
+                    cur.execute("""
+                        SELECT id, article_ids, representative_title,
+                               centroid_embedding, key_entities, category, retry_count
+                        FROM orphan_events
+                        ORDER BY created_at ASC
+                    """)
+                    orphan_rows = cur.fetchall()
+
+                conn.commit()
+
+            if not orphan_rows:
+                return result
+
+            logger.info(f"Orphan pool: retrying {len(orphan_rows)} buffered events")
+
+            recovered_ids = []  # orphan_event IDs to delete
+            recovered_storyline_ids = set()  # storylines that absorbed orphans
+
+            for row in orphan_rows:
+                orphan_id, article_ids, title, embedding, entities, category, retry_count = row
+                embedding_array = np.array(embedding)
+
+                # Build a pseudo-event dict for _find_best_match
+                pseudo_event = {
+                    'article_ids': article_ids,
+                    'representative_title': title,
+                    'embedding': embedding_array,
+                    'entities': entities if entities else [],
+                    'category': category,
+                }
+
+                match = self._find_best_match(pseudo_event, active_storylines)
+                if match:
+                    # Assign to storyline
+                    self._assign_event_to_storyline(pseudo_event, match['storyline_id'])
+                    recovered_ids.append(orphan_id)
+                    recovered_storyline_ids.add(match['storyline_id'])
+                    logger.debug(
+                        f"Orphan #{orphan_id} '{title[:40]}' → storyline #{match['storyline_id']} "
+                        f"(score={match['score']:.3f}, retries={retry_count})"
+                    )
+
+            # Delete recovered orphans and bump retry_count on remaining
+            if recovered_ids or orphan_rows:
+                with self.db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        if recovered_ids:
+                            cur.execute(
+                                "DELETE FROM orphan_events WHERE id = ANY(%s)",
+                                (recovered_ids,)
+                            )
+
+                        # Bump retry_count for remaining orphans
+                        remaining_ids = [
+                            row[0] for row in orphan_rows
+                            if row[0] not in set(recovered_ids)
+                        ]
+                        if remaining_ids:
+                            cur.execute("""
+                                UPDATE orphan_events
+                                SET retry_count = retry_count + 1,
+                                    last_retry = NOW()
+                                WHERE id = ANY(%s)
+                            """, (remaining_ids,))
+
+                    conn.commit()
+
+            result['recovered'] = len(recovered_ids)
+            result['remaining'] = len(orphan_rows) - len(recovered_ids)
+
+            if result['recovered']:
+                logger.info(
+                    f"Orphan pool: recovered {result['recovered']}, "
+                    f"remaining {result['remaining']}"
+                )
+
+        except Exception as e:
+            logger.error(f"Orphan pool retry failed (non-blocking): {e}")
+
+        return result
 
     # =========================================================================
     # STAGE 4: LLM SUMMARY EVOLUTION

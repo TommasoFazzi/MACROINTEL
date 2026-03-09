@@ -94,6 +94,8 @@ app/map/page.tsx (Server Component)
 | PERSON | Purple | People |
 | Default | Gray | Other entity types |
 
+Colors are shared with `/lib/communityColors.ts`. Toggle "COLOR: COMM" switches to community-based coloring (same palette as StorylineGraph).
+
 ## Cluster Colors
 
 | Point Count | Color |
@@ -102,3 +104,21 @@ app/map/page.tsx (Server Component)
 | 10-100 | Orange (#FF6B35) |
 | 100-750 | Pink (#F72585) |
 | 750+ | Red (#FF0000) |
+
+## Layer Toggles (Tier 3)
+
+| Toggle | Layer ID | Description |
+|--------|----------|-------------|
+| HEATMAP | `intel-heatmap` | Heatmap weighted by `intelligence_score` |
+| ARCS | `arc-lines` | LineStrings between entities sharing storylines (lazy-fetched from `/api/v1/map/arcs`) |
+| PULSE | `entity-pulse` | Animated ring on entities with `hours_ago < 48` |
+| COLOR: COMM | `entity-markers` | Community color mode (primary_community_id % 15) |
+
+## GeoJSON Feature Properties (enriched)
+
+Beyond basic `id, name, entity_type, mention_count, first_seen, last_seen`:
+- `intelligence_score` (0–1): composite signal significance score
+- `storyline_count`: number of linked active storylines
+- `top_storyline`: title of highest-momentum storyline
+- `primary_community_id`: community_id from highest-momentum storyline
+- `hours_ago`: hours since last_seen (used for pulse filter)

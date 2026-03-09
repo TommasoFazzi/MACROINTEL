@@ -5,6 +5,7 @@ Main ingestion pipeline that orchestrates feed parsing and content extraction.
 import json
 import hashlib
 import asyncio
+import os
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -237,6 +238,12 @@ class IngestionPipeline:
             output_file = self._save_output(articles, category)
             logger.info(f"Results saved to: {output_file}")
 
+            # Write to pipeline manifest if running inside orchestrator
+            self._write_manifest(output_file, len(articles))
+
+            # Write to pipeline manifest if running inside orchestrator
+            self._write_manifest(output_file, len(articles))
+
         logger.info("\n" + "=" * 80)
         logger.info("Pipeline execution completed successfully")
         logger.info("=" * 80)
@@ -272,6 +279,22 @@ class IngestionPipeline:
             json.dump(serializable_articles, f, indent=2, ensure_ascii=False)
 
         return output_file
+
+    def _write_manifest(self, output_file: Path, article_count: int):
+        """Write ingestion output to pipeline manifest if PIPELINE_MANIFEST_PATH is set."""
+        manifest_path = os.environ.get("PIPELINE_MANIFEST_PATH")
+        if not manifest_path:
+            return
+
+        try:
+            from scripts.pipeline_manifest import write_step
+            write_step("ingestion", {
+                "output_file": str(output_file),
+                "article_count": article_count,
+            })
+            logger.info(f"Manifest updated: ingestion → {output_file.name}")
+        except Exception as e:
+            logger.warning(f"Failed to write manifest (non-blocking): {e}")
 
     def get_summary(self, articles: List[Dict]) -> Dict:
         """

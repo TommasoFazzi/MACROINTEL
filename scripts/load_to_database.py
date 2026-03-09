@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
+from scripts.pipeline_manifest import get_step_output, write_step, get_manifest_path
 
 logger = get_logger(__name__)
 
@@ -110,12 +111,28 @@ def main():
     # Find and load data file
     logger.info("\n[STEP 3] Loading NLP-processed articles...")
 
-    # Determine which file to load
+    # Determine which file to load — prefer manifest, fall back to CLI arg, then mtime glob
     if len(sys.argv) > 1 and not sys.argv[1].startswith('--'):
         file_path = Path(sys.argv[1])
         if not file_path.exists():
             logger.error(f"File not found: {file_path}")
             return 1
+    elif get_manifest_path() is not None:
+        manifest_output = get_step_output("nlp_processing")
+        if manifest_output:
+            file_path = Path(manifest_output)
+            logger.info(f"Using manifest input: {file_path.name}")
+            if not file_path.exists():
+                logger.error(f"Manifest points to missing file: {file_path}")
+                return 1
+        else:
+            logger.warning("Manifest exists but nlp_processing step not found, falling back to mtime")
+            try:
+                file_path = find_latest_nlp_file()
+                logger.info(f"Using latest NLP file: {file_path.name}")
+            except FileNotFoundError as e:
+                logger.error(str(e))
+                return 1
     else:
         try:
             file_path = find_latest_nlp_file()
@@ -177,6 +194,14 @@ def main():
 
     # Close database connection
     db.close()
+
+    # Write result to manifest (if running inside orchestrated pipeline)
+    write_step("load_to_database", {
+        "input_file": str(file_path),
+        "articles_saved": save_stats.get("saved", 0),
+        "articles_skipped": save_stats.get("skipped", 0),
+        "total_chunks": save_stats.get("total_chunks", 0),
+    })
 
     logger.info("\n✓ All done!")
     return 0

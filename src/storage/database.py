@@ -244,6 +244,73 @@ class DatabaseManager:
                     cur.execute("REFRESH MATERIALIZED VIEW entity_idf")
                     logger.info("entity_idf materialized view refreshed (blocking)")
 
+    def refresh_entity_bridge(self) -> None:
+        """
+        Refresh mv_entity_storyline_bridge materialized view.
+        Uses CONCURRENTLY to avoid blocking API reads.
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_entity_storyline_bridge")
+                    logger.info("mv_entity_storyline_bridge refreshed (concurrent)")
+                except Exception as e:
+                    logger.warning(f"Concurrent refresh failed ({e}), falling back to blocking")
+                    conn.rollback()
+                    cur.execute("REFRESH MATERIALIZED VIEW mv_entity_storyline_bridge")
+                    logger.info("mv_entity_storyline_bridge refreshed (blocking)")
+
+    def compute_intelligence_scores(self) -> int:
+        """
+        Compute intelligence_score for all entities.
+        Formula: 0.3*mention_freq + 0.3*connectivity + 0.2*recency + 0.2*momentum
+
+        - mention_freq: normalized log(mention_count) / log(max_mention_count)
+        - connectivity: # linked active storylines (capped at 10)
+        - recency: exp(-0.1 * days_since_last_seen), capped at 90 days
+        - momentum: avg momentum_score of connected storylines
+
+        Returns:
+            Number of entities updated.
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH max_mentions AS (
+                        SELECT GREATEST(LN(MAX(mention_count) + 1), 1.0) AS max_log
+                        FROM entities
+                    ),
+                    bridge_agg AS (
+                        SELECT
+                            entity_id,
+                            COUNT(DISTINCT storyline_id) AS storyline_count,
+                            COALESCE(AVG(momentum_score), 0) AS avg_momentum
+                        FROM mv_entity_storyline_bridge
+                        GROUP BY entity_id
+                    )
+                    UPDATE entities e SET
+                        intelligence_score = LEAST(1.0, GREATEST(0.0,
+                            -- mention_freq (0.3)
+                            0.3 * (LN(e.mention_count + 1) / mm.max_log)
+                            -- connectivity (0.3)
+                            + 0.3 * (LEAST(COALESCE(ba.storyline_count, 0), 10) / 10.0)
+                            -- recency (0.2)
+                            + 0.2 * EXP(-0.1 * LEAST(
+                                EXTRACT(EPOCH FROM (NOW() - COALESCE(e.last_seen, e.created_at))) / 86400.0,
+                                90
+                            ))
+                            -- momentum (0.2)
+                            + 0.2 * COALESCE(ba.avg_momentum, 0)
+                        ))
+                    FROM max_mentions mm
+                    LEFT JOIN bridge_agg ba ON ba.entity_id = e.id
+                """)
+                updated = cur.rowcount
+            conn.commit()
+
+        logger.info(f"intelligence_score computed for {updated} entities")
+        return updated
+
     def save_article(self, article: Dict[str, Any]) -> Optional[int]:
         """
         Save a single processed article with its chunks and embeddings.
@@ -1432,6 +1499,386 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting entities with coordinates: {e}")
             return {'type': 'FeatureCollection', 'features': []}
+
+    def get_entities_for_map(
+        self,
+        limit: int = 5000,
+        entity_types: Optional[List[str]] = None,
+        days: Optional[int] = None,
+        min_mentions: Optional[int] = None,
+        min_score: Optional[float] = None,
+        search: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get entities with coordinates in GeoJSON format with filtering support.
+
+        This is the primary method for the Intelligence Map. It supports
+        filtering by entity_type, recency, significance, and name search.
+
+        Args:
+            limit: Maximum number of entities to return
+            entity_types: Filter by entity types (GPE, ORG, PERSON, LOC, FAC)
+            days: Only entities seen in the last N days
+            min_mentions: Minimum mention_count threshold
+            min_score: Minimum intelligence_score threshold (0–1)
+            search: Case-insensitive name search (ILIKE)
+
+        Returns:
+            GeoJSON FeatureCollection with total_count and filtered_count.
+            Each feature includes: intelligence_score, storyline_count,
+            top_storyline, primary_community_id, hours_ago.
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Build dynamic WHERE clause (using e. prefix for the JOIN)
+                    conditions = [
+                        "e.latitude IS NOT NULL",
+                        "e.longitude IS NOT NULL",
+                        "e.geo_status = 'FOUND'",
+                    ]
+                    params: list = []
+
+                    if entity_types:
+                        conditions.append("e.entity_type = ANY(%s)")
+                        params.append(entity_types)
+
+                    if days:
+                        conditions.append("e.last_seen >= NOW() - INTERVAL '%s days'")
+                        params.append(days)
+
+                    if min_mentions:
+                        conditions.append("e.mention_count >= %s")
+                        params.append(min_mentions)
+
+                    if min_score is not None:
+                        conditions.append("COALESCE(e.intelligence_score, 0) >= %s")
+                        params.append(min_score)
+
+                    if search:
+                        conditions.append("e.name ILIKE %s")
+                        params.append(f"%{search}%")
+
+                    where_clause = " AND ".join(conditions)
+
+                    # Get total geocoded count (unfiltered) for HUD display
+                    cur.execute("""
+                        SELECT COUNT(*) FROM entities
+                        WHERE latitude IS NOT NULL
+                          AND longitude IS NOT NULL
+                          AND geo_status = 'FOUND'
+                    """)
+                    total_count = cur.fetchone()[0]
+
+                    # Get filtered entities with intelligence enrichment
+                    query = f"""
+                        SELECT
+                            e.id, e.name, e.entity_type, e.latitude, e.longitude,
+                            e.mention_count, e.metadata, e.first_seen, e.last_seen,
+                            COALESCE(e.intelligence_score, 0.0)               AS intelligence_score,
+                            COALESCE(esb.storyline_count, 0)                  AS storyline_count,
+                            esb.top_storyline,
+                            esb.primary_community_id,
+                            EXTRACT(EPOCH FROM (
+                                NOW() - COALESCE(e.last_seen, e.created_at)
+                            )) / 3600.0                                        AS hours_ago
+                        FROM entities e
+                        LEFT JOIN (
+                            SELECT
+                                entity_id,
+                                COUNT(DISTINCT storyline_id)                                              AS storyline_count,
+                                (ARRAY_AGG(storyline_title ORDER BY momentum_score DESC NULLS LAST))[1]  AS top_storyline,
+                                (ARRAY_AGG(community_id    ORDER BY momentum_score DESC NULLS LAST))[1]  AS primary_community_id
+                            FROM mv_entity_storyline_bridge
+                            GROUP BY entity_id
+                        ) esb ON esb.entity_id = e.id
+                        WHERE {where_clause}
+                        ORDER BY e.intelligence_score DESC NULLS LAST, e.mention_count DESC
+                        LIMIT %s
+                    """
+                    params.append(limit)
+                    cur.execute(query, params)
+
+                    features = []
+                    for row in cur.fetchall():
+                        hours_ago_val = row[13]
+                        features.append({
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'Point',
+                                'coordinates': [float(row[4]), float(row[3])]  # [lng, lat]
+                            },
+                            'properties': {
+                                'id': row[0],
+                                'name': row[1],
+                                'entity_type': row[2],
+                                'mention_count': row[5],
+                                'metadata': row[6] or {},
+                                'first_seen': row[7].isoformat() if row[7] else None,
+                                'last_seen': row[8].isoformat() if row[8] else None,
+                                'intelligence_score': float(row[9]),
+                                'storyline_count': int(row[10]),
+                                'top_storyline': row[11],
+                                'primary_community_id': row[12],
+                                'hours_ago': int(hours_ago_val) if hours_ago_val is not None else 9999,
+                            }
+                        })
+
+                    return {
+                        'type': 'FeatureCollection',
+                        'features': features,
+                        'total_count': total_count,
+                        'filtered_count': len(features),
+                    }
+
+        except Exception as e:
+            logger.error(f"Error getting entities for map: {e}")
+            return {
+                'type': 'FeatureCollection',
+                'features': [],
+                'total_count': 0,
+                'filtered_count': 0,
+            }
+
+    def get_entity_detail_with_storylines(
+        self,
+        entity_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get full entity detail including related articles AND related storylines.
+
+        The storyline connection traverses the 4-hop join path:
+        entities → entity_mentions → articles → article_storylines → storylines
+
+        Args:
+            entity_id: Entity ID
+
+        Returns:
+            Entity dict with related_articles and related_storylines, or None
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # 1. Get entity base data
+                    cur.execute("""
+                        SELECT
+                            id, name, entity_type, latitude, longitude,
+                            mention_count, first_seen, last_seen, metadata
+                        FROM entities
+                        WHERE id = %s
+                    """, (entity_id,))
+
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+
+                    entity = {
+                        'id': row[0],
+                        'name': row[1],
+                        'entity_type': row[2],
+                        'latitude': float(row[3]) if row[3] else None,
+                        'longitude': float(row[4]) if row[4] else None,
+                        'mention_count': row[5],
+                        'first_seen': row[6].isoformat() if row[6] else None,
+                        'last_seen': row[7].isoformat() if row[7] else None,
+                        'metadata': row[8] or {},
+                    }
+
+                    # 2. Get related articles (most recent 15)
+                    cur.execute("""
+                        SELECT DISTINCT
+                            a.id, a.title, a.link, a.published_date, a.source
+                        FROM articles a
+                        JOIN entity_mentions em ON a.id = em.article_id
+                        WHERE em.entity_id = %s
+                        ORDER BY a.published_date DESC NULLS LAST
+                        LIMIT 15
+                    """, (entity_id,))
+
+                    entity['related_articles'] = [
+                        {
+                            'id': r[0],
+                            'title': r[1],
+                            'link': r[2],
+                            'published_date': r[3].isoformat() if r[3] else None,
+                            'source': r[4],
+                        }
+                        for r in cur.fetchall()
+                    ]
+
+                    # 3. Get related storylines via the 4-hop join
+                    #    entity → entity_mentions → articles → article_storylines → storylines
+                    #    Only active/emerging/stabilized (non-archived)
+                    cur.execute("""
+                        SELECT DISTINCT
+                            s.id, s.title, s.narrative_status,
+                            s.momentum_score, s.article_count, s.community_id
+                        FROM storylines s
+                        JOIN article_storylines ast ON s.id = ast.storyline_id
+                        JOIN entity_mentions em ON ast.article_id = em.article_id
+                        WHERE em.entity_id = %s
+                          AND s.narrative_status IN ('emerging', 'active', 'stabilized')
+                        ORDER BY s.momentum_score DESC
+                        LIMIT 10
+                    """, (entity_id,))
+
+                    entity['related_storylines'] = [
+                        {
+                            'id': r[0],
+                            'title': r[1],
+                            'narrative_status': r[2],
+                            'momentum_score': float(r[3]) if r[3] else 0.0,
+                            'article_count': r[4],
+                            'community_id': r[5],
+                        }
+                        for r in cur.fetchall()
+                    ]
+
+                    return entity
+
+        except Exception as e:
+            logger.error(f"Error getting entity detail with storylines: {e}")
+            return None
+
+    def get_entity_arcs(
+        self,
+        min_score: float = 0.3,
+        limit: int = 300,
+    ) -> Dict[str, Any]:
+        """
+        Get entity pairs that share at least one active storyline, as GeoJSON LineStrings.
+
+        Used by the Intelligence Map arc/connection layer to show entity co-occurrence.
+        Only entities with intelligence_score >= min_score are included to avoid clutter.
+
+        Args:
+            min_score: Minimum intelligence_score for both endpoints
+            limit: Maximum number of arcs to return (ordered by shared storylines desc)
+
+        Returns:
+            GeoJSON FeatureCollection of LineString features with properties:
+            source_name, target_name, shared_storylines, max_momentum
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT
+                            e1.name        AS source_name,
+                            e1.longitude   AS source_lng,
+                            e1.latitude    AS source_lat,
+                            e2.name        AS target_name,
+                            e2.longitude   AS target_lng,
+                            e2.latitude    AS target_lat,
+                            COUNT(DISTINCT b1.storyline_id)  AS shared_storylines,
+                            MAX(b1.momentum_score)           AS max_momentum
+                        FROM mv_entity_storyline_bridge b1
+                        JOIN mv_entity_storyline_bridge b2
+                            ON  b1.storyline_id = b2.storyline_id
+                            AND b1.entity_id < b2.entity_id
+                        JOIN entities e1
+                            ON  e1.id = b1.entity_id
+                            AND e1.geo_status = 'FOUND'
+                            AND e1.latitude IS NOT NULL
+                            AND COALESCE(e1.intelligence_score, 0) >= %s
+                        JOIN entities e2
+                            ON  e2.id = b2.entity_id
+                            AND e2.geo_status = 'FOUND'
+                            AND e2.latitude IS NOT NULL
+                            AND COALESCE(e2.intelligence_score, 0) >= %s
+                        GROUP BY
+                            e1.name, e1.longitude, e1.latitude,
+                            e2.name, e2.longitude, e2.latitude
+                        ORDER BY shared_storylines DESC, max_momentum DESC
+                        LIMIT %s
+                    """, (min_score, min_score, limit))
+
+                    features = []
+                    for row in cur.fetchall():
+                        (source_name, source_lng, source_lat,
+                         target_name, target_lng, target_lat,
+                         shared, momentum) = row
+                        features.append({
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'LineString',
+                                'coordinates': [
+                                    [float(source_lng), float(source_lat)],
+                                    [float(target_lng), float(target_lat)],
+                                ],
+                            },
+                            'properties': {
+                                'source_name': source_name,
+                                'target_name': target_name,
+                                'shared_storylines': shared,
+                                'max_momentum': float(momentum) if momentum else 0.0,
+                            }
+                        })
+
+                    return {
+                        'type': 'FeatureCollection',
+                        'features': features,
+                        'arc_count': len(features),
+                    }
+
+        except Exception as e:
+            logger.error(f"Error getting entity arcs: {e}")
+            return {'type': 'FeatureCollection', 'features': [], 'arc_count': 0}
+
+    def get_map_stats(self) -> Dict[str, Any]:
+        """
+        Get live stats for the Intelligence Map HUD overlay.
+
+        Returns:
+            Dict with total_entities, geocoded_entities, active_storylines,
+            and entity_types breakdown.
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Total entities
+                    cur.execute("SELECT COUNT(*) FROM entities")
+                    total = cur.fetchone()[0]
+
+                    # Geocoded entities
+                    cur.execute("""
+                        SELECT COUNT(*) FROM entities
+                        WHERE latitude IS NOT NULL AND geo_status = 'FOUND'
+                    """)
+                    geocoded = cur.fetchone()[0]
+
+                    # Active storylines
+                    cur.execute("""
+                        SELECT COUNT(*) FROM storylines
+                        WHERE narrative_status IN ('emerging', 'active', 'stabilized')
+                    """)
+                    active_storylines = cur.fetchone()[0]
+
+                    # Entity type breakdown (geocoded only)
+                    cur.execute("""
+                        SELECT entity_type, COUNT(*)
+                        FROM entities
+                        WHERE latitude IS NOT NULL AND geo_status = 'FOUND'
+                        GROUP BY entity_type
+                        ORDER BY COUNT(*) DESC
+                    """)
+                    entity_types = {row[0]: row[1] for row in cur.fetchall()}
+
+                    return {
+                        'total_entities': total,
+                        'geocoded_entities': geocoded,
+                        'active_storylines': active_storylines,
+                        'entity_types': entity_types,
+                    }
+
+        except Exception as e:
+            logger.error(f"Error getting map stats: {e}")
+            return {
+                'total_entities': 0,
+                'geocoded_entities': 0,
+                'active_storylines': 0,
+                'entity_types': {},
+            }
 
     def get_pending_entities(
         self,

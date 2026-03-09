@@ -26,6 +26,7 @@ load_dotenv(project_root / '.env')
 
 from src.nlp.processing import NLPProcessor
 from src.utils.logger import get_logger
+from scripts.pipeline_manifest import get_step_output, write_step, get_manifest_path
 
 logger = get_logger(__name__)
 
@@ -82,12 +83,28 @@ def main():
     logger.info("NLP PROCESSING SCRIPT")
     logger.info("=" * 80)
 
-    # Find input file
+    # Find input file — prefer manifest, fall back to CLI arg, then mtime glob
     if args.input:
         input_file = Path(args.input)
         if not input_file.exists():
             logger.error(f"File not found: {input_file}")
             return 1
+    elif get_manifest_path() is not None:
+        manifest_output = get_step_output("ingestion")
+        if manifest_output:
+            input_file = Path(manifest_output)
+            logger.info(f"Using manifest input: {input_file.name}")
+            if not input_file.exists():
+                logger.error(f"Manifest points to missing file: {input_file}")
+                return 1
+        else:
+            logger.warning("Manifest exists but ingestion step not found, falling back to mtime")
+            try:
+                input_file = find_latest_raw_file()
+                logger.info(f"Using latest raw file: {input_file.name}")
+            except FileNotFoundError as e:
+                logger.error(str(e))
+                return 1
     else:
         try:
             input_file = find_latest_raw_file()
@@ -168,6 +185,15 @@ def main():
 
     logger.info(f"Successfully processed: {successful}")
     logger.info(f"Articles with chunks: {with_chunks}")
+
+    # Write output to manifest (if running inside orchestrated pipeline)
+    write_step("nlp_processing", {
+        "input_file": str(input_file),
+        "output_file": str(output_file),
+        "article_count": len(processed_articles),
+        "successful": successful,
+    })
+
     logger.info(f"\n✓ All done! Next step: python scripts/load_to_database.py")
 
     return 0

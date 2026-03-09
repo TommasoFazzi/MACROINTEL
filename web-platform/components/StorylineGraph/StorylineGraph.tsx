@@ -32,15 +32,12 @@ interface GraphLink {
   relation_type: string;
 }
 
+import { COMMUNITY_PALETTE, COMMUNITY_OTHER } from '@/lib/communityColors';
+
 // Top-N palette: 15 perceptually distinct colors for the largest communities.
-// All other communities render in OTHER_COLOR (neutral dark gray).
-const COMMUNITY_PALETTE = [
-  '#FF6B35', '#00A8E8', '#39D353', '#FFD700',
-  '#FF4081', '#7B61FF', '#00E5CC', '#FF7043',
-  '#E040FB', '#00BFA5', '#FFAB40', '#448AFF',
-  '#FF5252', '#69F0AE', '#40C4FF',
-];
-const OTHER_COLOR = '#2A3A4A';
+// All other communities render in COMMUNITY_OTHER (neutral dark gray).
+// Palette is shared with TacticalMap (/map) for visual consistency.
+const OTHER_COLOR = COMMUNITY_OTHER;
 const EGO_HIGHLIGHT = '#FFFFFF'; // bright highlight for ghost nodes during ego drill-down
 const TOP_N = COMMUNITY_PALETTE.length; // 15
 

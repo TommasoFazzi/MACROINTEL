@@ -1,6 +1,7 @@
 'use client';
 
-import { X, MapPin, Calendar, FileText, ExternalLink } from 'lucide-react';
+import { X, MapPin, Calendar, FileText, ExternalLink, GitBranch, TrendingUp } from 'lucide-react';
+import { ENTITY_TYPE_COLORS, ENTITY_TYPE_LABELS } from '@/types/entities';
 
 interface Article {
   id: number;
@@ -8,6 +9,15 @@ interface Article {
   link: string;
   published_date: string;
   source: string;
+}
+
+interface Storyline {
+  id: number;
+  title: string;
+  narrative_status: string;
+  momentum_score: number;
+  article_count: number;
+  community_id: number | null;
 }
 
 interface EntityData {
@@ -21,12 +31,19 @@ interface EntityData {
   last_seen: string;
   metadata: Record<string, any>;
   related_articles: Article[];
+  related_storylines?: Storyline[];
 }
 
 interface EntityDossierProps {
   entity: EntityData | null;
   onClose: () => void;
 }
+
+const STATUS_COLORS: Record<string, string> = {
+  emerging: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30',
+  active: 'text-green-400 bg-green-400/10 border-green-400/30',
+  stabilized: 'text-blue-400 bg-blue-400/10 border-blue-400/30',
+};
 
 export default function EntityDossier({ entity, onClose }: EntityDossierProps) {
   if (!entity) return null;
@@ -41,27 +58,8 @@ export default function EntityDossier({ entity, onClose }: EntityDossierProps) {
     });
   };
 
-  const getEntityTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      'GPE': 'Geopolitical Entity',
-      'LOC': 'Location',
-      'FAC': 'Facility',
-      'PERSON': 'Person',
-      'ORG': 'Organization'
-    };
-    return labels[type] || type;
-  };
-
-  const getEntityTypeColor = (type: string) => {
-    const colors: Record<string, string> = {
-      'GPE': 'text-cyan-400',
-      'LOC': 'text-green-400',
-      'FAC': 'text-orange-400',
-      'PERSON': 'text-purple-400',
-      'ORG': 'text-yellow-400'
-    };
-    return colors[type] || 'text-gray-400';
-  };
+  const typeColor = ENTITY_TYPE_COLORS[entity.entity_type] || '#888';
+  const typeLabel = ENTITY_TYPE_LABELS[entity.entity_type] || entity.entity_type;
 
   return (
     <div className="fixed right-4 top-4 bottom-4 w-[450px] bg-gray-900/95 backdrop-blur-sm border-2 border-cyan-500/30 shadow-2xl z-50 flex flex-col">
@@ -70,15 +68,15 @@ export default function EntityDossier({ entity, onClose }: EntityDossierProps) {
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></div>
+              <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: typeColor }}></div>
               <span className="text-xs font-mono text-cyan-400 uppercase tracking-wider">
                 Entity Dossier
               </span>
             </div>
             <h2 className="text-2xl font-bold text-white mb-1">{entity.name}</h2>
             <div className="flex items-center gap-2">
-              <span className={`text-sm font-mono ${getEntityTypeColor(entity.entity_type)}`}>
-                {getEntityTypeLabel(entity.entity_type)}
+              <span className="text-sm font-mono" style={{ color: typeColor }}>
+                {typeLabel}
               </span>
               <span className="text-gray-500">•</span>
               <span className="text-sm text-gray-400 font-mono">
@@ -108,13 +106,13 @@ export default function EntityDossier({ entity, onClose }: EntityDossierProps) {
             <div>
               <div className="text-gray-500 text-xs mb-1">Coordinates</div>
               <div className="font-mono text-white">
-                {entity.latitude.toFixed(4)}°N<br />
-                {entity.longitude.toFixed(4)}°E
+                {entity.latitude?.toFixed(4)}°N<br />
+                {entity.longitude?.toFixed(4)}°E
               </div>
             </div>
             <div>
               <div className="text-gray-500 text-xs mb-1">Mention Count</div>
-              <div className="font-mono text-cyan-400 text-xl font-bold">
+              <div className="font-mono text-xl font-bold" style={{ color: typeColor }}>
                 {entity.mention_count}
               </div>
             </div>
@@ -132,6 +130,42 @@ export default function EntityDossier({ entity, onClose }: EntityDossierProps) {
             </div>
           </div>
         </div>
+
+        {/* Related Storylines — the intelligence layer */}
+        {entity.related_storylines && entity.related_storylines.length > 0 && (
+          <div className="border border-orange-500/20 bg-gray-800/50 p-4 rounded">
+            <h3 className="text-sm font-mono text-orange-400 uppercase mb-3 flex items-center gap-2">
+              <GitBranch size={14} />
+              Active Storylines ({entity.related_storylines.length})
+            </h3>
+            <div className="space-y-2.5">
+              {entity.related_storylines.map((storyline) => (
+                <a
+                  key={storyline.id}
+                  href={`/stories?highlight=${storyline.id}`}
+                  className="block border-l-2 border-orange-500/30 pl-3 py-2 hover:border-orange-500 hover:bg-gray-700/30 transition-all group rounded-r"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${STATUS_COLORS[storyline.narrative_status] || 'text-gray-400'}`}>
+                      {storyline.narrative_status.toUpperCase()}
+                    </span>
+                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                      <TrendingUp size={10} />
+                      <span className="font-mono">{(storyline.momentum_score * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <h4 className="text-sm text-white group-hover:text-orange-400 transition-colors leading-snug">
+                    {storyline.title}
+                  </h4>
+                  <div className="text-[10px] text-gray-500 font-mono mt-1">
+                    {storyline.article_count} articles
+                    {storyline.community_id != null && ` • Community ${storyline.community_id}`}
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Related Articles */}
         <div className="border border-cyan-500/20 bg-gray-800/50 p-4 rounded">

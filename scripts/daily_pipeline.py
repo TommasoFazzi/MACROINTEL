@@ -40,6 +40,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env", override=False)  # optional: env vars from Docker take precedence
 
 from src.utils.logger import get_logger
+from scripts.pipeline_manifest import create_manifest, cleanup_old_manifests
 
 
 # =============================================================================
@@ -126,6 +127,27 @@ DEFAULT_STEPS = [
         description="Community detection (Louvain) sul grafo narrativo",
         timeout_seconds=300,  # 5 min safety net
         continue_on_failure=True  # Non blocca il report se fallisce
+    ),
+    PipelineStep(
+        name="entity_extraction",
+        command="python scripts/extract_entities.py",
+        description="Estrazione entità dagli articoli e popolamento tabella entities",
+        timeout_seconds=600,  # 10 min
+        continue_on_failure=True  # Map enrichment, non blocca il report
+    ),
+    PipelineStep(
+        name="geocoding",
+        command="python scripts/geocode_entities.py --limit 200",
+        description="Geocoding entità via Photon (komoot.io)",
+        timeout_seconds=300,  # 5 min (Photon is fast)
+        continue_on_failure=True  # Map enrichment, non blocca il report
+    ),
+    PipelineStep(
+        name="refresh_map_data",
+        command="python scripts/refresh_map_data.py",
+        description="Refresh bridge + intelligence scores + invalida cache mappa",
+        timeout_seconds=120,  # 2 min
+        continue_on_failure=True  # Map enrichment, non blocca il report
     ),
     PipelineStep(
         name="generate_report",
@@ -254,6 +276,9 @@ class DailyPipeline:
         self.project_root = PROJECT_ROOT
         self.log_dir = PROJECT_ROOT / "logs"
         self.log_file = self.log_dir / f"daily_pipeline_{self.run_id}.log"
+
+        # Create pipeline manifest for deterministic file passing
+        self.manifest_path = create_manifest(self.run_id)
 
         # Setup logging
         self._setup_logging()
@@ -396,8 +421,9 @@ class DailyPipeline:
         if not self.dry_run:
             self._send_notification(pipeline_result)
 
-        # Cleanup old logs
+        # Cleanup old logs and manifests
         self._cleanup_old_logs()
+        cleanup_old_manifests(keep_days=30)
 
         return pipeline_result
 
@@ -511,7 +537,11 @@ class DailyPipeline:
                 text=True,
                 timeout=step.timeout_seconds,
                 cwd=str(self.project_root),
-                env={**os.environ, 'PYTHONPATH': str(self.project_root)}
+                env={
+                    **os.environ,
+                    'PYTHONPATH': str(self.project_root),
+                    'PIPELINE_MANIFEST_PATH': str(self.manifest_path),
+                }
             )
 
             duration = time.time() - start_time
@@ -596,6 +626,7 @@ class DailyPipeline:
         self.logger.info(f"Run ID: {self.run_id}")
         self.logger.info(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"Log file: {self.log_file}")
+        self.logger.info(f"Manifest: {self.manifest_path}")
         self.logger.info(f"Dry-run: {self.dry_run}")
         self.logger.info(f"Verbose: {self.verbose}")
         self.logger.info("")

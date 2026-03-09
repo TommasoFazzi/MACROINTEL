@@ -66,6 +66,8 @@ services:
       ORACLE_REQUIRE_GEMINI_KEY: ${ORACLE_REQUIRE_GEMINI_KEY:-true}
       REPORT_OUTPUT_DIR: /app/reports
       DATA_DIR: /app/data
+      PHOTON_URL: ${PHOTON_URL:-http://photon:2322/api}
+      INTELLIGENCE_API_URL: http://backend:8000
     volumes:
       - reports:/app/reports
       - appdata:/app/data
@@ -155,11 +157,37 @@ services:
         max-size: "20m"
         max-file: "3"
 
+  # ---------------------------------------------------------------------------
+  # Photon geocoding server (self-hosted, opt-in)
+  # Enable with: docker compose --profile photon up
+  #
+  # First-time setup — download the Italia extract:
+  #   docker compose --profile photon run --rm photon \
+  #     sh -c "wget -qO- https://download1.graphhopper.com/public/extracts/by-country-code/it/photon-db-it-latest.tar.bz2 | tar -xj -C /photon"
+  # ---------------------------------------------------------------------------
+  photon:
+    image: rbretecher/photon:latest
+    profiles: ["photon"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2322:2322"
+    volumes:
+      - photon_data:/photon
+    mem_limit: 3g
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   pgdata:
   reports:
   appdata:
   logs:
+  photon_data:
 
 networks:
   internal:

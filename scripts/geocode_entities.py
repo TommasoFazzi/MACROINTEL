@@ -2,9 +2,12 @@
 """
 Geocoding Service for Intelligence Map
 
-Uses Nominatim (OpenStreetMap) to geocode entity names to coordinates.
-Respects rate limits (1 req/sec) and implements proper error handling.
+Uses Photon (OSM-based, no strict rate limit).
+Self-hosted Photon Docker is preferred in production (set PHOTON_URL env var).
+Falls back to komoot.io public API when PHOTON_URL is not set.
+Falls back to static cache for common geopolitical locations.
 """
+import os
 import sys
 import time
 import requests
@@ -20,10 +23,14 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Nominatim API configuration
-NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-USER_AGENT = "INTEL_ITA_Intelligence_Map/1.0"
-RATE_LIMIT_DELAY = 1.0  # 1 second between requests
+# Photon API configuration
+# Use PHOTON_URL env var to point at self-hosted instance (e.g. http://photon:2322/api)
+PHOTON_URL = os.environ.get("PHOTON_URL", "https://photon.komoot.io/api")
+USER_AGENT = "INTEL_ITA_Intelligence_Map/2.0"
+COURTESY_DELAY = 0.1  # 100ms courtesy delay between requests
+# Italy-centric bias coordinates
+BIAS_LAT = 41.9
+BIAS_LON = 12.5
 
 # Static cache for common locations (no API call needed)
 STATIC_LOCATION_CACHE = {
@@ -101,10 +108,10 @@ class GeocodingService:
         self.last_request_time = 0
     
     def _respect_rate_limit(self):
-        """Ensure we don't exceed Nominatim's rate limit (1 req/sec)"""
+        """Courtesy delay between API requests (Photon has no strict limit)."""
         elapsed = time.time() - self.last_request_time
-        if elapsed < RATE_LIMIT_DELAY:
-            time.sleep(RATE_LIMIT_DELAY - elapsed)
+        if elapsed < COURTESY_DELAY:
+            time.sleep(COURTESY_DELAY - elapsed)
         self.last_request_time = time.time()
 
     def _check_cache(self, name: str) -> Optional[Tuple[float, float]]:
@@ -129,7 +136,7 @@ class GeocodingService:
         entity_type: str
     ) -> Tuple[Optional[float], Optional[float], str]:
         """
-        Geocode an entity name to coordinates.
+        Geocode an entity name to coordinates using Photon.
 
         Args:
             name: Entity name (e.g., "Taiwan", "New York")
@@ -144,53 +151,51 @@ class GeocodingService:
         if cached_coords:
             return cached_coords[0], cached_coords[1], 'FOUND'
 
-        # Respect rate limit for API calls
+        # Courtesy delay for API calls
         self._respect_rate_limit()
 
         try:
-            # Build search query based on entity type
-            query = name
-            
-            # Add type hints for better results
             params = {
-                'q': query,
-                'format': 'json',
-                'limit': 1,
-                'addressdetails': 1
+                'q': name,
+                'limit': 3,
+                'lang': 'en',
+                'lat': BIAS_LAT,
+                'lon': BIAS_LON,
             }
-            
-            # Adjust search based on entity type
-            if entity_type == 'GPE':  # Geo-Political Entity (countries, cities)
-                params['featuretype'] = 'country,city,state'
-            elif entity_type == 'LOC':  # Location
-                params['featuretype'] = 'natural,water'
-            elif entity_type == 'FAC':  # Facility
-                params['featuretype'] = 'building'
-            
-            response = self.session.get(NOMINATIM_URL, params=params, timeout=10)
+
+            # Add OSM tag filter based on entity type for better precision
+            if entity_type == 'GPE':
+                params['osm_tag'] = 'place'
+            elif entity_type == 'LOC':
+                params['osm_tag'] = 'natural'
+            elif entity_type == 'FAC':
+                params['osm_tag'] = 'building'
+
+            response = self.session.get(PHOTON_URL, params=params, timeout=10)
             response.raise_for_status()
-            
+
             data = response.json()
-            
-            if data and len(data) > 0:
-                result = data[0]
-                lat = float(result['lat'])
-                lng = float(result['lon'])
-                
+            features = data.get('features', [])
+
+            if features:
+                # Photon returns GeoJSON: coordinates are [lng, lat]
+                coords = features[0]['geometry']['coordinates']
+                lng, lat = coords[0], coords[1]
+
                 logger.info(f"✓ Geocoded '{name}' ({entity_type}): {lat}, {lng}")
                 return lat, lng, 'FOUND'
             else:
                 logger.warning(f"✗ No coordinates found for '{name}' ({entity_type})")
                 return None, None, 'NOT_FOUND'
-        
+
         except requests.exceptions.Timeout:
             logger.error(f"⚠ Timeout geocoding '{name}' - will retry later")
             return None, None, 'RETRY'
-        
+
         except requests.exceptions.RequestException as e:
             logger.error(f"⚠ Error geocoding '{name}': {e} - will retry later")
             return None, None, 'RETRY'
-        
+
         except Exception as e:
             logger.error(f"✗ Unexpected error geocoding '{name}': {e}")
             return None, None, 'NOT_FOUND'
@@ -243,13 +248,13 @@ def backfill_entity_coordinates(limit: int = None, entity_types: list = None, re
         logger.info("No entities to geocode!")
         return
 
-    # Calculate estimated time
+    # Calculate estimated time (Photon is ~10x faster than Nominatim)
     cache_hits_estimate = sum(1 for _, name, _, _ in entities if name in STATIC_LOCATION_CACHE)
     api_calls = len(entities) - cache_hits_estimate
-    estimated_seconds = api_calls * RATE_LIMIT_DELAY
+    estimated_seconds = api_calls * COURTESY_DELAY
     estimated_minutes = estimated_seconds / 60
 
-    logger.info(f"📊 Estimated time: {estimated_minutes:.1f} minutes")
+    logger.info(f"📊 Estimated time: {estimated_minutes:.1f} minutes ({api_calls} API calls via Photon)")
     logger.info(f"  ⚡ Cache hits (instant): ~{cache_hits_estimate}")
     logger.info(f"  🌐 API calls (1 req/sec): ~{api_calls}")
     logger.info("")
