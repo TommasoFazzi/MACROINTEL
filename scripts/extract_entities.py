@@ -6,6 +6,7 @@ Reads entities from articles.entities JSONB column and creates
 dedicated entity records for Intelligence Map visualization.
 """
 import sys
+import argparse
 from pathlib import Path
 from collections import Counter
 
@@ -18,23 +19,36 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def extract_entities_from_articles():
+def extract_entities_from_articles(days: int = 0):
     """
     Extract entities from articles and populate entities table.
+
+    Args:
+        days: Only process articles from the last N days (0 = all articles)
     """
     db = DatabaseManager()
-    
+
     logger.info("Extracting entities from articles...")
-    
-    # Get all articles with entities
+
+    # Get articles with entities, optionally filtered by date
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, entities
-                FROM articles
-                WHERE entities IS NOT NULL
-                  AND entities != '{}'::jsonb
-            """)
+            if days > 0:
+                logger.info(f"Filtering articles from last {days} days")
+                cur.execute("""
+                    SELECT id, entities
+                    FROM articles
+                    WHERE entities IS NOT NULL
+                      AND entities != '{}'::jsonb
+                      AND published_date >= NOW() - INTERVAL '%s days'
+                """, (days,))
+            else:
+                cur.execute("""
+                    SELECT id, entities
+                    FROM articles
+                    WHERE entities IS NOT NULL
+                      AND entities != '{}'::jsonb
+                """)
             
             articles = cur.fetchall()
     
@@ -117,16 +131,15 @@ def extract_entities_from_articles():
         if entity_id:
             saved_count += 1
             
-            # Save entity-article relationships
+            # Save entity-article relationships (batch insert)
             article_ids = article_entities[(entity_name, entity_type)]
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    for article_id in article_ids:
-                        cur.execute("""
-                            INSERT INTO entity_mentions (entity_id, article_id)
-                            VALUES (%s, %s)
-                            ON CONFLICT (entity_id, article_id) DO NOTHING
-                        """, (entity_id, article_id))
+                    cur.executemany("""
+                        INSERT INTO entity_mentions (entity_id, article_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT (entity_id, article_id) DO NOTHING
+                    """, [(entity_id, aid) for aid in article_ids])
     
     logger.info(f"✓ Saved {saved_count} entities to database")
     
@@ -146,4 +159,8 @@ def extract_entities_from_articles():
 
 
 if __name__ == "__main__":
-    extract_entities_from_articles()
+    parser = argparse.ArgumentParser(description="Extract entities from articles")
+    parser.add_argument('--days', type=int, default=0,
+                        help='Only process articles from last N days (0 = all)')
+    args = parser.parse_args()
+    extract_entities_from_articles(days=args.days)

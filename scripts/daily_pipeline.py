@@ -138,9 +138,9 @@ DEFAULT_STEPS = [
     ),
     PipelineStep(
         name="entity_extraction",
-        command="python scripts/extract_entities.py",
+        command="python scripts/extract_entities.py --days 2",
         description="Estrazione entità dagli articoli e popolamento tabella entities",
-        timeout_seconds=600,  # 10 min
+        timeout_seconds=300,  # 5 min (solo articoli ultimi 2 giorni)
         continue_on_failure=True  # Map enrichment, non blocca il report
     ),
     PipelineStep(
