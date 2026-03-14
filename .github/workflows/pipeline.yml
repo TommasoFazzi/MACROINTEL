@@ -48,18 +48,20 @@ jobs:
           printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           echo "${{ secrets.VPS_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-          # Tunnel: runner:5432 → Hetzner 127.0.0.1:5432 (postgres Docker su loopback)
-          # ExitOnForwardFailure=yes fa fallire il job esplicitamente se il tunnel non si apre
-          ssh -fN \
+          # Installa autossh per tunnel persistente (si riconnette se cade)
+          sudo apt-get install -y -q autossh
+          # Tunnel persistente: runner:5432 → Hetzner 127.0.0.1:5432
+          AUTOSSH_GATETIME=0 autossh -M 0 -fN \
             -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=30 \
+            -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=3 \
+            -o StrictHostKeyChecking=yes \
             -L 5432:127.0.0.1:5432 \
             deploy@${{ secrets.VPS_HOST }}
           sleep 5
           # Verifica esplicita che il tunnel sia attivo
           nc -z 127.0.0.1 5432 || (echo "ERROR: SSH tunnel failed - postgres unreachable on 127.0.0.1:5432" && exit 1)
-          echo "SSH tunnel OK - postgres reachable"
+          echo "SSH tunnel OK - postgres reachable on 127.0.0.1:5432"
 
       - name: Run pipeline
         env:
