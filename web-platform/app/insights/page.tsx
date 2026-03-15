@@ -27,12 +27,14 @@ interface InsightItem {
   summary_preview: string;
 }
 
+export const dynamic = 'force-dynamic';
+
 async function getInsights(): Promise<InsightItem[]> {
   const base =
     process.env.INTELLIGENCE_API_URL || 'http://localhost:8000';
   try {
     const res = await fetch(`${base}/api/v1/insights?limit=20`, {
-      next: { revalidate: 3600 }, // revalidate every hour
+      cache: 'no-store',
     });
     if (!res.ok) return [];
     const data = await res.json();
