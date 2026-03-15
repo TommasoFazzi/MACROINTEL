@@ -29,7 +29,6 @@ def _extract_executive_summary(content: str) -> str:
     if not content:
         return ""
 
-    # Try to find ## Executive Summary section
     patterns = [
         r"##\s+Executive Summary\s*\n(.*?)(?=\n##|\Z)",
         r"##\s+Sommario Esecutivo\s*\n(.*?)(?=\n##|\Z)",
@@ -40,8 +39,18 @@ def _extract_executive_summary(content: str) -> str:
         if match:
             return match.group(1).strip()
 
-    # Fallback: first 800 chars
     return content[:800].strip()
+
+
+def _extract_title(content: str) -> Optional[str]:
+    """Extract the first H1 heading from markdown content."""
+    if not content:
+        return None
+    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    if match:
+        title = re.sub(r"[^\w\s\-:,'\./]", "", match.group(1)).strip()
+        return title or None
+    return None
 
 
 def _get_content(draft: Optional[str], final: Optional[str]) -> str:
@@ -77,7 +86,6 @@ async def list_insights(request: Request, limit: int = 20):
                     SELECT
                         id,
                         slug,
-                        metadata->>'title' AS title,
                         report_date,
                         report_type,
                         COALESCE(metadata->>'category', report_type) AS category,
@@ -94,8 +102,9 @@ async def list_insights(request: Request, limit: int = 20):
 
         insights = []
         for r in rows:
-            rid, slug, title, report_date, rtype, category, draft, final = r
+            rid, slug, report_date, rtype, category, draft, final = r
             content = _get_content(draft, final)
+            title = _extract_title(content)
             summary = _extract_executive_summary(content)
             insights.append(
                 {
@@ -128,7 +137,6 @@ async def get_insight(request: Request, slug: str):
     is_truncated=true indicates additional content exists in the dashboard.
     No authentication required.
     """
-    # Basic slug validation — alphanumeric + hyphens only
     if not re.match(r"^[a-z0-9\-]{1,500}$", slug):
         raise HTTPException(status_code=404, detail="Insight not found")
 
@@ -141,7 +149,6 @@ async def get_insight(request: Request, slug: str):
                     SELECT
                         id,
                         slug,
-                        metadata->>'title' AS title,
                         report_date,
                         report_type,
                         COALESCE(metadata->>'category', report_type) AS category,
@@ -158,11 +165,11 @@ async def get_insight(request: Request, slug: str):
         if not row:
             raise HTTPException(status_code=404, detail="Insight not found")
 
-        rid, slug, title, report_date, rtype, category, draft, final = row
+        rid, slug, report_date, rtype, category, draft, final = row
         content = _get_content(draft, final)
+        title = _extract_title(content)
         executive_summary = _extract_executive_summary(content)
 
-        # Content preview: everything after the executive summary, first half
         remaining = content[content.find(executive_summary) + len(executive_summary):]
         preview_len = len(remaining) // 2
         content_preview = remaining[:preview_len].strip() if remaining else ""
