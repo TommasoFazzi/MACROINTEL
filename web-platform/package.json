@@ -9,12 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@hono/node-server": ">=1.19.10",
     "axios": "^1.13.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.25",
     "hono": ">=4.12.7",
-    "@hono/node-server": ">=1.19.10",
+    "jose": "^6.2.1",
     "lucide-react": "^0.563.0",
     "mapbox-gl": "^3.16.0",
     "next": "^16.1.6",

@@ -1,7 +1,7 @@
 {
-  "name": "INTEL ITA — AI-Powered Geopolitical Intelligence",
-  "short_name": "INTEL ITA",
-  "description": "Real-time geopolitical intelligence, cybersecurity monitoring, and macro-economic analysis powered by AI.",
+  "name": "MACROINTEL | AI-Powered OSINT & Threat Intelligence Platform",
+  "short_name": "MACROINTEL",
+  "description": "Monitor geopolitical risks, cyber threats, and macro-economic signals in real time. AI-powered OSINT platform processing 33+ intelligence sources daily.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0A1628",

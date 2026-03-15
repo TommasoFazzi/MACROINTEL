@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Menu, X, Map, GitBranch } from 'lucide-react';
+import { Menu, X, BookOpen, LogIn } from 'lucide-react';
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -51,13 +51,20 @@ export default function Navbar() {
               </svg>
             </div>
             <span className="text-xl font-bold tracking-tight">
-              <span className="text-[#FF6B35]">INTEL</span>
-              <span className="text-white"> ITA</span>
+              <span className="text-[#FF6B35]">MACRO</span>
+              <span className="text-white">INTEL</span>
             </span>
           </Link>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-8">
+            <Link
+              href="/insights"
+              className="text-sm font-medium text-gray-300 hover:text-[#FF6B35] transition-colors flex items-center gap-1.5"
+            >
+              <BookOpen size={14} />
+              Insights
+            </Link>
             <button
               onClick={() => scrollToSection('features')}
               className="text-sm font-medium text-gray-300 hover:text-[#FF6B35] transition-colors"
@@ -76,20 +83,17 @@ export default function Navbar() {
             >
               Contact
             </button>
-            <Button asChild variant="outline" className="border-[#FF6B35]/30 text-[#FF6B35] hover:bg-[#FF6B35]/10 hover:text-[#FF6B35]">
-              <Link href="/stories" className="flex items-center gap-2">
-                <GitBranch size={16} />
-                Storylines
+            <Button asChild variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5 border border-white/10">
+              <Link href="/access" className="flex items-center gap-2">
+                <LogIn size={16} />
+                Client Login
               </Link>
             </Button>
-            <Button asChild variant="outline" className="border-[#00A8E8]/30 text-[#00A8E8] hover:bg-[#00A8E8]/10 hover:text-[#00A8E8]">
-              <Link href="/map" className="flex items-center gap-2">
-                <Map size={16} />
-                Intelligence Map
-              </Link>
-            </Button>
-            <Button asChild>
-              <Link href="/dashboard">Access Dashboard</Link>
+            <Button
+              asChild
+              className="bg-[#FF6B35] hover:bg-[#F77F00] text-white"
+            >
+              <a href="#waitlist">Get Access</a>
             </Button>
           </div>
 
@@ -107,6 +111,14 @@ export default function Navbar() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-white/10">
             <div className="flex flex-col gap-4">
+              <Link
+                href="/insights"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-[#FF6B35] transition-colors py-2"
+              >
+                <BookOpen size={14} />
+                Insights
+              </Link>
               <button
                 onClick={() => scrollToSection('features')}
                 className="text-left text-sm font-medium text-gray-300 hover:text-[#FF6B35] transition-colors py-2"
@@ -125,20 +137,14 @@ export default function Navbar() {
               >
                 Contact
               </button>
-              <Button asChild variant="outline" className="w-full mt-2 border-[#FF6B35]/30 text-[#FF6B35] hover:bg-[#FF6B35]/10 hover:text-[#FF6B35]">
-                <Link href="/stories" className="flex items-center justify-center gap-2">
-                  <GitBranch size={16} />
-                  Storylines
+              <Button asChild variant="ghost" className="w-full mt-2 border border-white/10 text-gray-400 hover:text-white">
+                <Link href="/access" className="flex items-center justify-center gap-2">
+                  <LogIn size={16} />
+                  Client Login
                 </Link>
               </Button>
-              <Button asChild variant="outline" className="w-full mt-2 border-[#00A8E8]/30 text-[#00A8E8] hover:bg-[#00A8E8]/10 hover:text-[#00A8E8]">
-                <Link href="/map" className="flex items-center justify-center gap-2">
-                  <Map size={16} />
-                  Intelligence Map
-                </Link>
-              </Button>
-              <Button asChild className="w-full mt-2">
-                <Link href="/dashboard">Access Dashboard</Link>
+              <Button type="button" className="w-full mt-2 bg-[#FF6B35] hover:bg-[#F77F00] text-white" onClick={() => { scrollToSection('waitlist'); setMobileMenuOpen(false); }}>
+                Get Access
               </Button>
             </div>
           </div>

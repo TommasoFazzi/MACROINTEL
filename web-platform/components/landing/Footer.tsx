@@ -23,13 +23,13 @@ export default function Footer() {
                 </svg>
               </div>
               <span className="text-xl font-bold tracking-tight">
-                <span className="text-[#FF6B35]">INTEL</span>
-                <span className="text-white"> ITA</span>
+                <span className="text-[#FF6B35]">MACRO</span>
+                <span className="text-white">INTEL</span>
               </span>
             </Link>
             <p className="text-gray-400 max-w-sm">
-              AI-powered global intelligence platform for geopolitical analysis,
-              cybersecurity monitoring, and macro-economic trend tracking.
+              AI-powered OSINT platform monitoring geopolitical risks, cyber threats,
+              and macro-economic signals — 33+ sources processed daily into actionable intelligence.
             </p>
           </div>
 
@@ -77,7 +77,16 @@ export default function Footer() {
             <h4 className="text-white font-semibold mb-4">Resources</h4>
             <ul className="space-y-3">
               <li>
+                <Link
+                  href="/insights"
+                  className="text-gray-400 hover:text-[#FF6B35] transition-colors text-sm"
+                >
+                  Intelligence Briefings
+                </Link>
+              </li>
+              <li>
                 <button
+                  type="button"
                   onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
                   className="text-gray-400 hover:text-[#FF6B35] transition-colors text-sm"
                 >
@@ -86,21 +95,12 @@ export default function Footer() {
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' })}
                   className="text-gray-400 hover:text-[#FF6B35] transition-colors text-sm"
                 >
                   About
                 </button>
-              </li>
-              <li>
-                <a
-                  href="https://github.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-gray-400 hover:text-[#FF6B35] transition-colors text-sm"
-                >
-                  GitHub
-                </a>
               </li>
             </ul>
           </div>
@@ -109,7 +109,7 @@ export default function Footer() {
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-gray-500 text-sm">
-            &copy; {new Date().getFullYear()} INTEL ITA. All rights reserved.
+            &copy; {new Date().getFullYear()} MACROINTEL. All rights reserved.
           </p>
           <p className="text-gray-600 text-xs">
             Powered by Next.js, Gemini AI, and pgvector

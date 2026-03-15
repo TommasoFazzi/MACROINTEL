@@ -1,4 +1,4 @@
-import { Navbar, Hero, Features, CTASection, Footer } from '@/components/landing';
+import { Navbar, Hero, StatsCounter, ICPSection, ProductShowcase, Features, CTASection, Footer } from '@/components/landing';
 
 export default function LandingPage() {
   return (
@@ -6,6 +6,9 @@ export default function LandingPage() {
       <Navbar />
       <main>
         <Hero />
+        <StatsCounter />
+        <ICPSection />
+        <ProductShowcase />
         <Features />
         <CTASection />
       </main>

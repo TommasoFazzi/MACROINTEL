@@ -7,39 +7,39 @@ import { Clock, PieChart, Layers, MapPin, MessageSquare, Download } from 'lucide
 const features = [
   {
     icon: <Clock className="w-8 h-8" />,
-    title: 'Real-Time Reports',
+    title: 'Daily Intelligence Briefs',
     description:
-      'Automated daily and weekly intelligence reports covering geopolitical developments and cybersecurity threats.',
+      'Automated daily and weekly reports — geopolitical developments, cybersecurity incidents, and macro signals distilled while you sleep.',
   },
   {
     icon: <PieChart className="w-8 h-8" />,
-    title: 'Smart Filtering',
+    title: '3-Layer Signal Filtering',
     description:
-      'Advanced 3-layer filtering by category, relevance, source, and sentiment analysis.',
+      'Irrelevant noise eliminated at ingestion, classification, and clustering stages. Only what matters reaches your desk.',
   },
   {
     icon: <Layers className="w-8 h-8" />,
-    title: 'RAG Architecture',
+    title: 'Grounded AI Answers',
     description:
-      'Retrieval-Augmented Generation for contextual answers grounded in a proprietary knowledge base.',
+      'Every answer cites real sources from our knowledge base. No hallucinations, full traceability back to the original article.',
   },
   {
     icon: <MapPin className="w-8 h-8" />,
-    title: 'Interactive Map',
+    title: 'Geospatial Intelligence Map',
     description:
-      'Geographic visualization of extracted entities with clustering and event timelines.',
+      'See where events are happening. Entities plotted on an interactive tactical map with relationship arcs and intelligence scoring.',
   },
   {
     icon: <MessageSquare className="w-8 h-8" />,
-    title: 'AI Assistant',
+    title: 'Oracle AI — Ask Your Data',
     description:
-      'Oracle 2.0 — query the knowledge base in natural language and get grounded intelligence insights.',
+      'Query the full intelligence database in natural language. Geopolitical events, trends, market signals — all in one conversation.',
   },
   {
     icon: <Download className="w-8 h-8" />,
-    title: 'Export & API',
+    title: 'Export & Integrate',
     description:
-      'Export reports in multiple formats and integrate via REST API with external systems.',
+      'Reports in multiple formats. REST API for integration with your existing workflows, security stack, or internal tooling.',
   },
 ];
 

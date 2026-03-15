@@ -96,7 +96,7 @@ export default function DashboardPage() {
           <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
             <div>
               <h1 className="text-3xl font-bold text-white">
-                <span className="text-[#FF6B35]">INTEL</span> Dashboard
+                <span className="text-[#FF6B35]">MACRO</span>INTEL Dashboard
               </h1>
               <p className="text-gray-400 mt-1">
                 Intelligence platform overview

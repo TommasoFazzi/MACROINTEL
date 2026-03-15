@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: 'Narrative Graph',
   description: 'Interactive force-directed graph visualization of intelligence storylines, their connections, and narrative evolution over time.',
   openGraph: {
-    title: 'Narrative Graph | INTEL ITA',
+    title: 'Narrative Graph | MACROINTEL',
     description: 'Interactive narrative graph visualization showing intelligence storylines and their connections.',
     type: 'website',
   },

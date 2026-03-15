@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, GitBranch } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 // Dynamic imports to prevent SSR hydration issues with canvas
 const ParticleCanvas = dynamic(() => import('./ParticleCanvas'), { ssr: false });
@@ -79,17 +79,17 @@ export default function Hero() {
 
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12 animate-fadeInUp animation-delay-300">
-            <Button size="lg" asChild className="group">
-              <Link href="/dashboard">
-                Explore Dashboard
+            <Button size="lg" className="group bg-[#FF6B35] hover:bg-[#F77F00] text-white" asChild>
+              <a href="#waitlist">
+                Get Access
                 <ArrowRight className="ml-2 h-5 w-5 transition-transform group-hover:translate-x-1" />
-              </Link>
+              </a>
             </Button>
             <Button variant="outline" size="lg" asChild className="border-white/20 hover:bg-white/5 group">
-              <Link href="/stories">
-                <GitBranch className="mr-2 h-5 w-5" />
-                Narrative Graph
-              </Link>
+              <a href="#product-showcase">
+                See How It Works
+                <ArrowRight className="ml-2 h-5 w-5 opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-1" />
+              </a>
             </Button>
           </div>
 

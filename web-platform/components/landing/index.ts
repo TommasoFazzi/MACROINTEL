@@ -1,5 +1,8 @@
 export { default as Navbar } from './Navbar';
 export { default as Hero } from './Hero';
+export { default as StatsCounter } from './StatsCounter';
+export { default as ICPSection } from './ICPSection';
+export { default as ProductShowcase } from './ProductShowcase';
 export { default as Features } from './Features';
 export { default as FeatureCard } from './FeatureCard';
 export { default as CTASection } from './CTASection';

@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: 'Intelligence Map',
   description: 'Tactical geospatial map with entity clustering, real-time data visualization, and interactive intelligence overlays.',
   openGraph: {
-    title: 'Intelligence Map | INTEL ITA',
+    title: 'Intelligence Map | MACROINTEL',
     description: 'Interactive tactical intelligence map with entity clustering and real-time data.',
     type: 'website',
   },
