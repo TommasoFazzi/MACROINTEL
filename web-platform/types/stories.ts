@@ -15,6 +15,7 @@ export interface StorylineNode {
   last_update: string | null;
   days_active: number | null;
   community_id?: number | null;
+  community_name?: string | null;
 }
 
 export interface StorylineEdge {
