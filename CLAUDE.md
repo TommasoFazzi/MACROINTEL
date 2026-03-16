@@ -166,6 +166,7 @@ Off-topic content is filtered at 3 pipeline stages:
 - **Deduplication:** 2-phase — in-memory hash(link+title) then database content hash, reducing articles by 20-25%
 - **Embeddings:** `paraphrase-multilingual-MiniLM-L12-v2` for cross-language semantic similarity (Italian + English sources)
 - **Schema validation:** Pydantic v2 models in `src/llm/schemas.py` for all LLM structured output
+- **Time-weighted decay (Oracle 2.0):** `score * exp(-k * days)` post-retrieval in RAGTool (`src/llm/tools/rag_tool.py`). Over-fetch 3x to avoid Top-K bias. K dinamico per intent (FACTUAL=0.03, ANALYTICAL=0.015, MARKET=0.04). Time-shifting for historical queries (reference_date = end_date). Min floor 0.15 post-decay. Report Generator and Oracle 1.0 are NOT affected.
 
 ## Testing
 

@@ -248,6 +248,30 @@ class OracleOrchestrator:
                 estimated_time=5.0,
             )
 
+        # ── Step 1b: Time-weighted decay configuration ────────────────────
+        # Set decay rate K based on detected intent (geopolitics-tuned defaults)
+        from .tools.rag_tool import DEFAULT_DECAY_K
+        _INTENT_DECAY_K = {
+            QueryIntent.FACTUAL: 0.03,      # fresh news, aggressive decay
+            QueryIntent.ANALYTICAL: 0.015,   # long-term trends, gentle decay
+            QueryIntent.NARRATIVE: 0.02,     # balanced
+            QueryIntent.MARKET: 0.04,        # markets are ultra time-sensitive
+            QueryIntent.COMPARATIVE: 0.015,  # comparisons need history
+            QueryIntent.TICKER: 0.03,        # ticker = recent
+        }
+        if "time_decay_k" not in filters:
+            filters["time_decay_k"] = _INTENT_DECAY_K.get(
+                query_plan.intent, DEFAULT_DECAY_K
+            )
+        # Time-shifting: for queries with explicit end_date, decay is relative
+        # to that date (not today). "Cosa successe a gennaio 2024?" penalizes
+        # 2021 articles (far from window) without disabling decay.
+        if filters.get("end_date") and "time_decay_reference" not in filters:
+            filters["time_decay_reference"] = filters["end_date"]
+            logger.info(
+                f"Time decay reference shifted to end_date: {filters['end_date']}"
+            )
+
         # ── Step 2: Execute tools ──────────────────────────────────────────
         # Apply semantic_query (stripped of temporal noise) to RAG steps
         if semantic_query:
@@ -263,7 +287,8 @@ class OracleOrchestrator:
             # Inject session filters into RAG search
             if tool_name == "rag_search" and filters:
                 params.setdefault("filters", {})
-                for k in ("start_date", "end_date", "categories", "gpe_filter", "sources", "search_type"):
+                for k in ("start_date", "end_date", "categories", "gpe_filter",
+                           "sources", "search_type", "time_decay_k", "time_decay_reference"):
                     if filters.get(k) is not None:
                         params["filters"][k] = filters[k]
                 if filters.get("mode"):

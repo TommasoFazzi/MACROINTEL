@@ -52,7 +52,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
 - `tools/` - **Oracle 2.0 tool registry** (new package)
   - `base.py` - `BaseTool` ABC + `ToolResult` Pydantic model
   - `registry.py` - `ToolRegistry` with lazy instantiation
-  - `rag_tool.py` - `RAGTool` - refactors oracle_engine.py hybrid search logic
+  - `rag_tool.py` - `RAGTool` - hybrid search with **time-weighted decay**: `score * exp(-k * days_old)` post-retrieval. Over-fetch 3x to avoid Top-K bias, min floor 0.15, K dinamico per intent (FACTUAL=0.03, MARKET=0.04, ANALYTICAL=0.015), time-shifting for historical queries (reference_date = end_date)
   - `sql_tool.py` - `SQLTool` - LLM-generated SQL with 5-layer safety (sqlparse, forbidden keywords, max 3 JOINs, LIMIT enforcement, EXPLAIN cost check ≤10000, 5s timeout)
   - `aggregation_tool.py` - `AggregationTool` - pre-parametrized stats (trend_over_time, top_n, distribution, statistics)
   - `graph_tool.py` - `GraphTool` - recursive CTE graph traversal on `storyline_edges`
