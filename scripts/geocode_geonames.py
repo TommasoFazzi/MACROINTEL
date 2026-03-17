@@ -410,7 +410,14 @@ def geocode_entity(
             )
             return result
 
-    # Step 4: Photon fallback (highly specific locations, military bases, etc.)
+    # Step 4: Photon fallback — only for feature types where Photon is reliable.
+    # Seas, straits, rivers, lakes, and macro-regions are NOT reliable via Photon
+    # (it finds random OSM nodes with those names in wrong locations).
+    PHOTON_RELIABLE_TYPES = {'city', 'facility', 'state', 'country'}
+    if feature_type not in PHOTON_RELIABLE_TYPES:
+        logger.warning(f"  ✗ GeoNames miss for '{entity_name}' / '{clean_name}' (feature_type={feature_type}, Photon skipped)")
+        return None
+
     logger.info(f"  → GeoNames miss for '{clean_name}' — Photon fallback")
     photon_result = _photon_geocode(clean_name, entity_type)
     if photon_result:
