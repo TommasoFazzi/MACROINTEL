@@ -160,10 +160,10 @@ def _lookup_gazetteer_all(db: DatabaseManager, name: str) -> list[tuple]:
                 FROM geo_gazetteer
                 WHERE lower(ascii_name) = %s
                    OR lower(name) = %s
-                   OR %s = ANY(SELECT lower(x) FROM unnest(alternate_names) AS x)
+                   OR %s = ANY(alternate_names)
                 ORDER BY population DESC NULLS LAST
                 LIMIT 20
-            """, (name_lower, name_lower, name_lower))
+            """, (name_lower, name_lower, name))
             return cur.fetchall()
 
 
@@ -180,7 +180,7 @@ def _lookup_gazetteer_filtered(
     name_lower = clean_name.lower().strip()
     feature_info = FEATURE_TYPE_MAP.get(feature_type)
 
-    params: list = [name_lower, name_lower, name_lower]
+    params: list = [name_lower, name_lower, clean_name]
     feature_clause = ""
     if feature_info is not None:
         fc, codes = feature_info
@@ -199,7 +199,7 @@ def _lookup_gazetteer_filtered(
         WHERE (
             lower(ascii_name) = %s
             OR lower(name) = %s
-            OR %s = ANY(SELECT lower(x) FROM unnest(alternate_names) AS x)
+            OR %s = ANY(alternate_names)
         )
         {feature_clause}
         {country_clause}

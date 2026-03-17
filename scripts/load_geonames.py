@@ -46,7 +46,7 @@ logger = get_logger(__name__)
 FEATURE_FILTER: dict[str, set[str]] = {
     'A': {'PCLI', 'PCLD', 'PCLF', 'PCLS', 'ADM1', 'ADM2', 'ADM3'},
     'P': {'PPLC', 'PPLA', 'PPLA2', 'PPLA3', 'PPL', 'PPLG', 'PPLS'},
-    'H': {'SEA', 'OCN', 'STR', 'LK', 'LKS', 'RSV', 'BAY', 'GULF', 'CHAN', 'COVE'},
+    'H': {'SEA', 'OCN', 'STR', 'STRT', 'LK', 'LKS', 'RSV', 'BAY', 'GULF', 'CHAN', 'COVE'},
     'L': {'AREA', 'RGN', 'RGNH', 'CONT'},
 }
 
