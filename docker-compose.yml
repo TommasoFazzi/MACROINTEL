@@ -66,7 +66,7 @@ services:
       ORACLE_REQUIRE_GEMINI_KEY: ${ORACLE_REQUIRE_GEMINI_KEY:-true}
       REPORT_OUTPUT_DIR: /app/reports
       DATA_DIR: /app/data
-      PHOTON_URL: ${PHOTON_URL:-http://photon:2322/api}
+      PHOTON_URL: ${PHOTON_URL:-https://photon.komoot.io/api}
       INTELLIGENCE_API_URL: http://backend:8000
     volumes:
       - reports:/app/reports
