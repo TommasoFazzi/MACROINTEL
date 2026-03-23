@@ -26,8 +26,12 @@ Central persistence layer between the processing pipeline and intelligence gener
   - **`article_storylines` table** - Junction: article_id ↔ storyline_id, relevance_score
   - HNSW indexes for fast approximate nearest neighbor search
 
+  **Source Cache (migration 024):**
+  - `self._source_cache` — dict `{feed_name: (source_id, domain)}`, loaded lazily on first `save_article()` call
+  - `_load_source_cache()` — queries `intelligence_sources.feed_names` once per session; gracefully no-ops if migration not applied
+
   **Core Operations:**
-  - `save_article()` / `batch_save()` - Store articles with content-hash deduplication
+  - `save_article()` / `batch_save()` - Store articles with content-hash deduplication; auto-populates `source_id` and `domain` via source cache
   - `semantic_search()` - Vector similarity search on chunks with filters
   - `full_text_search()` - PostgreSQL `ts_query` for keyword search
   - `hybrid_search()` - Combines vector + keyword with RRF fusion
@@ -90,7 +94,8 @@ These views are consumed by both the report generator (top 10 storylines for nar
 
 | Table | Purpose |
 |-------|---------|
-| `articles` | Full articles, embeddings, NLP metadata, entities (JSONB) |
+| **`intelligence_sources`** | Anagrafica fonti: name, domain, source_type, authority_score (1-5), llm_context, feed_names[], has_rss (migration 024) |
+| `articles` | Full articles, embeddings, NLP metadata, entities (JSONB); `source_id` FK → intelligence_sources, `domain` denormalizzato (migration 024) |
 | `chunks` | 500-word chunks with 384-dim embeddings for RAG |
 | `reports` | Generated intelligence reports (draft/final/status) |
 | `report_feedback` | Human corrections, ratings, comments |

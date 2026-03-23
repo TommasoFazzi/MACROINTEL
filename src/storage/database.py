@@ -72,6 +72,27 @@ class DatabaseManager:
             logger.error(f"Failed to create connection pool: {e}")
             raise
 
+        # Cache: feed_name -> (source_id, domain) from intelligence_sources.
+        # Loaded lazily on first save_article() call.
+        self._source_cache: dict = {}
+
+    def _load_source_cache(self) -> None:
+        """Load feed_name -> (source_id, domain) mapping from intelligence_sources."""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, domain, feed_names FROM intelligence_sources "
+                        "WHERE feed_names != '{}'"
+                    )
+                    for source_id, domain, feed_names in cur.fetchall():
+                        for feed_name in (feed_names or []):
+                            self._source_cache[feed_name] = (source_id, domain)
+            logger.debug(f"Source cache loaded: {len(self._source_cache)} feed name(s) mapped")
+        except Exception as e:
+            # Table may not exist yet (pre-migration). Non-fatal: articles saved without source_id.
+            logger.warning(f"Could not load source cache (migration 024 applied?): {e}")
+
     @contextmanager
     def get_connection(self):
         """
@@ -373,12 +394,19 @@ class DatabaseManager:
                             )
                             return None
 
+                    # Lookup source_id and domain from intelligence_sources cache
+                    if not self._source_cache:
+                        self._load_source_cache()
+                    source_name = article.get('source', '')
+                    src_id, src_domain = self._source_cache.get(source_name, (None, None))
+
                     # Insert article
                     cur.execute("""
                         INSERT INTO articles
                         (title, link, published_date, source, category, subcategory, summary,
-                         full_text, entities, nlp_metadata, full_text_embedding, content_hash)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         full_text, entities, nlp_metadata, full_text_embedding, content_hash,
+                         source_id, domain)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                     """, (
                         self._sanitize_text(article.get('title')),
@@ -398,7 +426,9 @@ class DatabaseManager:
                             'entity_count': nlp_data.get('entities', {}).get('entity_count', 0)
                         }),
                         nlp_data.get('full_text_embedding', []),
-                        content_hash  # PHASE 2: Save content hash
+                        content_hash,  # PHASE 2: Save content hash
+                        src_id,
+                        src_domain,
                     ))
 
                     article_id = cur.fetchone()[0]

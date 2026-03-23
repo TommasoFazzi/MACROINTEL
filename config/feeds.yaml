@@ -3,12 +3,6 @@
 
 feeds:
   # BREAKING NEWS
-  - name: "The Moscow Times - India Edition"
-    url: "https://themoscowtimes.com/feeds/main.xml"
-    category: "breaking_news"
-    region: "international"
-
-
   # INTELLIGENCE & GEOPOLITICS
   - name: "ASEAN Beat - The Diplomat"
     url: "https://thediplomat.com/feed/"
@@ -71,14 +65,7 @@ feeds:
     category: "intelligence"
     subcategory: "space_technology"
 
-  # MIDDLE EAST & NORTH AFRICA - IRAN SPECIALIZED
-  - name: "FDD - Foundation for Defense of Democracies"
-    url: "https://fdd.org/feed/"
-    category: "intelligence"
-    subcategory: "iran_specialized"
-    region: "middle_east"
-    notes: "Think-tank analysis: Iran sanctions, nuclear, IRGC, regional threats. Tested working 25/02/2026."
-
+  # MIDDLE EAST & NORTH AFRICA
   - name: "Al Jazeera English"
     url: "https://www.aljazeera.com/xml/rss/all.xml"
     category: "intelligence"
@@ -131,17 +118,6 @@ feeds:
     url: "https://www.americasquarterly.org/feed/"
     category: "intelligence"
     subcategory: "americas"
-
-  # AFRICA
-  - name: "African Arguments"
-    url: "https://africanarguments.org/feed/"
-    category: "intelligence"
-    subcategory: "africa"
-
-  - name: "ISS Africa - Institute for Security Studies"
-    url: "https://issafrica.org/rss.xml"
-    category: "intelligence"
-    subcategory: "africa"
 
   # TECH & ECONOMIA
   - name: "Business | Euronews RSS"
