@@ -90,7 +90,7 @@ SOURCES = [
         "ECB",
         "economics", "Ufficiale/Gov", 5.0,
         "Verità di base assoluta. Comunicati ufficiali della Banca Centrale Europea: tassi, QE, proiezioni macro.",
-        ["ECB - European Central Bank Press Releases", "ECB - Monetary Policy Statements"], True,
+        ["ECB - European Central Bank Press Releases", "ECB - Publications"], True,
     ),
     (
         "The Economist",

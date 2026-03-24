@@ -20,7 +20,7 @@ feeds:
     subcategory: "cybersecurity"
 
   - name: "China Power - The Diplomat"
-    url: "https://thediplomat.com/topics/china-power/feed/"
+    url: "https://thediplomat.com/category/china-power/feed/"
     category: "intelligence"
     subcategory: "china"
 
@@ -40,7 +40,7 @@ feeds:
     subcategory: "americas"
 
   - name: "European Council on Foreign Relations"
-    url: "https://ecfr.eu/feeds/all-content/"
+    url: "https://ecfr.eu/feed/"
     category: "intelligence"
     subcategory: "european_affairs"
 
@@ -156,12 +156,12 @@ feeds:
     subcategory: "business"
 
   - name: "ECB - European Central Bank Press Releases"
-    url: "https://www.ecb.europa.eu/press/rss/pr.rss"
+    url: "https://www.ecb.europa.eu/rss/press.html"
     category: "tech_economy"
     subcategory: "monetary_policy"
 
-  - name: "ECB - Monetary Policy Statements"
-    url: "https://www.ecb.europa.eu/press/rss/sp.rss"
+  - name: "ECB - Publications"
+    url: "https://www.ecb.europa.eu/rss/pub.html"
     category: "tech_economy"
     subcategory: "monetary_policy"
 
