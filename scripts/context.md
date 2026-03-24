@@ -63,8 +63,15 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 - `add_sample_entities.py` - Load sample entities for testing
 
 ### Geocoding
-- `geocode_entities.py` - Geocode entities with coordinates
-- `geocode_batch.py` - Batch geocoding for efficiency
+- `geocode_geonames.py` - **Primary geocoder**: 4-step hybrid pipeline
+  1. GeoNames exact/ascii/alternate name lookup against `geo_gazetteer` table
+  2. Gemini 2.0 Flash CoT for disambiguation when >1 match (→ clean_name, country_code, feature_type)
+  3. Filtered GeoNames lookup using Gemini output
+  4. Photon API fallback for locations not in GeoNames
+  - CLI: `--limit N`, `--backfill`, `--types GPE LOC`, `--dry-run`
+- `load_geonames.py` - **GeoNames database loader**: imports `allCountries.txt` + `alternateNames.txt` dump into `geo_gazetteer` table (~2–3M rows, feature classes A/P/H/L). Run once. ~10–15 min. Requires migration 023.
+- `geocode_entities.py` - Legacy Photon geocoder (kept as fallback)
+- `geocode_batch.py` - Batch geocoding utility
 - `clean_geocoding.py` - Clean invalid geocoding data
 - `refresh_map_data.py` - **Post-pipeline map refresh**: invalidates the map entity cache via `POST /api/v1/map/cache/invalidate` and re-runs `compute_intelligence_scores()`. Should be called after `process_narratives.py` to ensure the map reflects the latest storyline data.
 
@@ -74,8 +81,11 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 ### Storylines / Narrative Engine
 - `process_narratives.py` - **Primary**: Run NarrativeProcessor daily batch (HDBSCAN + LLM evolution + graph)
 - `rebuild_graph_edges.py` - **Graph rebuild utility**: Drops all existing `storyline_edges`, then recomputes TF-IDF weighted Jaccard edges for all active storylines. **Critical**: loads IDF weights via `processor._load_entity_idf(cur)` and passes them to `_update_graph_connections(sid, idf_weights)` — without this, the fallback threshold is 0.30 instead of 0.05, resulting in ~90% fewer edges. Also includes Step 0: cleanup of stale edges involving storylines archived >30 days.
-- `compute_communities.py` - **Community detection**: Louvain algorithm (python-louvain + networkx) on the storyline graph. Defaults: `min_weight=0.05`, `resolution=0.2`. Writes `community_id` to `storylines` table. CLI flags: `--min-weight`, `--resolution`, `--dry-run`.
+- `compute_communities.py` - **Community detection**: Louvain algorithm (python-louvain + networkx) on the storyline graph. Defaults: `min_weight=0.05`, `resolution=0.2`. Writes `community_id` to `storylines` table. After detection, calls Gemini 2.0 Flash to generate a descriptive `community_name` (e.g. "Hormuz Crisis", "Iran Regional Crisis") based on member storyline titles. CLI flags: `--min-weight`, `--resolution`, `--dry-run`.
+- `migrate_community_names.py` - **Backfill**: Generates LLM community names for existing communities that don't have one yet. Safe to re-run (skips communities that already have a name).
+- `migrate_storylines_to_en.py` - **Language migration**: Translates Italian storyline titles and summaries to English using Gemini. One-time use for legacy Italian content.
 - `reclean_storyline_entities.py` - **Batch entity cleanup**: Iterates all non-archived storylines, applies `_is_garbage_entity()` + `_clean_entity()` sanitization to `key_entities`, updates DB in-place. Used for one-time retroactive cleanup of pre-existing garbage entities.
+- `pipeline_manifest.py` - **Pipeline manifest tracking**: Records pipeline run metadata (start/end time, steps run, success/failure) to a JSON manifest file for monitoring and debugging.
 - `batch_storyline_clustering.py` - Legacy: Run DBSCAN clustering for storylines
 - `test_storyline_clustering.py` - Legacy: Test storyline clustering
 

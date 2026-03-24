@@ -91,7 +91,7 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 ```
 
 **Seven phases:**
-1. **Ingestion** (`src/ingestion/`): Async RSS parsing via aiohttp (parallel feed fetching + concurrent content extraction), full-text extraction (Trafilatura primary, Newspaper3k fallback, Cloudscraper for anti-bot sites), 2-phase deduplication (hash + content), **keyword blocklist filter** (off-topic rejection at ingestion)
+1. **Ingestion** (`src/ingestion/`): Async RSS parsing via aiohttp (parallel feed fetching + concurrent content extraction), full-text extraction (Trafilatura primary → **Scrapling curl_cffi/StealthyFetcher** for WAF/Cloudflare sites → Newspaper3k fallback → Cloudscraper), 2-phase deduplication (hash + content), **keyword blocklist filter** (off-topic rejection at ingestion), PDF auto-detection via pymupdf4llm
 2. **NLP** (`src/nlp/`): spaCy multilingual NER (`xx_ent_wiki_sm`), semantic chunking (500-word sliding window), embeddings (`paraphrase-multilingual-MiniLM-L12-v2`, 384-dim), **LLM relevance classification** (Gemini-based scope filter)
 3. **Storage** (`src/storage/database.py`): PostgreSQL + pgvector with HNSW indexing, connection pooling (psycopg2 SimpleConnectionPool)
 4. **Narrative Engine** (`src/nlp/narrative_processor.py`): HDBSCAN micro-clustering of orphan events, embedding-based matching to existing storylines, LLM summary evolution (Gemini 2.0 Flash), TF-IDF weighted Jaccard entity-overlap graph edges (uses `entity_idf` materialized view), momentum scoring with decay, **post-clustering validation filter** (regex-based off-topic archival). Community detection via `scripts/compute_communities.py` (Louvain algorithm).
@@ -107,21 +107,25 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 - `src/nlp/story_manager.py` — **DELETED** (legacy storyline clustering, fully replaced by narrative_processor)
 - `src/nlp/processing.py` (~603 lines) — NLP pipeline: cleaning, chunking, NER, embeddings
 - `src/nlp/relevance_filter.py` — LLM-based article relevance classification (Gemini 2.0 Flash)
-- `scripts/compute_communities.py` (~198 lines) — Louvain community detection for storyline graph (python-louvain + networkx); saves community_id to storylines table. Defaults: `min_weight=0.05`, `resolution=0.2`.
+- `scripts/compute_communities.py` (~198 lines) — Louvain community detection for storyline graph (python-louvain + networkx); saves community_id to storylines table. Defaults: `min_weight=0.05`, `resolution=0.2`. After detection calls Gemini to generate descriptive `community_name`.
+- `scripts/geocode_geonames.py` — **Primary geocoder**: 4-step GeoNames + Gemini + Photon hybrid pipeline. Requires `geo_gazetteer` table (migration 023, populated by `load_geonames.py`).
+- `scripts/load_geonames.py` — Loads GeoNames allCountries.txt + alternateNames.txt into `geo_gazetteer` (~2-3M rows, one-time ~15 min).
 - `src/integrations/openbb_service.py` (~1026 lines) — OpenBB financial data integration
 - `src/llm/oracle_engine.py` (~566 lines) — Oracle 1.0 RAG chat engine (backward-compat, used by Streamlit HITL)
 - `src/llm/oracle_orchestrator.py` — **Oracle 2.0 main coordinator**: ToolRegistry + QueryRouter + ConversationMemory + caching + LLM synthesis + anti-hallucination; `get_oracle_orchestrator_singleton()` for FastAPI
 - `src/llm/query_router.py` — Intent classification (Gemini 2.5 Flash) + QueryPlan generation; double-layer SQL injection defense
-- `src/llm/tools/` — Tool package: RAGTool, SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool
+- `src/llm/tools/` — Tool package: RAGTool (multi-query expansion + time-weighted decay), SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool, TickerThemesTool, ReportCompareTool
 - `src/api/main.py` + `src/api/auth.py` + `src/api/routers/` — FastAPI backend: X-API-Key auth (`secrets.compare_digest`), CORS (GET+POST), slowapi rate limiting, routers for dashboard/reports/stories/map/**oracle**
 
 ### Web Platform (Next.js)
 
 Located in `web-platform/`. Uses Next.js 16 App Router, React 19, Tailwind CSS 4, Shadcn/ui (Radix), Mapbox GL for intelligence map, **react-force-graph-2d** for narrative graph visualization, SWR for data fetching, Framer Motion for animations.
 
-**Routes:** `/` (landing), `/dashboard` (reports list), `/dashboard/report/[id]` (detail), `/map` (geospatial intelligence map), **`/stories` (narrative storyline graph)**, **`/oracle` (Oracle 2.0 chat)**
+**Routes:** `/` (landing), `/access` (JWT code entry), `/insights` (public briefings), `/dashboard` (reports list), `/dashboard/report/[id]` (detail), `/map` (geospatial intelligence map + Tier 3 layers), **`/stories` (narrative storyline graph)**, **`/oracle` (Oracle 2.0 chat)**
 
-**API communication:** Frontend → FastAPI backend (`src/api/main.py`) with `X-API-Key` header authentication.
+**Auth:** `middleware.ts` protects `/dashboard`, `/map`, `/stories`, `/oracle` with JWT (`macrointel_access` cookie). Access codes configured via `ACCESS_CODES` + `JWT_SECRET` env vars. Oracle BYOK enforced when `ORACLE_REQUIRE_GEMINI_KEY=true`.
+
+**API communication:** Frontend → FastAPI backend (`src/api/main.py`) with `X-API-Key` header authentication (server-side proxy at `/api/proxy/[...path]`).
 
 ### API Endpoints
 
@@ -132,6 +136,8 @@ Located in `web-platform/`. Uses Next.js 16 App Router, React 19, Tailwind CSS 4
 | `/api/v1/stories/` | `routers/stories.py` | Storyline list, detail, **graph network**, **community listing**, **ego network** |
 | `/api/v1/map/` | `routers/map.py` | GeoJSON entities, arcs, stats, cache invalidate |
 | `/api/v1/oracle/` | `routers/oracle.py` | Oracle 2.0 chat (`POST /chat` rate limit 3/min, `GET /health`) |
+| `/api/v1/insights/` | `routers/insights.py` | Public briefings list + detail by slug (no auth required) |
+| `/api/v1/waitlist/` | `routers/waitlist.py` | Waitlist registration |
 
 ### Narrative Engine (3-Layer Filtering)
 
@@ -198,6 +204,11 @@ When updating documentation, always check for and update context.md files in sub
 - **oracle_query_log table:** Migration `013_oracle_query_log.sql`. If table doesn't exist, `log_oracle_query()` in `database.py` silently no-ops (non-critical).
 - **Migrations are manual:** SQL files in `migrations/` applied via `psql` or `load_to_database.py --init-only`.
 - **CI test config:** GitHub Actions test step needs `GEMINI_API_KEY: "ci-fake-key-for-unit-tests"` env var + `--ignore=tests/test_sprint2_full.py` (e2e test requiring real DB).
+- **Scrapling StealthyFetcher concurrency:** Uses Chromium headlessly — max 2 concurrent instances (`scrapling_stealth_semaphore = asyncio.Semaphore(2)`) to avoid OOM on GitHub Actions. Tier 2 domains: `rusi.org`. Tier 1 (curl_cffi, no browser): `understandingwar.org`, `chathamhouse.org`.
+- **GeoNames geocoder requires `geo_gazetteer` table:** `scripts/geocode_geonames.py` needs migration 023 applied AND `scripts/load_geonames.py` run first (one-time, ~15 min). Without it, geocoding silently returns no results.
+- **JWT middleware blocks all protected routes without `JWT_SECRET`:** If `JWT_SECRET` is not set, `middleware.ts` uses `__no_secret_configured__` as secret, causing all tokens to fail verification — all protected routes redirect to `/access`. Always set `JWT_SECRET` in production.
+- **Oracle 6 intents (not 5):** `query_router.py` classifies into FACTUAL / ANALYTICAL / NARRATIVE / MARKET / COMPARATIVE / **OVERVIEW**. OVERVIEW uses very low time-decay (k=0.005) for panoramic queries that should return broad recent context. Using vector-only search (no FTS) to avoid AND-matching issues.
+- **community_name populated by compute_communities.py:** The `community_name` field (migration 022) is populated by Gemini inside `compute_communities.py`, not by `narrative_processor.py`. Must re-run `compute_communities.py` after large storyline changes to refresh names.
 
 ## Debugging
 
@@ -210,3 +221,147 @@ When investigating dates, pipeline runs, or report IDs, always verify the curren
 ## Domain Concepts
 
 When the user asks about scores, intelligence scores, or scoring — they mean the scored output stored in the database (oracle_engine output, scored articles/reports in DB tables), NOT report files on disk. Check the database tables first, not the filesystem.
+
+## Infrastructure & Server Commands
+
+### Production Environment
+- **Server**: Hetzner CAX31 (8 GB ARM64, Ubuntu 22.04)
+- **Deploy path**: `/opt/intelligence-ita/repo`
+- **Env file (source of truth)**: `/opt/intelligence-ita/repo/.env.production` — ALWAYS use this with `--env-file`. Do NOT use `/opt/intelligence-ita/.env.production` (outside repo, has old pre-hack passwords).
+- **Docker Compose project name**: `app` — always pass `-p app`
+- **PostgreSQL user**: `intelligence_user`
+
+### Docker — Key Commands
+
+```bash
+# All docker compose commands on server need:
+docker compose -p app --env-file /opt/intelligence-ita/repo/.env.production <command>
+
+# Status check
+docker compose -p app ps
+
+# View logs
+docker compose -p app logs backend --tail 50 --follow
+docker compose -p app logs frontend --tail 30
+
+# Restart a specific service
+docker compose -p app restart backend
+docker compose -p app restart frontend
+
+# Rebuild and restart (after code changes)
+docker compose -p app up -d --build backend
+docker compose -p app up -d --build frontend
+
+# Full redeploy (pulls + rebuilds all)
+docker compose -p app --env-file /opt/intelligence-ita/repo/.env.production up -d --build
+
+# Execute commands inside a container
+docker compose -p app exec backend python scripts/check_setup.py
+docker compose -p app exec backend python scripts/process_narratives.py --days 1
+docker compose -p app exec backend psql $DATABASE_URL -c "SELECT count(*) FROM articles;"
+
+# Database backup
+bash /opt/intelligence-ita/repo/deploy/backup-db.sh
+
+# View running pipeline
+docker compose -p app exec backend ps aux | grep python
+```
+
+### GitHub Actions
+
+Workflows in `.github/workflows/`:
+
+| Workflow | File | Trigger | What it does |
+|----------|------|---------|-------------|
+| **Deploy** | `deploy.yml` | Push to `main` | SSH to Hetzner → git pull → docker compose up --build |
+| **Pipeline** | `pipeline.yml` | Daily 08:00 UTC + manual | Runs `daily_pipeline.py` inside backend container |
+| **Migrate** | `migrate.yml` | Manual dispatch | Applies SQL migrations to production DB |
+
+```bash
+# Trigger pipeline manually (from local machine with gh CLI)
+gh workflow run pipeline.yml
+
+# Check pipeline run status
+gh run list --workflow=pipeline.yml --limit 5
+gh run view <run-id> --log
+
+# Check deploy status
+gh run list --workflow=deploy.yml --limit 3
+```
+
+Required GitHub Secrets (set in repo Settings → Secrets):
+
+| Secret | Used by |
+|--------|---------|
+| `HETZNER_HOST` | deploy.yml — SSH target |
+| `HETZNER_USER` | deploy.yml — SSH user |
+| `HETZNER_SSH_KEY` | deploy.yml — private key |
+| `GEMINI_API_KEY` | pipeline.yml — set to `ci-fake-key-for-unit-tests` for test step |
+| `DEPLOY_ENV_FILE` | deploy.yml — contents of .env.production |
+
+### Environment Files
+
+```bash
+# View current production env (on server)
+cat /opt/intelligence-ita/repo/.env.production
+
+# Edit production env
+nano /opt/intelligence-ita/repo/.env.production
+# Then restart backend to pick up changes:
+docker compose -p app restart backend
+
+# Key env vars to know:
+# DATABASE_URL=postgresql://intelligence_user:...@postgres:5432/intelligence_ita
+# GEMINI_API_KEY=...
+# INTELLIGENCE_API_KEY=...  (API shared secret)
+# JWT_SECRET=...            (frontend access tokens)
+# ACCESS_CODES=...          (comma-separated valid access codes)
+# ORACLE_REQUIRE_GEMINI_KEY=true
+# POSTGRES_USER=intelligence_user
+# ALLOWED_ORIGINS=https://macrointel.net,...
+```
+
+### Database — Direct Access
+
+```bash
+# Connect to production DB via Docker
+docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita
+
+# From outside container (on server)
+psql postgresql://intelligence_user:<password>@localhost:5432/intelligence_ita
+
+# Apply a migration
+docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita \
+  -f /opt/intelligence-ita/repo/migrations/025_chunks_source_id.sql
+
+# Useful quick queries
+SELECT count(*) FROM articles;
+SELECT count(*) FROM storylines WHERE narrative_status != 'archived';
+SELECT id, report_date, status FROM reports ORDER BY id DESC LIMIT 5;
+REFRESH MATERIALIZED VIEW entity_idf;
+REFRESH MATERIALIZED VIEW mv_entity_storyline_bridge;
+```
+
+### Nginx (Reverse Proxy)
+
+```bash
+# Reload nginx config (after deploy)
+docker compose -p app exec nginx nginx -s reload
+
+# Test nginx config
+docker compose -p app exec nginx nginx -t
+
+# View nginx logs
+docker compose -p app logs nginx --tail 30
+```
+
+### SSH to Server
+
+```bash
+ssh <user>@<HETZNER_HOST>
+cd /opt/intelligence-ita/repo
+
+# Quick health check
+docker compose -p app ps
+docker compose -p app logs backend --tail 20
+```

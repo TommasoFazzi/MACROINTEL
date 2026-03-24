@@ -9,12 +9,17 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 ## Key Files
 
 ### App Structure
-- `app/layout.tsx` - Root Next.js layout
+- `app/layout.tsx` - Root Next.js layout (Google Analytics, GSC verification)
 - `app/globals.css` - Global styles with animations
-- `app/page.tsx` - Landing page
+- `app/page.tsx` - Landing page (Hero, Features, ProductShowcase, ICPSection, StatsCounter, CTASection, waitlist)
 - `app/map/page.tsx` - Tactical map route (SSR metadata + dynamic import)
 - `app/dashboard/page.tsx` - Dashboard route (SWR data fetching)
 - `app/dashboard/report/[id]/page.tsx` - **Report detail route (updated with comparison UI)**
+- `app/access/page.tsx` - **Access code entry form**: validates code against `ACCESS_CODES` env var via `app/api/access/verify/route.ts`, issues JWT signed with `JWT_SECRET`, sets `macrointel_access` cookie, redirects to original route. Open to all.
+- `app/insights/page.tsx` - **Public intelligence briefings list**: fetches from `/api/v1/insights`, renders briefings with category badges and summaries. No auth required — public SEO page.
+- `app/insights/[slug]/page.tsx` - **Briefing detail**: renders full executive summary. No auth required.
+- `middleware.ts` - **JWT access control**: protects `/dashboard`, `/map`, `/stories`, `/oracle` — verifies `macrointel_access` cookie via `jose.jwtVerify`; redirects to `/access?from=<path>` on missing/invalid token.
+- `lib/communityColors.ts` - **Shared 15-color palette**: used by both `TacticalMap` (COLOR: COMM toggle) and `StorylineGraph` for visual consistency across pages.
   - State: `compareId` (nullable) to track which report is being compared
   - Fetches: `report` detail, `compareReport` detail (when `compareId` is set), `comparison` delta (LLM-synthesized)
   - Conditional layout:
@@ -24,18 +29,19 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
   - `ComparisonDelta` banner above split layout, visible with skeleton loader while Gemini processes (10–20s)
   - "Close ×" button to exit comparison mode
 - **`app/stories/page.tsx`** - Storyline graph route (SSR metadata + dynamic import)
-- `app/sitemap.ts` - Sitemap XML generata server-side (4 route: /, /dashboard, /stories, /map)
+- `app/sitemap.ts` - Sitemap XML generata server-side (/, /dashboard, /stories, /map, /oracle, /insights, /insights/[slug])
 - `app/robots.ts` - robots.txt con riferimento a sitemap.xml
 
 ### Components
 
 #### Map Components (`components/IntelligenceMap/`)
-- `TacticalMap.tsx` - Main Mapbox GL component with clustering
+- `TacticalMap.tsx` - Main Mapbox GL component with clustering and **Tier 3 layer toggles**: HEATMAP (intelligence_score weighted), ARCS (entity co-occurrence LineStrings, lazy-fetched), PULSE (animated ring for recent entities), COLOR:COMM (community-based coloring)
+- `FilterPanel.tsx` - **Entity filter panel**: TYPE checkboxes (GPE/ORG/PERSON/LOC), SCORE slider (0–1 min intelligence_score), DAYS lookback, SEARCH text — all applied server-side via query params to `/api/v1/map/entities`
 - `MapLoader.tsx` - Client wrapper for dynamic import (ssr: false)
 - `MapSkeleton.tsx` - Loading skeleton for map
 - `GridOverlay.tsx` - Tactical grid visualization
 - `HUDOverlay.tsx` - HUD elements (ZULU clock, coordinates)
-- `EntityDossier.tsx` - Entity detail panel
+- `EntityDossier.tsx` - Entity detail panel with intelligence_score, storyline_count, top_storyline
 
 #### **Storyline Graph Components (`components/StorylineGraph/`)**
 See `components/StorylineGraph/context.md` for full detail.
@@ -91,9 +97,18 @@ See `components/StorylineGraph/context.md` for full detail.
   - `SourceCard` — shows REPORT/ARTICOLO badge, similarity %, preview
   - Suggestion chips on empty state; auto-scroll to latest message
 
+#### Insights Components (`components/insights/`)
+- `WaitlistInline.tsx` - Email waitlist signup form embedded in insights pages
+
 #### Landing Components (`components/landing/`)
-- `Navbar.tsx` - Navigation with links to Dashboard, **Storylines**, Intelligence Map, **Oracle**
-- `Hero.tsx`, `Features.tsx`, `Footer.tsx` - Landing page sections
+- `Navbar.tsx` - Navigation with links to Dashboard, Storylines, Intelligence Map, Oracle
+- `Hero.tsx` - Hero section with CTA
+- `Features.tsx` - Feature list
+- `ProductShowcase.tsx` - Interactive product screenshots showcase
+- `ICPSection.tsx` - Ideal customer profile section
+- `StatsCounter.tsx` - Live dashboard statistics counter (total articles, reports, entities)
+- `CTASection.tsx` - Call-to-action section with waitlist
+- `Footer.tsx` - Footer with links
 
 #### UI Components (`components/ui/`)
 - Shadcn components: Button, Card, Skeleton, Table, Badge
@@ -104,6 +119,9 @@ See `components/StorylineGraph/context.md` for full detail.
   - `NEXT_PUBLIC_MAPBOX_TOKEN` - Mapbox API token (client-side, restrict by domain)
   - `INTELLIGENCE_API_URL` - Backend API URL (server-side only)
   - `INTELLIGENCE_API_KEY` - API authentication key (server-side only, via proxy)
+  - `JWT_SECRET` - Secret for signing access JWTs (middleware + verify route)
+  - `ACCESS_CODES` - Comma-separated valid access codes for `/access` page
+  - `ORACLE_REQUIRE_GEMINI_KEY` - `true` = BYOK enforced for Oracle
 - `next.config.ts` - Next.js configuration
 - `package.json` - Dependencies
 - `tsconfig.json` - TypeScript config

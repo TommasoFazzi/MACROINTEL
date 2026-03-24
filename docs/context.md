@@ -9,13 +9,7 @@ Knowledge base for developers and users. Documents system design decisions, impl
 ## Key Files
 
 ### Project Overview
-- `PROJECT_SUMMARY.md` - High-level project summary (~21k chars)
-  - Tech stack overview
-  - Feature list
-  - Architecture diagram
-  - Metrics and statistics
-
-- `QUICKSTART.md` - Quick start guide (~6k chars)
+- `QUICKSTART.md` - Quick start guide
   - Installation steps
   - Basic usage
   - Common commands
@@ -52,10 +46,6 @@ Knowledge base for developers and users. Documents system design decisions, impl
   - 3-layer content filtering (Filtro 1, 2, 4)
   - Momentum scoring and decay
 
-- `REFACTORING_SUMMARY.md` - Code refactoring notes (~1k chars)
-  - Recent changes
-  - Technical debt
-
 ## Dependencies
 
 - **Internal**: Referenced by all modules
@@ -68,8 +58,8 @@ Knowledge base for developers and users. Documents system design decisions, impl
 
 ## Related Documentation
 
-- `README.md` (project root) - Main project README
-- `intelligence-map/README.md` - Map setup instructions
-- `tests/README.md` - Test documentation
-- `DEDUPLICATION_IMPLEMENTATION.md` (root) - Dedup strategy
-- `RERANKING_IMPLEMENTATION.md` (root) - Reranking details
+- `README.md` (project root) - Main project README (authoritative, updated 2026-03-24)
+- `CLAUDE.md` (project root) - AI assistant project guide
+- `DEDUPLICATION_IMPLEMENTATION.md` (root) - 2-phase dedup strategy
+- `RERANKING_IMPLEMENTATION.md` (root) - Cross-encoder reranking details
+- `ORACLE_2.0_DEVELOPMENT_PLAN.md` (root) - Oracle 2.0 architecture plan
