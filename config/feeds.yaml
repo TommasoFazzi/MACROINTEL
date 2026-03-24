@@ -81,7 +81,17 @@ feeds:
     category: "intelligence"
     subcategory: "middle_east"
 
+  - name: "Times of Israel"
+    url: "https://www.timesofisrael.com/feed/"
+    category: "intelligence"
+    subcategory: "middle_east"
+
   # DEFENSE & MILITARY
+  - name: "The War Zone"
+    url: "https://www.twz.com/feed"
+    category: "intelligence"
+    subcategory: "defense"
+
   - name: "Breaking Defense"
     url: "https://breakingdefense.com/feed/"
     category: "intelligence"
@@ -112,6 +122,11 @@ feeds:
     url: "https://www.chathamhouse.org/rss/all"
     category: "intelligence"
     subcategory: "think_tank"
+
+  - name: "Bellingcat"
+    url: "https://www.bellingcat.com/feed/"
+    category: "intelligence"
+    subcategory: "osint"
 
   - name: "RAND Corporation - Research Reports"
     url: "https://www.rand.org/pubs/research_reports.xml"

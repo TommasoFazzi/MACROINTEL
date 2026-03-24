@@ -152,7 +152,7 @@ SOURCES = [
         "The War Zone",
         "defense", "Investigativo", 4.0,
         "Giornalismo iper-dettagliato su aviazione militare, droni, tecnologie classificate e avvistamenti UAP.",
-        [], False,
+        ["The War Zone"], True,
     ),
     (
         "Defense One",
@@ -214,7 +214,7 @@ SOURCES = [
         "Times of Israel",
         "geopolitics", "Nazionale", 3.5,
         "Copertura israeliana indipendente. Utile per notizie non filtrate dal governo su conflitti Gaza/Libano.",
-        [], False,
+        ["Times of Israel"], True,
     ),
 
     # ── INTELLIGENCE & GEOSTRATEGY ───────────────────────────
@@ -270,7 +270,7 @@ SOURCES = [
         "Bellingcat",
         "intelligence", "OSINT", 4.5,
         "Investigazione open-source pura. Prove visive, geolocalizzazione forense e debunking di propaganda.",
-        [], False,
+        ["Bellingcat"], True,
     ),
     (
         "King's College War Studies",
