@@ -43,6 +43,21 @@ _BLOCKLIST_PATTERNS: List[re.Pattern] = [
         r'\b(?:celebrity|gossip|red carpet|fashion week|Met Gala)\b',
         r'\b(?:Kardashian|reality TV|Love Island)\b',
         r'\b(?:Fontana di Trevi|tourist ticket|travel guide)\b',
+        # --- Спорт / Sport (Russian-language sources: Kommersant, etc.) ---
+        r'\bфутбол',        # футбол, футбола, футбольный
+        r'\bхоккей',        # хоккей, хоккея, хоккейный
+        r'\bбаскетбол',     # баскетбол, баскетбольный
+        r'\bволейбол',      # волейбол, волейбольный
+        r'\b(?:НХЛ|КХЛ|НБА|РПЛ|ФНЛ)\b',
+        r'\b(?:ЦСКА|Спартак|Зенит|Локомотив|Динамо)\b',
+        r'\bОлимпиад',      # Олимпиада, Олимпийские
+        r'\bПаралимпи',     # Паралимпийский
+        r'Формула.?1\b',    # Формула-1
+        # --- Развлечения / Entertainment ---
+        r'\bкинофестивал',  # кинофестиваль, кинофестивалей
+        r'\bшоу-бизнес',
+        r'\bНеделя моды\b',
+        r'\bфэшн',          # фэшн-неделя, фэшн-индустрия
     ]
 ]
 

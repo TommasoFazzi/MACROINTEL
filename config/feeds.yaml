@@ -118,8 +118,8 @@ feeds:
     category: "intelligence"
     subcategory: "think_tank"
 
-  - name: "Chatham House"
-    url: "https://www.chathamhouse.org/rss/all"
+  - name: "RUSI"
+    url: "https://www.rusi.org/explore-our-research/publications/"
     category: "intelligence"
     subcategory: "think_tank"
 
@@ -190,3 +190,42 @@ feeds:
     url: "https://semiengineering.com/feed/"
     category: "tech_economy"
     subcategory: "semiconductors"
+
+  # SCRAPLING-BACKED SOURCES (no public RSS — fetched via Scrapling Tier 1 fallback scraper)
+  # These entries trigger the fallback scraper via FALLBACK_SCRAPERS keys.
+  # The URL is a placeholder; actual scraping URL is defined in feed_parser.py FALLBACK_SCRAPERS.
+  - name: "ISW - Ukraine Conflict"
+    url: "https://understandingwar.org/analysis/russia-ukraine/"
+    category: "intelligence"
+    subcategory: "defense"
+
+  - name: "ISW - Iran Update"
+    url: "https://understandingwar.org/analysis/middle-east/"
+    category: "intelligence"
+    subcategory: "defense"
+
+  - name: "Chatham House"
+    url: "https://www.chathamhouse.org/expert-comment"
+    category: "intelligence"
+    subcategory: "think_tank"
+
+  - name: "King's College War Studies"
+    url: "https://www.kcl.ac.uk/warstudies/news"
+    category: "intelligence"
+    subcategory: "think_tank"
+
+  # RUSSIA
+  - name: "Kommersant - World"
+    url: "https://www.kommersant.ru/rss/section-world.xml"
+    category: "intelligence"
+    subcategory: "russia"
+
+  - name: "Kommersant - Politics"
+    url: "https://www.kommersant.ru/rss/section-politics.xml"
+    category: "intelligence"
+    subcategory: "russia"
+
+  - name: "Kommersant - Economics"
+    url: "https://www.kommersant.ru/rss/section-economics.xml"
+    category: "economics"
+    subcategory: "russia"

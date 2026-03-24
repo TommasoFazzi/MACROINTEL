@@ -120,7 +120,7 @@ SOURCES = [
         "Kommersant",
         "economics", "Nazionale", 3.0,
         "Quotidiano economico russo. Fondamentale per leggere l'economia russa e le sanzioni al netto della censura di stato.",
-        [], False,
+        ["Kommersant - World", "Kommersant - Politics", "Kommersant - Economics"], True,
     ),
 
     # ── DEFENSE ─────────────────────────────────────────────
@@ -234,7 +234,7 @@ SOURCES = [
         "RUSI",
         "intelligence", "Think Tank", 5.0,
         "Istituto britannico. Dottrina NATO, sicurezza europea, guerre ibride e analisi Russia-Ucraina di prima qualità.",
-        [], False,
+        ["RUSI"], True,
     ),
     (
         "Chatham House",
@@ -264,7 +264,7 @@ SOURCES = [
         "ISW",
         "intelligence", "Tattico", 4.5,
         "Institute for the Study of War. Mappatura quotidiana e chirurgica dell'avanzamento dei conflitti attivi (Ucraina, Medio Oriente).",
-        [], False,
+        ["ISW - Ukraine Conflict", "ISW - Iran Update"], True,
     ),
     (
         "Bellingcat",
@@ -276,7 +276,7 @@ SOURCES = [
         "King's College War Studies",
         "intelligence", "Accademia", 4.5,
         "Analisi accademica di lungo periodo su strategia militare, conflitti e teoria delle relazioni internazionali.",
-        [], False,
+        ["King's College War Studies"], True,
     ),
 ]
 

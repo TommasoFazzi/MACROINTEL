@@ -27,6 +27,28 @@ try:
 except ImportError:
     CLOUDSCRAPER_AVAILABLE = False
 
+try:
+    from scrapling.fetchers import Fetcher as ScraplingFetcher
+    SCRAPLING_FETCHER_AVAILABLE = True
+except ImportError:
+    SCRAPLING_FETCHER_AVAILABLE = False
+
+try:
+    from scrapling.fetchers import StealthyFetcher
+    SCRAPLING_STEALTH_AVAILABLE = True
+except ImportError:
+    SCRAPLING_STEALTH_AVAILABLE = False
+
+# Tier 2: Cloudflare Turnstile (Chromium-based StealthyFetcher)
+SCRAPLING_TIER2_DOMAINS: list[str] = ['rusi.org']  # Gatsby 5 — requires full browser rendering
+
+# Tier 1: WAF/bot-detection bypassed via curl_cffi (no browser download needed)
+SCRAPLING_TIER1_DOMAINS = [
+    'understandingwar.org',  # ISW — daily Ukraine/ME assessments, no RSS
+    'chathamhouse.org',      # Chatham House — redirects to homepage, content accessible
+    'kcl.ac.uk',             # King's College War Studies — if needed in future
+]
+
 from .pdf_ingestor import PDFIngestor, PYMUPDF_AVAILABLE
 from ..utils.logger import get_logger
 
@@ -78,6 +100,10 @@ class ContentExtractor:
             except Exception as e:
                 logger.warning(f"Failed to initialize cloudscraper: {e}")
 
+        # Semaphore for StealthyFetcher: max 2 concurrent Chromium instances
+        # (prevents RAM exhaustion on GitHub Actions when max_concurrent=10)
+        self.scrapling_stealth_semaphore = asyncio.Semaphore(2)
+
     def _get_random_ua(self) -> str:
         """Get a random user agent from the pool."""
         return random.choice(USER_AGENTS)
@@ -85,6 +111,52 @@ class ContentExtractor:
     def _is_protected_domain(self, url: str) -> bool:
         """Check if URL belongs to a known anti-bot protected domain."""
         return any(domain in url for domain in PROTECTED_DOMAINS)
+
+    def _is_scrapling_tier2(self, url: str) -> bool:
+        """Check if URL requires StealthyFetcher (Cloudflare Turnstile)."""
+        return any(domain in url for domain in SCRAPLING_TIER2_DOMAINS)
+
+    def _is_scrapling_tier1(self, url: str) -> bool:
+        """Check if URL requires Scrapling Fetcher (curl_cffi WAF bypass)."""
+        return any(domain in url for domain in SCRAPLING_TIER1_DOMAINS)
+
+    def extract_with_scrapling(self, url: str, tier: int = 1) -> Optional[Dict]:
+        """
+        Fetch HTML via Scrapling, then parse with Trafilatura.
+
+        Tier 1: curl_cffi Fetcher — bypasses basic WAF/TLS fingerprinting.
+        Tier 2: StealthyFetcher (Patchright/Chromium) — bypasses Cloudflare Turnstile.
+
+        Args:
+            url: Article URL
+            tier: 1 for Fetcher, 2 for StealthyFetcher
+
+        Returns:
+            Dictionary with extracted content or None
+        """
+        try:
+            if tier >= 2 and SCRAPLING_STEALTH_AVAILABLE:
+                page = StealthyFetcher.get(url)
+            elif SCRAPLING_FETCHER_AVAILABLE:
+                page = ScraplingFetcher.get(url)
+            else:
+                logger.debug("Scrapling not available")
+                return None
+
+            if page.status != 200:
+                logger.debug(f"Scrapling tier{tier} got status {page.status} for {url}")
+                return None
+
+            content = self.extract_with_trafilatura(url, html=page.html_content)
+            if content:
+                content['extraction_method'] = f'scrapling_tier{tier}+trafilatura'
+                content['_raw_html'] = page.html_content  # Reuse for Level 2 PDF detection
+                logger.info(f"Scrapling tier{tier} extracted: {url}")
+            return content
+
+        except Exception as e:
+            logger.debug(f"Scrapling tier{tier} extraction failed for {url}: {e}")
+            return None
 
     def extract_with_trafilatura(self, url: str, html: str = None) -> Optional[Dict]:
         """
@@ -305,6 +377,20 @@ class ContentExtractor:
             if content and content.get('text'):
                 return content
 
+        # SCRAPLING TIER 2: Cloudflare Turnstile domains (StealthyFetcher/Chromium)
+        if self._is_scrapling_tier2(url) and SCRAPLING_STEALTH_AVAILABLE:
+            logger.debug(f"Scrapling Tier 2 domain, using StealthyFetcher: {url}")
+            content = self.extract_with_scrapling(url, tier=2)
+            if content and content.get('text'):
+                return self._try_level2_pdf(url, content, raw_html=content.pop('_raw_html', None))
+
+        # SCRAPLING TIER 1: WAF/bot-detection domains (curl_cffi Fetcher)
+        if self._is_scrapling_tier1(url) and SCRAPLING_FETCHER_AVAILABLE:
+            logger.debug(f"Scrapling Tier 1 domain, using Fetcher: {url}")
+            content = self.extract_with_scrapling(url, tier=1)
+            if content and content.get('text'):
+                return self._try_level2_pdf(url, content, raw_html=content.pop('_raw_html', None))
+
         # For known protected domains, try cloudscraper first
         if self._is_protected_domain(url):
             logger.debug(f"Protected domain detected, trying cloudscraper first: {url}")
@@ -330,18 +416,28 @@ class ContentExtractor:
             if content and content.get('text'):
                 return self._try_level2_pdf(url, content)
 
+        # Final last resort: Scrapling Tier 1 for any non-Tier1 URL that failed above
+        if not self._is_scrapling_tier1(url) and SCRAPLING_FETCHER_AVAILABLE:
+            content = self.extract_with_scrapling(url, tier=1)
+            if content and content.get('text'):
+                return self._try_level2_pdf(url, content, raw_html=content.pop('_raw_html', None))
+
         logger.warning(f"Failed to extract content from: {url}")
         return None
 
-    def _try_level2_pdf(self, url: str, html_content: Dict) -> Dict:
+    def _try_level2_pdf(self, url: str, html_content: Dict, raw_html: str = None) -> Dict:
         """
         LEVEL 2: After successful HTML extraction, check if landing page contains
         a PDF download link (think tank pattern). If found, extract PDF and combine
         with HTML abstract. Returns original html_content if no PDF found.
+
+        Args:
+            raw_html: Pre-fetched HTML (from Scrapling) to avoid double-fetch.
         """
         if not PYMUPDF_AVAILABLE:
             return html_content
-        raw_html = self._fetch_raw_html(url)
+        # Reuse already-fetched HTML if available, otherwise fetch
+        raw_html = raw_html or self._fetch_raw_html(url)
         if raw_html:
             pdf_url = self._find_pdf_link(raw_html, url)
             if pdf_url:
@@ -380,9 +476,14 @@ class ContentExtractor:
             return article
 
         try:
-            async with semaphore:
-                # Delegate to sync extract_content in a thread
-                full_content = await asyncio.to_thread(self.extract_content, url)
+            # Tier 2 (Chromium) limited to 2 concurrent to avoid RAM exhaustion
+            if self._is_scrapling_tier2(url) and SCRAPLING_STEALTH_AVAILABLE:
+                async with self.scrapling_stealth_semaphore:
+                    full_content = await asyncio.to_thread(self.extract_content, url)
+            else:
+                async with semaphore:
+                    # Delegate to sync extract_content in a thread
+                    full_content = await asyncio.to_thread(self.extract_content, url)
 
             article['full_content'] = full_content
             article['extraction_success'] = full_content is not None

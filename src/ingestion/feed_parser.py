@@ -28,6 +28,18 @@ try:
 except ImportError:
     CLOUDSCRAPER_AVAILABLE = False
 
+try:
+    from scrapling.fetchers import Fetcher as ScraplingFetcher
+    SCRAPLING_FETCHER_AVAILABLE = True
+except ImportError:
+    SCRAPLING_FETCHER_AVAILABLE = False
+
+try:
+    from scrapling.fetchers import StealthyFetcher
+    SCRAPLING_STEALTH_AVAILABLE = True
+except ImportError:
+    SCRAPLING_STEALTH_AVAILABLE = False
+
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,13 +84,7 @@ FALLBACK_SCRAPERS = {
         'needs_cloudscraper': True,
         'link_based': True,  # Special flag: extract from links directly
     },
-    # NOTE: Chatham House ha protezione anti-bot molto aggressiva (WAF)
-    # che nemmeno cloudscraper riesce a bypassare. Richiede browser headless.
-    # Disabilitato per ora.
-    # 'Chatham House': {
-    #     'url': 'https://www.chathamhouse.org/publications',
-    #     'needs_cloudscraper': True,
-    # },
+    # NOTE: Chatham House — moved to SCRAPLING-BACKED section below
     'European Council on Foreign Relations': {
         'url': 'https://ecfr.eu/publications/',
         'selector': 'article, .publication-item, .card',
@@ -97,6 +103,70 @@ FALLBACK_SCRAPERS = {
         'subcategory': 'africa',
         'needs_cloudscraper': False,
         'link_based': True,
+    },
+    # ── SCRAPLING-BACKED SOURCES ─────────────────────────────────────────────
+    # These sources require curl_cffi TLS fingerprinting (Scrapling Tier 1).
+    # needs_scrapling=True  → use _fetch_with_scrapling() instead of aiohttp.
+    # scrapling_tier: 1=Fetcher (curl_cffi), 2=StealthyFetcher (Chromium)
+    'ISW - Ukraine Conflict': {
+        'url': 'https://understandingwar.org/analysis/russia-ukraine/',
+        'selector': 'h3 a',
+        'title_sel': None,   # h3 a is self-contained
+        'link_sel': None,
+        'category': 'intelligence',
+        'subcategory': 'defense',
+        'needs_scrapling': True,
+        'scrapling_tier': 1,
+        'link_based': True,
+    },
+    'ISW - Iran Update': {
+        'url': 'https://understandingwar.org/analysis/middle-east/',
+        'selector': 'h3 a',
+        'title_sel': None,
+        'link_sel': None,
+        'category': 'intelligence',
+        'subcategory': 'defense',
+        'needs_scrapling': True,
+        'scrapling_tier': 1,
+        'link_based': True,
+    },
+    "King's College War Studies": {
+        # KCL news page (SSR, standard HTML). Articles at /news/{slug}.
+        # Filter excludes category filter links (/news/kings-news?cat=...) and
+        # keeps only clean slug-based article paths.
+        'url': 'https://www.kcl.ac.uk/warstudies/news',
+        'selector': 'a[href]',
+        'link_based': True,
+        'needs_scrapling': False,
+        'link_filter': r'^/news/(?!kings-news)[a-z0-9][a-z0-9-]+$',
+        'category': 'intelligence',
+        'subcategory': 'think_tank',
+    },
+    'RUSI': {
+        # Gatsby 5 site — client-side rendered, requires browser (StealthyFetcher)
+        # URL pattern: /explore-our-research/publications/{type}/{slug}
+        'url': 'https://www.rusi.org/explore-our-research/publications/',
+        'selector': 'a[href]',
+        'link_based': True,
+        'needs_scrapling': True,
+        'scrapling_tier': 2,         # Gatsby: requires full browser rendering
+        'link_filter': r'^/explore-our-research/publications/[^/]+/.+',
+        'category': 'intelligence',
+        'subcategory': 'think_tank',
+    },
+    'Chatham House': {
+        # /expert-comment redirects to homepage which has latest article links
+        'url': 'https://www.chathamhouse.org/expert-comment',
+        # Articles use /YYYY/MM/slug pattern
+        'selector': 'a[href]',
+        'title_sel': None,
+        'link_sel': None,
+        'category': 'intelligence',
+        'subcategory': 'think_tank',
+        'needs_scrapling': True,
+        'scrapling_tier': 1,
+        'link_based': True,
+        'link_filter': r'^/20\d\d/',  # Only keep /YYYY/MM/slug links
     },
     # NOTE: ECB usa JavaScript per caricare i comunicati dinamicamente.
     # Richiede Selenium/Playwright per scraping efficace.
@@ -136,6 +206,38 @@ class FeedParser:
         """Get a random user agent from the pool."""
         return random.choice(USER_AGENTS)
 
+    async def _fetch_with_scrapling(self, url: str, tier: int = 1) -> Optional[str]:
+        """
+        Fetch a page using Scrapling (curl_cffi or StealthyFetcher) with anti-rate-limit jitter.
+
+        Args:
+            url: URL to fetch
+            tier: 1 for Fetcher (curl_cffi), 2 for StealthyFetcher (Chromium)
+
+        Returns:
+            HTML string on success, None on failure
+        """
+        # Jitter: avoid burst requests that trigger rate limiting
+        await asyncio.sleep(random.uniform(1.5, 4.0))
+
+        try:
+            if tier >= 2 and SCRAPLING_STEALTH_AVAILABLE:
+                page = await asyncio.to_thread(StealthyFetcher.get, url)
+            elif SCRAPLING_FETCHER_AVAILABLE:
+                page = await asyncio.to_thread(ScraplingFetcher.get, url)
+            else:
+                logger.warning("Scrapling not available — cannot fetch WAF-protected source")
+                return None
+
+            if page.status == 200:
+                return page.html_content
+            logger.warning(f"Scrapling tier{tier} got status {page.status} for {url}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Scrapling fetch failed for {url}: {e}")
+            return None
+
     def _load_config(self) -> List[Dict]:
         """Load feeds configuration from YAML file."""
         try:
@@ -172,6 +274,11 @@ class FeedParser:
         try:
             logger.info(f"Trying fallback scraper for: {feed_name}")
 
+            # Scrapling-backed sources need async context — sync fallback not supported
+            if config.get('needs_scrapling'):
+                logger.warning(f"Scrapling-backed source {feed_name} requires async context; skipping sync scrape_fallback")
+                return []
+
             # Use cloudscraper for sites that need anti-bot bypass
             needs_cloudscraper = config.get('needs_cloudscraper', False)
 
@@ -196,7 +303,8 @@ class FeedParser:
 
             articles = []
             seen_links = set()  # Avoid duplicates
-            items = soup.select(config['selector'])[:30]  # Limit to 30, filter later
+            max_items = 500 if config.get('link_filter') else 30
+            items = soup.select(config['selector'])[:max_items]
 
             # Check if this is a link-based scraper (like CFR)
             link_based = config.get('link_based', False)
@@ -431,9 +539,17 @@ class FeedParser:
 
         try:
             logger.info(f"Trying async fallback scraper for: {feed_name}")
+            needs_scrapling = config.get('needs_scrapling', False)
             needs_cs = config.get('needs_cloudscraper', False)
 
-            if needs_cs and self.cloudscraper_session:
+            if needs_scrapling:
+                tier = config.get('scrapling_tier', 1)
+                logger.debug(f"Using Scrapling tier{tier} for {feed_name}")
+                html_text = await self._fetch_with_scrapling(config['url'], tier=tier)
+                if not html_text:
+                    logger.warning(f"Scrapling fetch returned nothing for {feed_name}")
+                    return []
+            elif needs_cs and self.cloudscraper_session:
                 # cloudscraper must run in thread (TLS fingerprinting)
                 response = await asyncio.to_thread(
                     self.cloudscraper_session.get,
@@ -458,9 +574,17 @@ class FeedParser:
 
             articles = []
             seen_links = set()
-            items = soup.select(config['selector'])[:30]
+            # For link_filter scrapers (e.g. Chatham House) article links appear late in DOM
+            max_items = 500 if config.get('link_filter') else 50
+            items = soup.select(config['selector'])[:max_items]
 
             link_based = config.get('link_based', False)
+            link_filter = config.get('link_filter')  # Optional regex to filter hrefs
+            if link_filter:
+                import re
+                link_filter_re = re.compile(link_filter)
+            else:
+                link_filter_re = None
 
             for item in items:
                 if link_based:
@@ -473,6 +597,10 @@ class FeedParser:
                         continue
                     raw_link = link_el.get('href')
                     title = title_el.get_text(strip=True)
+
+                # Apply link_filter if defined (e.g. Chatham House /YYYY/MM/ pattern)
+                if link_filter_re and raw_link and not link_filter_re.match(raw_link):
+                    continue
 
                 if not raw_link:
                     continue

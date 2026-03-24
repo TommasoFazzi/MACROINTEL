@@ -32,10 +32,21 @@ jobs:
           key: hf-models-v1
           restore-keys: hf-models-
 
+      - name: Cache Patchright Chromium
+        uses: actions/cache@v4
+        id: cache-chromium
+        with:
+          path: ~/.cache/ms-playwright
+          key: patchright-chromium-v1-${{ runner.os }}
+
       - name: Install dependencies
         run: |
           pip install -r requirements-prod.txt
           python -m spacy download xx_ent_wiki_sm
+
+      - name: Install Patchright Chromium
+        if: steps.cache-chromium.outputs.cache-hit != 'true'
+        run: python -m patchright install chromium
 
       - name: Download sentence-transformers models
         run: |
