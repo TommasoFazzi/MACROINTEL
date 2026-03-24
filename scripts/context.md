@@ -6,9 +6,11 @@ Automation and utility scripts for pipeline execution, data management, and main
 ## Architecture Role
 Operational layer that orchestrates the core modules. Scripts tie together ingestion → NLP → database → LLM report generation.
 
-**Primary orchestrator**: `daily_pipeline.py` executes 6 core steps sequentially (+ conditional weekly/monthly) with logging, error handling, and configurable fail-fast behavior. Supports manual execution and automated scheduling via launchd (macOS, 8:00 AM daily).
+**Primary orchestrator**: `daily_pipeline.py` executes 6 core steps sequentially (+ conditional weekly/monthly) with logging, error handling, and configurable fail-fast behavior. Supports manual execution and automated scheduling.
 
-**Status checker**: `pipeline_status_check.py` runs at 9:00 AM via a separate launchd job, one hour after the pipeline starts. It checks whether the pipeline completed, inspects log files, queries the DB for the last report timestamp, and sends a macOS notification with the result.
+**Scheduling**: In production, the pipeline runs on Hetzner via **GitHub Actions** (`.github/workflows/pipeline.yml`, triggers daily at 8:00 UTC + manual). The macOS launchd plist files (`com.intelligence-ita.*.plist`) in this directory are **deprecated** — do not use them.
+
+**Status checker**: `pipeline_status_check.py` checks whether the pipeline completed, inspects log files, queries the DB for the last report timestamp, and sends a notification with the result.
 
 ## Key Files
 
@@ -64,6 +66,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 - `geocode_entities.py` - Geocode entities with coordinates
 - `geocode_batch.py` - Batch geocoding for efficiency
 - `clean_geocoding.py` - Clean invalid geocoding data
+- `refresh_map_data.py` - **Post-pipeline map refresh**: invalidates the map entity cache via `POST /api/v1/map/cache/invalidate` and re-runs `compute_intelligence_scores()`. Should be called after `process_narratives.py` to ensure the map reflects the latest storyline data.
 
 ### Embeddings & Search
 - `backfill_report_embeddings.py` - Generate embeddings for existing reports
@@ -77,7 +80,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 - `test_storyline_clustering.py` - Legacy: Test storyline clustering
 
 ### Quality Auditing
-- `audit_entity_quality.py` - Audit entity data quality
+- `audit_entity_quality.py` - Audit entity data quality: checks for garbage entities, geocoding gaps, low-mention counts, and duplicate names. Outputs a quality report to stdout.
 
 ### Ticker Management
 - `seed_tickers.py` - Seed ticker whitelist to database
@@ -85,8 +88,8 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 ### Dashboard & Scheduling
 - `run_dashboard.sh` - Launch Streamlit dashboard
 - `run_weekly_report.sh` - Cron script for weekly reports
-- `com.intelligence-ita.daily-pipeline.plist` - launchd config for 8:00 AM daily pipeline (macOS)
-- `com.intelligence-ita.pipeline-status-check.plist` - launchd config for 9:00 AM status check (macOS)
+- `com.intelligence-ita.daily-pipeline.plist` - **Deprecated** launchd config for 8:00 AM daily pipeline (macOS local only — replaced by GitHub Actions)
+- `com.intelligence-ita.pipeline-status-check.plist` - **Deprecated** launchd config for 9:00 AM status check (macOS local only)
 
 ### Migrations
 - `run_migration_003.py` - Run specific migration
@@ -122,14 +125,14 @@ python scripts/load_to_database.py
 python scripts/process_narratives.py --days 1
 python scripts/generate_report.py --macro-first
 
+# Refresh map data + intelligence scores (after narratives step)
+python scripts/refresh_map_data.py
+
 # Dry run (validate only)
 python scripts/daily_pipeline.py --dry-run
 
 # Resume from specific step
 python scripts/daily_pipeline.py --from-step 3
-
-# Enable automatic scheduling (8:00 AM daily)
-launchctl load ~/Library/LaunchAgents/com.intelligence-ita.daily-pipeline.plist
 
 # Weekly report
 python scripts/generate_weekly_report.py
@@ -137,7 +140,16 @@ python scripts/generate_weekly_report.py
 # Entity maintenance
 python scripts/clean_entities.py
 python scripts/geocode_entities.py
+python scripts/audit_entity_quality.py
+
+# Rebuild narrative graph edges (full reconstruction)
+python scripts/rebuild_graph_edges.py
+
+# Community detection
+python scripts/compute_communities.py --min-weight 0.05 --resolution 0.2
 
 # Check system
 python scripts/check_setup.py
 ```
+
+**Note**: Automated scheduling runs via GitHub Actions (`.github/workflows/pipeline.yml`), not launchd. The plist files in this directory are kept for reference only.

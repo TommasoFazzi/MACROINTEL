@@ -8,7 +8,7 @@ Central persistence layer between the processing pipeline and intelligence gener
 
 ## Key Files
 
-- `database.py` - `DatabaseManager` class (~1995 lines)
+- `database.py` - `DatabaseManager` class (~2445 lines)
 
   **Connection Management:**
   - `SimpleConnectionPool` (min=1, max=10 connections)

@@ -73,7 +73,7 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
 ## Data Flow
 
 - **Input**:
-  - `config/feeds.yaml` - RSS feed URLs and metadata (~36 feeds, includes think tank RSS: RAND, EveryCRSReport)
+  - `config/feeds.yaml` - RSS feed URLs and metadata (~33 feeds, includes think tank RSS: RAND, EveryCRSReport)
   - Live RSS/Atom feeds from web
   - Article URLs for full-text extraction
 

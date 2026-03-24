@@ -49,6 +49,7 @@ python scripts/process_nlp.py                 # 3. NLP processing
 python scripts/load_to_database.py            # 4. Load to database
 python scripts/process_narratives.py          # 5. Narrative processing (storylines + graph)
 python scripts/generate_report.py             # 6. Generate LLM report
+python scripts/refresh_map_data.py            # 7. Refresh map cache + recompute intelligence scores (post-pipeline)
 
 # Full automated pipeline
 python scripts/daily_pipeline.py
