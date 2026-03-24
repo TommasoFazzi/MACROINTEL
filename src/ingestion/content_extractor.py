@@ -5,9 +5,10 @@ This module extracts full-text content from article URLs using specialized libra
 It tries multiple extraction methods to get the best quality content.
 
 Extraction Strategy:
-1. Trafilatura (fast, best for news)
-2. Newspaper3k (fallback)
-3. Cloudscraper (for anti-bot protected sites like politico.com)
+1. PDF auto-detection (direct .pdf URL or landing page with PDF download link)
+2. Trafilatura (fast, best for news)
+3. Newspaper3k (fallback)
+4. Cloudscraper (for anti-bot protected sites like politico.com)
 """
 
 import requests
@@ -15,8 +16,10 @@ import random
 import asyncio
 from typing import Optional, Dict, List
 from datetime import datetime
+from urllib.parse import urljoin
 import trafilatura
 from newspaper import Article as NewspaperArticle
+from bs4 import BeautifulSoup
 
 try:
     import cloudscraper
@@ -24,6 +27,7 @@ try:
 except ImportError:
     CLOUDSCRAPER_AVAILABLE = False
 
+from .pdf_ingestor import PDFIngestor, PYMUPDF_AVAILABLE
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -201,15 +205,90 @@ class ContentExtractor:
 
         return None
 
+    def _extract_pdf_content_sync(self, url: str) -> Optional[Dict]:
+        """
+        Extract content from a PDF URL synchronously via PDFIngestor.
+
+        Args:
+            url: URL pointing to a PDF file
+
+        Returns:
+            Dictionary with extracted content or None
+        """
+        try:
+            ingestor = PDFIngestor()
+            # Use same User-Agent as HTML crawler for consistency
+            headers = {'User-Agent': self.user_agent}
+            pdf_bytes = asyncio.run(ingestor.download_pdf(url, headers=headers))
+            if not pdf_bytes:
+                return None
+
+            text = ingestor.extract_text(pdf_bytes)
+            if not text or len(text.strip()) < 100:
+                logger.warning(f"Insufficient text from PDF: {url}")
+                return None
+
+            logger.info(f"Successfully extracted PDF content: {url}")
+            return {
+                'text': text,
+                'extraction_method': 'pymupdf4llm' if ingestor._use_4llm else 'pymupdf',
+                'is_long_document': True,
+            }
+        except Exception as e:
+            logger.debug(f"PDF extraction failed for {url}: {e}")
+            return None
+
+    def _find_pdf_link(self, html: str, base_url: str) -> Optional[str]:
+        """
+        Scan HTML for PDF download links (think tank landing pages).
+
+        Many think tanks link to landing pages, not direct PDFs. This method
+        searches for <a href="*.pdf"> with relevant link text.
+
+        Args:
+            html: HTML content of the landing page
+            base_url: Base URL for resolving relative links
+
+        Returns:
+            Absolute URL to PDF file, or None
+        """
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+
+            pdf_keywords = [
+                'download', 'full report', 'full text', 'pdf', 'read the report',
+                'download report', 'download publication', 'view report',
+                'read report', 'full paper', 'download paper',
+            ]
+
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag['href'].strip()
+                if not href.lower().endswith('.pdf'):
+                    continue
+                # Found a .pdf link — verify it's not a generic icon/logo link
+                link_text = a_tag.get_text(strip=True).lower()
+                # Accept if link text has relevant keywords OR is descriptive (>5 chars)
+                if any(kw in link_text for kw in pdf_keywords) or len(link_text) > 5:
+                    pdf_url = urljoin(base_url, href)
+                    logger.info(f"Found PDF link in landing page: {pdf_url}")
+                    return pdf_url
+
+            return None
+        except Exception as e:
+            logger.debug(f"Error scanning for PDF links in {base_url}: {e}")
+            return None
+
     def extract_content(self, url: str, html: str = None) -> Optional[Dict]:
         """
         Extract full-text content from URL using multiple methods.
 
         Extraction order:
-        1. For protected domains: Try cloudscraper first
-        2. Trafilatura (fast, best for news)
-        3. Newspaper3k (fallback)
-        4. Cloudscraper (last resort for any failed extraction)
+        1. Direct PDF: If URL ends with .pdf, extract via PDFIngestor
+        2. For protected domains: Try cloudscraper first
+        3. Trafilatura (fast, best for news)
+        4. Newspaper3k (fallback)
+        5. Cloudscraper (last resort for any failed extraction)
+        6. Landing page PDF detection: Scan HTML for PDF download links
 
         Args:
             url: Article URL
@@ -220,32 +299,67 @@ class ContentExtractor:
         """
         logger.info(f"Extracting content from: {url}")
 
+        # LEVEL 1: Direct PDF URL detection
+        if PYMUPDF_AVAILABLE and url.lower().endswith('.pdf'):
+            content = self._extract_pdf_content_sync(url)
+            if content and content.get('text'):
+                return content
+
         # For known protected domains, try cloudscraper first
         if self._is_protected_domain(url):
             logger.debug(f"Protected domain detected, trying cloudscraper first: {url}")
             content = self.extract_with_cloudscraper(url)
             if content and content.get('text'):
-                return content
+                return self._try_level2_pdf(url, content)
 
         # Try Trafilatura first (best for news)
         content = self.extract_with_trafilatura(url, html)
         if content and content.get('text'):
             logger.info(f"Successfully extracted with Trafilatura: {url}")
-            return content
+            return self._try_level2_pdf(url, content)
 
         # Fallback to Newspaper3k
         content = self.extract_with_newspaper(url)
         if content and content.get('text'):
             logger.info(f"Successfully extracted with Newspaper3k: {url}")
-            return content
+            return self._try_level2_pdf(url, content)
 
         # Last resort: try cloudscraper for any failed URL (might be anti-bot)
         if not self._is_protected_domain(url):  # Avoid double attempt
             content = self.extract_with_cloudscraper(url)
             if content and content.get('text'):
-                return content
+                return self._try_level2_pdf(url, content)
 
         logger.warning(f"Failed to extract content from: {url}")
+        return None
+
+    def _try_level2_pdf(self, url: str, html_content: Dict) -> Dict:
+        """
+        LEVEL 2: After successful HTML extraction, check if landing page contains
+        a PDF download link (think tank pattern). If found, extract PDF and combine
+        with HTML abstract. Returns original html_content if no PDF found.
+        """
+        if not PYMUPDF_AVAILABLE:
+            return html_content
+        raw_html = self._fetch_raw_html(url)
+        if raw_html:
+            pdf_url = self._find_pdf_link(raw_html, url)
+            if pdf_url:
+                pdf_content = self._extract_pdf_content_sync(pdf_url)
+                if pdf_content and pdf_content.get('text'):
+                    html_text = html_content.get('text', '')
+                    pdf_content['text'] = html_text + '\n\n---\n\n' + pdf_content['text']
+                    return pdf_content
+        return html_content
+
+    def _fetch_raw_html(self, url: str) -> Optional[str]:
+        """Fetch raw HTML for PDF link scanning. Lightweight GET with timeout."""
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+            if resp.status_code == 200:
+                return resp.text
+        except Exception:
+            pass
         return None
 
     # =========================================================================

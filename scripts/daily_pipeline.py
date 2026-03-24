@@ -95,13 +95,6 @@ DEFAULT_STEPS = [
         continue_on_failure=False
     ),
     PipelineStep(
-        name="pdf_ingestion",
-        command="python scripts/ingest_pdfs.py --all --max-age-days 7",
-        description="Ingestion di documenti PDF istituzionali",
-        timeout_seconds=600,  # 10 min
-        continue_on_failure=True  # PDF ingestion è opzionale
-    ),
-    PipelineStep(
         name="market_data",
         command="python scripts/fetch_daily_market_data.py",
         description="Fetch dati di mercato via OpenBB",

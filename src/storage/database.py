@@ -97,6 +97,35 @@ class DatabaseManager:
         finally:
             self._source_cache_loaded = True
 
+    def _get_source_info(self, source_id: int) -> Optional[dict]:
+        """Get source name, domain, authority_score by source_id. Cached after first call."""
+        if not hasattr(self, '_source_info_cache'):
+            self._source_info_cache = {}
+
+        if source_id in self._source_info_cache:
+            return self._source_info_cache[source_id]
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, domain, authority_score, source_type "
+                        "FROM intelligence_sources WHERE id = %s",
+                        (source_id,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        info = {
+                            'name': row[0], 'domain': row[1],
+                            'authority_score': float(row[2]) if row[2] else None,
+                            'source_type': row[3],
+                        }
+                        self._source_info_cache[source_id] = info
+                        return info
+        except Exception as e:
+            logger.debug(f"Could not fetch source info for id={source_id}: {e}")
+        return None
+
     @contextmanager
     def get_connection(self):
         """
@@ -404,13 +433,20 @@ class DatabaseManager:
                     source_name = article.get('source', '')
                     src_id, src_domain = self._source_cache.get(source_name, (None, None))
 
+                    # Resolve extraction_method from article metadata
+                    extraction_method = article.get('extraction_method')
+                    if not extraction_method:
+                        fc = article.get('full_content')
+                        if isinstance(fc, dict):
+                            extraction_method = fc.get('extraction_method')
+
                     # Insert article
                     cur.execute("""
                         INSERT INTO articles
                         (title, link, published_date, source, category, subcategory, summary,
                          full_text, entities, nlp_metadata, full_text_embedding, content_hash,
-                         source_id, domain)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         source_id, domain, extraction_method)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                     """, (
                         self._sanitize_text(article.get('title')),
@@ -433,29 +469,57 @@ class DatabaseManager:
                         content_hash,  # PHASE 2: Save content hash
                         src_id,
                         src_domain,
+                        extraction_method,
                     ))
 
                     article_id = cur.fetchone()[0]
 
-                    # Insert chunks in batch
+                    # Insert chunks in batch (with source_id + metadata prefix)
                     chunks = nlp_data.get('chunks', [])
                     if chunks:
-                        chunk_data = [
-                            (
+                        # Build metadata prefix for authority-aware RAG
+                        source_prefix = ''
+                        if src_id:
+                            source_info = self._get_source_info(src_id)
+                            if source_info:
+                                source_prefix = (
+                                    f"[Fonte: {source_info.get('name', '')} | "
+                                    f"Dominio: {source_info.get('domain', '')} | "
+                                    f"Autorevolezza: {source_info.get('authority_score', '')}]"
+                                )
+
+                        chunk_data = []
+                        for idx, chunk in enumerate(chunks):
+                            chunk_text = chunk['text']
+                            # Inject metadata prefix + section title
+                            prefix_parts = []
+                            if source_prefix:
+                                section_title = chunk.get('section_title')
+                                if section_title:
+                                    prefix_parts.append(f"{source_prefix} | Sezione: {section_title}]"[:-1])
+                                else:
+                                    prefix_parts.append(source_prefix)
+                            elif chunk.get('section_title'):
+                                prefix_parts.append(f"[Sezione: {chunk['section_title']}]")
+
+                            if prefix_parts:
+                                chunk_text = prefix_parts[0] + '\n' + chunk_text
+
+                            chunk_data.append((
                                 article_id,
                                 idx,
-                                chunk['text'],
+                                chunk_text,
                                 chunk['embedding'],
                                 chunk.get('word_count', 0),
-                                chunk.get('sentence_count', 0)
-                            )
-                            for idx, chunk in enumerate(chunks)
-                        ]
+                                chunk.get('sentence_count', 0),
+                                src_id,
+                            ))
 
                         execute_batch(cur, """
                             INSERT INTO chunks
-                            (article_id, chunk_index, content, embedding, word_count, sentence_count)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            (article_id, chunk_index, content, embedding, word_count, sentence_count,
+                             source_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """, chunk_data, page_size=100)
 
                     logger.debug(f"✓ Saved article {article_id} with {len(chunks)} chunks")
@@ -559,9 +623,12 @@ class DatabaseManager:
                             a.published_date,
                             a.category,
                             c.embedding,
-                            1 - (c.embedding <=> %s::vector) as similarity
+                            1 - (c.embedding <=> %s::vector) as similarity,
+                            s.source_type,
+                            s.authority_score
                         FROM chunks c
                         JOIN articles a ON c.article_id = a.id
+                        LEFT JOIN intelligence_sources s ON a.source_id = s.id
                         WHERE 1=1
                     """
 
@@ -618,7 +685,9 @@ class DatabaseManager:
                                 'published_date': row[8],
                                 'category': row[9],
                                 'embedding': row[10],
-                                'similarity': similarity
+                                'similarity': similarity,
+                                'source_type': row[12],
+                                'authority_score': float(row[13]) if row[13] else None,
                             })
 
                     return results

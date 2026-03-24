@@ -113,6 +113,21 @@ feeds:
     category: "intelligence"
     subcategory: "think_tank"
 
+  - name: "RAND Corporation - Research Reports"
+    url: "https://www.rand.org/pubs/research_reports.xml"
+    category: "intelligence"
+    subcategory: "think_tank"
+
+  - name: "RAND Corporation - Commentary"
+    url: "https://www.rand.org/blog.xml"
+    category: "intelligence"
+    subcategory: "think_tank"
+
+  - name: "EveryCRSReport - Congressional Research Service"
+    url: "https://www.everycrsreport.com/rss.xml"
+    category: "intelligence"
+    subcategory: "government"
+
   # AMERICAS
   - name: "Americas Quarterly"
     url: "https://www.americasquarterly.org/feed/"

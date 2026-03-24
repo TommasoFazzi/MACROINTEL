@@ -144,6 +144,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-multipart==0.0.22
 pytz==2025.2
+pymupdf4llm==0.0.17
 pymupdf==1.25.3
 PyYAML==6.0.3
 random-user-agent==1.0.1

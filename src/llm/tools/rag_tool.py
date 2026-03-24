@@ -15,6 +15,18 @@ DEFAULT_DECAY_K = 0.025          # half-life ~28 days
 OVER_FETCH_MULTIPLIER = 3        # fetch 3x to avoid Top-K bias before decay
 MIN_DECAYED_SCORE = 0.15         # floor: discard noise after decay
 
+# Source-type override for decay K.
+# Think tank reports retain value for months/years, not days.
+# None = use intent-based K (no override).
+SOURCE_TYPE_DECAY_K = {
+    "think_tank":   0.002,   # half-life ~346 days (~1 year)
+    "government":   0.003,   # half-life ~231 days (~8 months)
+    "academic":     0.002,   # half-life ~346 days
+    "news_agency":  None,    # use intent K
+    "trade_press":  None,    # use intent K
+    "ngo":          0.005,   # half-life ~139 days
+}
+
 # Score field name per search type
 SEARCH_TYPE_SCORE_FIELD = {
     "vector": "similarity",
@@ -95,7 +107,16 @@ def apply_time_decay(
             pub = date.fromisoformat(pub[:10])
 
         days_old = max((ref_date - pub).days, 0)
-        decay_factor = math.exp(-decay_k * days_old)
+
+        # Source-type override: think tank/government reports decay much slower
+        effective_k = decay_k
+        source_type = r.get("source_type")
+        if source_type and source_type in SOURCE_TYPE_DECAY_K:
+            override_k = SOURCE_TYPE_DECAY_K[source_type]
+            if override_k is not None:
+                effective_k = override_k
+
+        decay_factor = math.exp(-effective_k * days_old)
 
         r[score_field] = raw_score * decay_factor
         r["time_decay_factor"] = round(decay_factor, 4)

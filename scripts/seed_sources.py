@@ -222,7 +222,7 @@ SOURCES = [
         "RAND Corporation",
         "intelligence", "Think Tank", 5.0,
         "Simulazioni di guerra, policy USA e strategie di deterrenza di altissimo livello. Fonti primarie per dottrina NATO.",
-        [], False,
+        ["RAND Corporation - Research Reports", "RAND Corporation - Commentary"], True,
     ),
     (
         "CSIS",
@@ -252,7 +252,7 @@ SOURCES = [
         "GAO / CRS",
         "intelligence", "Ufficiale/Gov", 5.0,
         "Enti USA neutrali (Government Accountability Office / Congressional Research Service). Audit, dati ufficiali e brief per decisori politici.",
-        [], False,
+        ["EveryCRSReport - Congressional Research Service"], True,
     ),
     (
         "ECFR",

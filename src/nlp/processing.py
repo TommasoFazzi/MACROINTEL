@@ -138,17 +138,85 @@ class NLPProcessor:
 
         return text.strip()
 
-    def create_chunks(self, text: str) -> List[Dict[str, Any]]:
+    def create_chunks(self, text: str, is_long_document: bool = False) -> List[Dict[str, Any]]:
         """
         Split text into semantic chunks based on complete sentences with overlap.
 
+        For long documents (PDFs from pymupdf4llm), uses section-aware chunking
+        that splits on Markdown headings first, then applies sliding window within
+        each section.
+
         Args:
             text: Cleaned text to chunk
+            is_long_document: If True and text contains Markdown headings, use
+                              section-aware chunking (set by PDFIngestor)
 
         Returns:
             List of chunk dictionaries with text and metadata
         """
         if not text:
+            return []
+
+        # Section-aware chunking for long documents with Markdown headings
+        if is_long_document and '\n## ' in text:
+            chunks = self._create_section_chunks(text)
+            if chunks:
+                return chunks
+
+        # Standard sliding window chunking
+        return self._create_sliding_window_chunks(text)
+
+    def _create_section_chunks(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Split Markdown on ## headings, then sliding window within each section.
+
+        Preserves document structure by keeping section titles as metadata
+        on each chunk. Falls back to standard chunking if no sections found.
+
+        Args:
+            text: Markdown text with ## headings (from pymupdf4llm)
+
+        Returns:
+            List of chunk dicts with 'section_title' metadata, or empty list
+        """
+        # Split on Markdown headings (# or ##), preserving the heading line
+        sections = re.split(r'\n(?=#{1,2}\s)', text)
+        all_chunks = []
+
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+
+            lines = section.split('\n', 1)
+            if lines[0].startswith('#'):
+                title = lines[0].lstrip('#').strip()
+                body = lines[1] if len(lines) > 1 else ''
+            else:
+                title = 'Introduction'
+                body = section
+
+            if not body.strip():
+                continue
+
+            section_chunks = self._create_sliding_window_chunks(body)
+            for chunk in section_chunks:
+                chunk['section_title'] = title
+            all_chunks.extend(section_chunks)
+
+        return all_chunks
+
+    def _create_sliding_window_chunks(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Standard sliding window chunking with sentence boundaries and overlap.
+
+        Args:
+            text: Text to chunk
+
+        Returns:
+            List of chunk dictionaries with text and metadata
+        """
+        if not text or not text.strip():
             return []
 
         # Use spaCy to accurately split into sentences
@@ -352,9 +420,16 @@ class NLPProcessor:
             clean_text = self.clean_text(raw_text)
 
             # Step 2: Create chunks for RAG (only if text is substantial)
+            # Detect long documents (PDFs) for section-aware chunking
+            is_long_doc = False
+            if isinstance(full_content, dict):
+                is_long_doc = full_content.get('is_long_document', False)
+            if not is_long_doc:
+                is_long_doc = article.get('is_long_document', False)
+
             chunks = []
             if len(clean_text.split()) > 100:
-                chunks = self.create_chunks(clean_text)
+                chunks = self.create_chunks(clean_text, is_long_document=is_long_doc)
             else:
                 # Short text = single chunk
                 if clean_text:

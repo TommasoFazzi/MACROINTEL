@@ -10,7 +10,10 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
 
 - `processing.py` - Core NLP pipeline (~603 lines)
   - `NLPProcessor` class - Hybrid NLP processor
-  - Text Processing: `clean_text()`, `create_chunks()`, `preprocess_text()`
+  - Text Processing: `clean_text()`, `create_chunks(is_long_document=False)`, `preprocess_text()`
+  - **Section-aware chunking**: When `is_long_document=True` and text contains `## ` Markdown headings (from pymupdf4llm), splits on `\n## ` then applies sliding window within each section; each chunk carries `section_title` metadata
+  - `_create_section_chunks(text, chunk_size, chunk_overlap)` — Splits Markdown on `#{1,2}` headings, preserves section title per chunk
+  - `_create_sliding_window_chunks(text, chunk_size, chunk_overlap)` — Standard sliding window (original `create_chunks` logic)
   - Entity Extraction: `extract_entities()` - spaCy NER (GPE, ORG, PERSON, LOC)
   - Embeddings: `generate_embedding()`, `generate_chunk_embeddings()` - 384-dim (`paraphrase-multilingual-MiniLM-L12-v2`)
   - Batch Processing: `process_article()`, `process_batch()`

@@ -31,6 +31,12 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - `_extract_batch_async(articles)` - Async: concurrent extraction via `asyncio.gather()` with `asyncio.Semaphore(max_concurrent)`
   - `extract_batch(articles)` - Sync wrapper (`asyncio.run()`) for standalone use only
   - Extraction strategy: Trafilatura → Newspaper3k → Cloudscraper
+  - **2-level PDF auto-detection** (integrated into RSS flow):
+    - Level 1: Direct `.pdf` URL → routes to `PDFIngestor.extract_text()`
+    - Level 2: Landing page scan → `_find_pdf_link()` uses BeautifulSoup to find `<a href="*.pdf">` links (think tank pattern: landing page → PDF download)
+  - `_find_pdf_link(html, base_url)` - Scans HTML for PDF download links with keyword matching (download, full report, etc.)
+  - `_extract_pdf_content_sync(url)` - Downloads and extracts PDF text, uses same User-Agent as HTML crawler
+  - Level 2 combines HTML abstract + PDF full text with `---` separator
 
 - `pipeline.py` - Main orchestration
   - `IngestionPipeline` class - End-to-end workflow
@@ -40,14 +46,16 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - `get_summary()` - Statistics by category/source
   - Auto-saves JSON to `data/articles_{timestamp}.json`
 
-- **`pdf_ingestor.py`** - **PDF document ingestion** (Milestone D)
-  - `PDFIngestor` class - Extracts text from PDF files (institutional documents: SIPRI, CRS, ISS, NATO, etc.)
-  - Uses PyMuPDF (`fitz`) for PDF text extraction with fallback error handling
+- **`pdf_ingestor.py`** - **PDF document ingestion** (rewritten for pymupdf4llm)
+  - `PDFIngestor` class - Extracts text from PDF files as clean Markdown
+  - Uses `pymupdf4llm.to_markdown()` (preferred) with fallback to raw PyMuPDF `fitz`
+  - `extract_text(pdf_bytes, max_pages)` - Converts PDF bytes to Markdown via pymupdf4llm (headers, tables, no artifacts)
+  - `download_pdf(url, headers)` - Downloads PDF bytes; accepts optional `headers` dict for User-Agent consistency with HTML crawler
+  - `build_article_dict(...)` - Creates article dict with `is_long_document: True` and `extraction_method` field
   - `ingest_from_file(pdf_path, ...)` - Extract from local PDF file
   - `ingest_from_url_async(pdf_url, ...)` - Async download + extract from URL
-  - `_extract_text_from_pdf(pdf_data)` - Converts PDF bytes to text via PyMuPDF
-  - Outputs article dicts compatible with existing NLP pipeline (same structure as RSS articles)
-  - Reuses `process_nlp.py` and `load_to_database.py` without changes
+  - Outputs article dicts compatible with existing NLP pipeline
+  - **No longer uses `config/pdf_sources.yaml`** — PDFs enter via RSS flow (2-level auto-detection in content_extractor.py)
 
 ## Dependencies
 
@@ -65,7 +73,7 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
 ## Data Flow
 
 - **Input**:
-  - `config/feeds.yaml` - RSS feed URLs and metadata (~33 feeds)
+  - `config/feeds.yaml` - RSS feed URLs and metadata (~36 feeds, includes think tank RSS: RAND, EveryCRSReport)
   - Live RSS/Atom feeds from web
   - Article URLs for full-text extraction
 
