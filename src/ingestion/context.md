@@ -33,8 +33,10 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - Extraction strategy: Trafilatura → Newspaper3k → Cloudscraper
   - **2-level PDF auto-detection** (integrated into RSS flow):
     - Level 1: Direct `.pdf` URL → routes to `PDFIngestor.extract_text()`
-    - Level 2: Landing page scan → `_find_pdf_link()` uses BeautifulSoup to find `<a href="*.pdf">` links (think tank pattern: landing page → PDF download)
-  - `_find_pdf_link(html, base_url)` - Scans HTML for PDF download links with keyword matching (download, full report, etc.)
+    - Level 2: Landing page scan → `_try_level2_pdf()` → `_find_pdf_link()` (think tank pattern: landing page → PDF download)
+  - `_find_pdf_link(html, base_url)` - Scans HTML for `<a href="*.pdf">` with keyword-only matching (download, full report, etc.). The `len>5` fallback was removed to prevent footnote/citation PDFs from triggering.
+  - `_try_level2_pdf(url, html_content, raw_html)` - Level 2 gated by domain allowlist only. If domain is in `PDF_LANDING_PAGE_DOMAINS` AND a PDF download link is found → PDF is the primary document, returned directly. If no PDF found → HTML content returned as fallback. No text-length gate: on known research domains a PDF download button always takes precedence over the HTML abstract.
+  - `PDF_LANDING_PAGE_DOMAINS` - Allowlist: rand.org, ecb.europa.eu, imf.org, worldbank.org, oecd.org, brookings.edu, iiss.org, sipri.org, chathamhouse.org, rusi.org, csis.org, cfr.org, etc.
   - `_extract_pdf_content_sync(url)` - Downloads and extracts PDF text, uses same User-Agent as HTML crawler
   - Level 2 combines HTML abstract + PDF full text with `---` separator
 

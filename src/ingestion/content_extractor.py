@@ -68,6 +68,30 @@ PROTECTED_DOMAINS = [
     'politico.com',
 ]
 
+# Domains where Level 2 PDF detection is appropriate (think-tanks/central banks
+# that publish landing pages with a "Download PDF" button for the main report).
+# News sites are intentionally excluded: their articles are the content and any
+# .pdf links are footnotes/citations, not the primary document.
+PDF_LANDING_PAGE_DOMAINS = [
+    'rand.org',
+    'ecb.europa.eu',
+    'bis.org',
+    'imf.org',
+    'worldbank.org',
+    'oecd.org',
+    'brookings.edu',
+    'iiss.org',
+    'sipri.org',
+    'piie.com',       # Peterson Institute
+    'chathamhouse.org',
+    'rusi.org',
+    'csis.org',
+    'cfr.org',
+    'stimson.org',
+    'atlanticcouncil.org',
+]
+
+
 
 class ContentExtractor:
     """Extracts full-text content from article URLs."""
@@ -343,10 +367,12 @@ class ContentExtractor:
                 href = a_tag['href'].strip()
                 if not href.lower().endswith('.pdf'):
                     continue
-                # Found a .pdf link — verify it's not a generic icon/logo link
+                # Only accept links whose visible text clearly signals a download CTA.
+                # Rejecting the len>5 fallback prevents footnote/citation PDFs
+                # (e.g. referenced treaties or academic papers) from being treated
+                # as the primary document.
                 link_text = a_tag.get_text(strip=True).lower()
-                # Accept if link text has relevant keywords OR is descriptive (>5 chars)
-                if any(kw in link_text for kw in pdf_keywords) or len(link_text) > 5:
+                if any(kw in link_text for kw in pdf_keywords):
                     pdf_url = urljoin(base_url, href)
                     logger.info(f"Found PDF link in landing page: {pdf_url}")
                     return pdf_url
@@ -434,14 +460,24 @@ class ContentExtractor:
     def _try_level2_pdf(self, url: str, html_content: Dict, raw_html: str = None) -> Dict:
         """
         LEVEL 2: After successful HTML extraction, check if landing page contains
-        a PDF download link (think tank pattern). If found, extract PDF and combine
-        with HTML abstract. Returns original html_content if no PDF found.
+        a PDF download link (think tank pattern).
+
+        Logic:
+        - Only runs for domains in PDF_LANDING_PAGE_DOMAINS (research/think-tanks).
+          News sites are excluded — their .pdf links are footnotes, not the report.
+        - If a PDF download link is found → PDF is the primary document, return it.
+        - If no PDF found → HTML content is the fallback, return it unchanged.
 
         Args:
             raw_html: Pre-fetched HTML (from Scrapling) to avoid double-fetch.
         """
         if not PYMUPDF_AVAILABLE:
             return html_content
+
+        # Only run for known PDF-publishing research domains
+        if not any(domain in url for domain in PDF_LANDING_PAGE_DOMAINS):
+            return html_content
+
         # Reuse already-fetched HTML if available, otherwise fetch
         raw_html = raw_html or self._fetch_raw_html(url)
         if raw_html:
@@ -449,9 +485,9 @@ class ContentExtractor:
             if pdf_url:
                 pdf_content = self._extract_pdf_content_sync(pdf_url)
                 if pdf_content and pdf_content.get('text'):
-                    html_text = html_content.get('text', '')
-                    pdf_content['text'] = html_text + '\n\n---\n\n' + pdf_content['text']
                     return pdf_content
+
+        # No PDF found — HTML is the fallback
         return html_content
 
     def _fetch_raw_html(self, url: str) -> Optional[str]:
