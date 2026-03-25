@@ -339,15 +339,46 @@ def _get_article_titles(db: DatabaseManager, entity_id: int, limit: int = 5) -> 
             return [row[0] for row in cur.fetchall()]
 
 
+def _prefetch_article_titles(db: DatabaseManager, entity_ids: list[int], limit_per_entity: int = 5) -> dict[int, list[str]]:
+    """
+    Bulk-fetch article titles for a list of entity IDs in a single query.
+    Returns dict {entity_id: [title, ...]}. Eliminates N round-trips in the main loop.
+    """
+    if not entity_ids:
+        return {}
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (em.entity_id, a.published_date) em.entity_id, a.title
+                FROM entity_mentions em
+                JOIN articles a ON a.id = em.article_id
+                WHERE em.entity_id = ANY(%s) AND a.title IS NOT NULL
+                ORDER BY em.entity_id, a.published_date DESC NULLS LAST
+            """, (entity_ids,))
+            rows = cur.fetchall()
+
+    result: dict[int, list[str]] = {}
+    for entity_id, title in rows:
+        lst = result.setdefault(entity_id, [])
+        if len(lst) < limit_per_entity:
+            lst.append(title)
+    return result
+
+
 def geocode_entity(
     db: DatabaseManager,
     entity_id: int,
     entity_name: str,
     entity_type: str,
+    article_titles: Optional[list[str]] = None,
 ) -> Optional[GeoResult]:
     """
     Full hybrid geocoding pipeline for one entity.
     Returns GeoResult or None if the entity cannot/should not be geocoded.
+
+    Args:
+        article_titles: Pre-fetched titles (from _prefetch_article_titles). If None,
+                        falls back to per-entity DB query.
     """
     if entity_type not in ENTITY_TYPES_GEO:
         return None  # ORG, PERSON → skip
@@ -366,7 +397,8 @@ def geocode_entity(
         )
 
     # Step 2: Gemini CoT disambiguation
-    article_titles = _get_article_titles(db, entity_id)
+    if article_titles is None:
+        article_titles = _get_article_titles(db, entity_id)
     if len(matches) > 1:
         logger.info(f"  → {len(matches)} GeoNames matches for '{entity_name}' — calling Gemini")
     else:
@@ -528,6 +560,11 @@ def run_geocoding(
         'gemini_calls': 0,
     }
 
+    # Pre-fetch all article titles in one bulk query (eliminates 1 DB round-trip per entity)
+    entity_ids = [e[0] for e in entities]
+    article_titles_cache = _prefetch_article_titles(db, entity_ids)
+    logger.info(f"Pre-fetched article titles for {len(article_titles_cache)} entities")
+
     start = time.time()
 
     for idx, (entity_id, name, entity_type, mention_count) in enumerate(entities, 1):
@@ -539,7 +576,8 @@ def run_geocoding(
             f"'{name}' ({entity_type}, {mention_count} mentions)"
         )
 
-        result = geocode_entity(db, entity_id, name, entity_type)
+        result = geocode_entity(db, entity_id, name, entity_type,
+                                article_titles=article_titles_cache.get(entity_id, []))
 
         if result is None and entity_type not in ENTITY_TYPES_GEO:
             stats['skipped'] += 1
