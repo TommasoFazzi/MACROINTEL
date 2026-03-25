@@ -35,6 +35,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
   - `TTLCache` for intent (10min), SQL results (5min), embeddings (1h)
   - Anti-hallucination guard: returns structured "no data found" when all tools return empty
+  - **Numbered citations**: `_synthesize()` builds a `FONTI INDICIZZATE` numbered list from RAG results and injects it into the synthesis prompt; LLM is instructed to cite inline as `[1]`, `[2]` corresponding to 1-based source index (same order as `prepare_sources()` sort)
   - Logs queries to `oracle_query_log` DB table
   - `get_oracle_orchestrator_singleton()` — lazy thread-safe singleton
 

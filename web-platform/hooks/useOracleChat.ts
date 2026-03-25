@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type {
   OracleChatMessage,
-  OracleChatFilters,
+  OracleActiveFilters,
   OracleResponse,
 } from '../types/oracle';
 
@@ -24,6 +24,10 @@ export function useOracleChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [byokError, setByokError] = useState<string | null>(null);
+  const [activeFilters, setActiveFilters] = useState<OracleActiveFilters>({
+    mode: 'both',
+    search_type: 'hybrid',
+  });
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Gemini API key stored in localStorage — never sent to server logs
@@ -46,7 +50,7 @@ export function useOracleChat() {
   }, []);
 
   const sendMessage = useCallback(
-    async (query: string, filters?: OracleChatFilters) => {
+    async (query: string) => {
       if (!query.trim() || isLoading) return;
 
       setError(null);
@@ -80,12 +84,12 @@ export function useOracleChat() {
           body: JSON.stringify({
             query: query.trim(),
             session_id: getSessionId(),
-            mode: filters?.mode ?? 'both',
-            search_type: filters?.search_type ?? 'hybrid',
-            start_date: filters?.start_date ?? null,
-            end_date: filters?.end_date ?? null,
-            categories: filters?.categories ?? null,
-            gpe_filter: filters?.gpe_filter ?? null,
+            mode: activeFilters.mode ?? 'both',
+            search_type: activeFilters.search_type ?? 'hybrid',
+            start_date: activeFilters.start_date ?? null,
+            end_date: activeFilters.end_date ?? null,
+            categories: null,
+            gpe_filter: activeFilters.gpe_filter ?? null,
             gemini_api_key: geminiApiKey || null,
           }),
           signal: abortControllerRef.current.signal,
@@ -118,16 +122,16 @@ export function useOracleChat() {
         setMessages((prev) => [...prev, assistantMsg]);
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
-          setError('Request timed out. Please try again.');
+          setError('Richiesta scaduta. Riprova.');
         } else {
-          setError(err instanceof Error ? err.message : 'Unknown error');
+          setError(err instanceof Error ? err.message : 'Errore sconosciuto');
         }
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;
       }
     },
-    [isLoading, geminiApiKey]
+    [isLoading, geminiApiKey, activeFilters]
   );
 
   const clearMessages = useCallback(() => {
@@ -153,5 +157,7 @@ export function useOracleChat() {
     lastAssistantMessage,
     geminiApiKey,
     setGeminiApiKey,
+    activeFilters,
+    setActiveFilters,
   };
 }

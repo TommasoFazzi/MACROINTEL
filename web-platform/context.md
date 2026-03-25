@@ -89,13 +89,20 @@ See `components/StorylineGraph/context.md` for full detail.
 - `DashboardSkeleton.tsx` - Loading skeletons
 - `ErrorState.tsx` - Error handling states
 
-#### Oracle Chat Components (`app/oracle/page.tsx`)
-- `OraclePage` — `'use client'`, 2-column layout: chat + sources sidebar
-  - `UserBubble` / `AssistantBubble` (react-markdown rendering with custom styles)
-  - `TypingIndicator` — 3-dot bouncing animation while loading
-  - `QueryPlanBadges` — shows intent + complexity + tool badges per assistant message
-  - `SourceCard` — shows REPORT/ARTICOLO badge, similarity %, preview
-  - Suggestion chips on empty state; auto-scroll to latest message
+#### Oracle Chat Components (`components/oracle/`)
+Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` is the thin shell that wires state.
+
+- `OracleHeader.tsx` — sticky header: ◆ Oracle logo, `?` Guide, ⚙ Settings, `+` Nuova sessione; "key mancante" badge when BYOK not set
+- `OracleMessage.tsx` — `UserBubble` + `AssistantBubble`
+  - **Inline citation badges**: preprocesses `[1]` → `` `__CITE__1__` `` (unique marker), intercepts in `code` react-markdown component → renders clickable orange badge; clicking scrolls sidebar to source card
+  - **Follow-up badge**: shows "↩ Continuazione" when `metadata.is_follow_up === true`
+  - **Collapsible query plan**: "Analisi elaborazione" section below answer — intent (Italian label), complexity, execution time, tools, sub-queries (COMPARATIVE), execution step descriptions
+- `OracleThinkingState.tsx` — replaces 3-dot spinner; shows sequential processing steps with ASCII braille spinner: "Analisi semantica → Scansione database vettoriale (N fonti) → Estrazione documenti → Sintesi strategica"
+- `OracleSourceCard.tsx` — freshness pill (green <7d / yellow 7–30d / red >30d), index badge (for citation correlation), similarity progress bar, `source` domain badge; `forwardRef` for sidebar scroll-to
+- `OracleSourcesSidebar.tsx` — desktop sidebar (hidden md:flex); `highlightedSource` prop scrolls to matching card via `scrollIntoView`; each card has numbered `ref`
+- `OracleEmptyState.tsx` — professional welcome screen: 2×3 grid of intent type cards (Fattuale/Analitico/Narrativo/Mercato/Comparativo/Panoramica) + 4 quick-example chips; clicking injects query into textarea
+- `OracleGuideModal.tsx` — full-screen modal (ESC to close): Cos'è Oracle, 6 intent types with clickable examples, filters guide, technical limits
+- `OracleSettingsPanel.tsx` — right-side drawer: BYOK Gemini API key (save/remove, show/hide, validation), modalità ricerca, tipo di ricerca, date range, GPE filter; **"Azzera memoria di sessione"** button (2-step confirm) calls `clearMessages()` + closes panel
 
 #### Insights Components (`components/insights/`)
 - `WaitlistInline.tsx` - Email waitlist signup form embedded in insights pages
@@ -144,12 +151,12 @@ Next.js Route Handler that forwards GET/POST requests from the browser to the Fa
   - **`ReportComparisonResponse`** (new) — report_a, report_b metadata + delta object
   - **`ReportSource` updated** — added optional `bullet_points?: string[]` field for AI-extracted key insights
 - **`types/oracle.ts`** - Oracle 2.0 TypeScript interfaces:
-  - `OracleSource`, `QueryPlan`, `ExecutionStep`, `OracleResponse`, `OracleChatMessage`, `OracleChatFilters`
+  - `OracleSource`, `QueryPlan` (`intent` union includes `'overview'`), `ExecutionStep`, `OracleResponse`, `OracleChatMessage`, `OracleChatFilters`, **`OracleActiveFilters`** (mode/search_type/start_date/end_date/gpe_filter)
 - **`types/stories.ts` updated** — `LinkedArticle` now includes optional `bullet_points?: string[]` field
 - **`hooks/useOracleChat.ts`** - Oracle chat state management:
-  - `useOracleChat()` → `{ messages, isLoading, error, sendMessage, clearMessages, lastAssistantMessage }`
+  - `useOracleChat()` → `{ messages, isLoading, error, byokError, sendMessage, clearMessages, lastAssistantMessage, geminiApiKey, setGeminiApiKey, activeFilters, setActiveFilters }`
   - Stable `session_id` via `crypto.randomUUID()` (persists within browser session, reset on `clearMessages`)
-  - POST to `/api/proxy/oracle/chat` with 120s `AbortController` timeout
+  - POST to `/api/proxy/oracle/chat` with 120s `AbortController` timeout; **`activeFilters`** state (mode/search_type/dates/gpe_filter) passed to every request
   - Optimistic user message insertion before API response
 - **`hooks/useDashboard.ts` updated**:
   - **`useReportCompare(idA, idB)`** (new) — SWR hook for delta analysis

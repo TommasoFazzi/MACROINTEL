@@ -22,7 +22,7 @@ export interface ExecutionStep {
 }
 
 export interface QueryPlan {
-  intent: 'factual' | 'analytical' | 'narrative' | 'market' | 'comparative';
+  intent: 'factual' | 'analytical' | 'narrative' | 'market' | 'comparative' | 'overview';
   complexity: 'simple' | 'medium' | 'complex';
   tools: string[];
   execution_steps: ExecutionStep[];
@@ -64,4 +64,12 @@ export interface OracleChatFilters {
   categories?: string[];
   gpe_filter?: string[];
   gemini_api_key?: string | null;
+}
+
+export interface OracleActiveFilters {
+  mode?: 'both' | 'factual' | 'strategic';
+  search_type?: 'vector' | 'keyword' | 'hybrid';
+  start_date?: string;
+  end_date?: string;
+  gpe_filter?: string[];
 }

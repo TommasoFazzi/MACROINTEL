@@ -423,6 +423,31 @@ class OracleOrchestrator:
             formatted = tool.format_for_llm(result)
             results_block += f"\n[TOOL: {tool_name}]\n{formatted}\n"
 
+        # Build numbered source list for inline citations
+        # Sources are sorted by similarity descending — same order as prepare_sources()
+        numbered_sources_block = ""
+        for tn, tr in tool_results:
+            if tn == "rag_search" and tr.success and tr.data:
+                rag_instance = RAGTool(db=self.db)
+                prepared = rag_instance.prepare_sources(
+                    tr.data.get("reports", []),
+                    tr.data.get("chunks", []),
+                )
+                if prepared:
+                    lines = []
+                    for i, s in enumerate(prepared, 1):
+                        title = s.get("title", "N/A")
+                        org = s.get("source", "")
+                        date = s.get("date_str", "")
+                        meta = " — ".join(filter(None, [org, date]))
+                        lines.append(f"[{i}] {title}" + (f" ({meta})" if meta else ""))
+                    numbered_sources_block = (
+                        "\nFONTI INDICIZZATE (usa questi numeri per le citazioni):\n"
+                        + "\n".join(lines[:20])
+                        + "\n"
+                    )
+                break
+
         # Conversation context for follow-ups
         conv_block = ""
         if is_follow_up and ctx.message_count > 0:
@@ -436,12 +461,12 @@ USER QUERY: {query}
 
 TOOL RESULTS:
 {results_block}
-
+{numbered_sources_block}
 TASK: Sintetizza una risposta analitica completa basata ESCLUSIVAMENTE sui risultati degli strumenti sopra.
 
 ISTRUZIONI:
 1. **Analisi Profonda**: Paragrafi densi con dati specifici.
-2. **Citazioni**: Ogni affermazione con fonte [Report #ID] o [Articolo: Titolo].
+2. **Citazioni**: Cita le fonti inline usando la notazione numerica [1], [2], ecc., dove il numero corrisponde all'indice nella lista FONTI INDICIZZATE sopra. Usa le citazioni naturalmente nel testo.
 3. **Struttura**: Sintesi Esecutiva → Analisi Dettagliata → Implicazioni Strategiche.
 4. **Freshness**: Segnala dati storici (>30 giorni).
 5. **Linguaggio**: Formale, professionale, analitico.
