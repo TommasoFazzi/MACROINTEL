@@ -31,7 +31,8 @@ Central persistence layer between the processing pipeline and intelligence gener
   - `_load_source_cache()` — queries `intelligence_sources.feed_names` once per session; gracefully no-ops if migration not applied
 
   **Core Operations:**
-  - `save_article()` / `batch_save()` - Store articles with content-hash deduplication; auto-populates `source_id` and `domain` via source cache
+  - `save_article(article, _known_links=None, _known_hashes=None)` - Store a single article with content-hash deduplication; optional pre-loaded sets skip DB duplicate-check round-trips
+  - `batch_save()` - Bulk insert with bulk dedup pre-check: pre-loads existing links + content_hashes in 2 queries (instead of 2 per-article DB queries), eliminating N+1 round-trips. Falls back to per-article checks if bulk pre-check fails. Auto-populates `source_id` and `domain` via source cache.
   - `semantic_search()` - Vector similarity search on chunks with filters
   - `full_text_search()` - PostgreSQL `ts_query` for keyword search
   - `hybrid_search()` - Combines vector + keyword with RRF fusion

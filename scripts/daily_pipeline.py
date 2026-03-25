@@ -112,7 +112,7 @@ DEFAULT_STEPS = [
         name="load_to_database",
         command="python scripts/load_to_database.py",
         description="Caricamento articoli nel database",
-        timeout_seconds=600,  # 10 min
+        timeout_seconds=1200,  # 20 min (raised from 10 min: ~1.65s/article × 400+ articles needs headroom)
         continue_on_failure=False
     ),
     PipelineStep(
@@ -547,9 +547,16 @@ class DailyPipeline:
 
             duration = time.time() - start_time
 
-            # Log stdout if verbose
-            if result.stdout and self.verbose:
-                self.logger.debug(f"STDOUT:\n{result.stdout}")
+            # Log subprocess output (Python logging → stderr; script prints → stdout)
+            if result.returncode == 0:
+                # On success: always forward stderr (Python logger output) and stdout if verbose
+                if result.stderr:
+                    for line in result.stderr.splitlines():
+                        if line.strip():
+                            self.logger.info(line)
+                if result.stdout and self.verbose:
+                    self.logger.debug(f"STDOUT:\n{result.stdout}")
+            # On failure: stderr is logged in the caller (run_step) after returncode check
 
             return StepResult(
                 step_name=step.name,

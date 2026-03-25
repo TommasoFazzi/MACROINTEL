@@ -368,12 +368,16 @@ class DatabaseManager:
         logger.info(f"intelligence_score computed for {updated} entities")
         return updated
 
-    def save_article(self, article: Dict[str, Any]) -> Optional[int]:
+    def save_article(self, article: Dict[str, Any],
+                     _known_links: Optional[set] = None,
+                     _known_hashes: Optional[set] = None) -> Optional[int]:
         """
         Save a single processed article with its chunks and embeddings.
 
         Args:
             article: Article dictionary with nlp_data
+            _known_links: Optional pre-loaded set of existing article links (skips DB link check)
+            _known_hashes: Optional pre-loaded set of existing content hashes in last 7 days (skips DB hash check)
 
         Returns:
             Article ID if saved successfully, None if skipped (duplicate or error)
@@ -397,12 +401,17 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     # Check if article already exists (by link)
-                    cur.execute("SELECT id FROM articles WHERE link = %s", (article.get('link'),))
-                    existing = cur.fetchone()
-
-                    if existing:
-                        logger.debug(f"Article already exists: {article.get('title', '')[:50]}...")
-                        return None
+                    if _known_links is not None:
+                        # Fast path: use pre-loaded set from batch_save()
+                        if article.get('link') in _known_links:
+                            logger.debug(f"Article already exists: {article.get('title', '')[:50]}...")
+                            return None
+                    else:
+                        cur.execute("SELECT id FROM articles WHERE link = %s", (article.get('link'),))
+                        existing = cur.fetchone()
+                        if existing:
+                            logger.debug(f"Article already exists: {article.get('title', '')[:50]}...")
+                            return None
 
                     # PHASE 2: Compute content hash for content-based deduplication
                     clean_text = nlp_data.get('clean_text', '')
@@ -410,22 +419,31 @@ class DatabaseManager:
 
                     # PHASE 2: Check for duplicate content in last 7 days
                     if content_hash:
-                        cur.execute("""
-                            SELECT id, title, source, link
-                            FROM articles
-                            WHERE content_hash = %s
-                            AND published_date > NOW() - INTERVAL '7 days'
-                            LIMIT 1
-                        """, (content_hash,))
+                        if _known_hashes is not None:
+                            # Fast path: use pre-loaded set from batch_save()
+                            if content_hash in _known_hashes:
+                                logger.info(
+                                    f"Skipping duplicate content: '{article.get('title', 'N/A')[:50]}...' "
+                                    f"(content_hash match in pre-loaded cache)"
+                                )
+                                return None
+                        else:
+                            cur.execute("""
+                                SELECT id, title, source, link
+                                FROM articles
+                                WHERE content_hash = %s
+                                AND published_date > NOW() - INTERVAL '7 days'
+                                LIMIT 1
+                            """, (content_hash,))
 
-                        existing_content = cur.fetchone()
-                        if existing_content:
-                            logger.info(
-                                f"Skipping duplicate content: '{article.get('title', 'N/A')[:50]}...' "
-                                f"(same as article_id={existing_content[0]} "
-                                f"'{existing_content[1][:50]}...' from {existing_content[2]})"
-                            )
-                            return None
+                            existing_content = cur.fetchone()
+                            if existing_content:
+                                logger.info(
+                                    f"Skipping duplicate content: '{article.get('title', 'N/A')[:50]}...' "
+                                    f"(same as article_id={existing_content[0]} "
+                                    f"'{existing_content[1][:50]}...' from {existing_content[2]})"
+                                )
+                                return None
 
                     # Lookup source_id and domain from intelligence_sources cache
                     if not self._source_cache_loaded:
@@ -533,6 +551,9 @@ class DatabaseManager:
         """
         Save multiple articles in batch.
 
+        Pre-loads existing links and content hashes in two bulk queries to avoid
+        N+1 duplicate-check queries (saves ~2 round-trips per article).
+
         Args:
             articles: List of article dictionaries
 
@@ -548,8 +569,50 @@ class DatabaseManager:
 
         logger.info(f"Saving {len(articles)} articles to database...")
 
+        # --- Bulk duplicate pre-check (eliminates 2 DB round-trips per article) ---
+        known_links: set = set()
+        known_hashes: set = set()
+        try:
+            candidate_links = [a.get('link') for a in articles if a.get('link')]
+            candidate_hashes = []
+            for a in articles:
+                nlp_data = a.get('nlp_data', {})
+                clean_text = nlp_data.get('clean_text', '')
+                if clean_text:
+                    candidate_hashes.append(
+                        hashlib.md5(clean_text.encode('utf-8')).hexdigest()
+                    )
+
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if candidate_links:
+                        cur.execute(
+                            "SELECT link FROM articles WHERE link = ANY(%s)",
+                            (candidate_links,)
+                        )
+                        known_links = {row[0] for row in cur.fetchall()}
+
+                    if candidate_hashes:
+                        cur.execute(
+                            """SELECT content_hash FROM articles
+                               WHERE content_hash = ANY(%s)
+                               AND published_date > NOW() - INTERVAL '7 days'""",
+                            (candidate_hashes,)
+                        )
+                        known_hashes = {row[0] for row in cur.fetchall()}
+
+            logger.info(
+                f"Bulk dedup check: {len(known_links)} existing links, "
+                f"{len(known_hashes)} duplicate hashes found among {len(articles)} candidates"
+            )
+        except Exception as e:
+            logger.warning(f"Bulk dedup pre-check failed, falling back to per-article checks: {e}")
+            known_links = None  # type: ignore[assignment]
+            known_hashes = None  # type: ignore[assignment]
+        # -------------------------------------------------------------------------
+
         for i, article in enumerate(articles):
-            article_id = self.save_article(article)
+            article_id = self.save_article(article, _known_links=known_links, _known_hashes=known_hashes)
 
             if article_id is not None:
                 stats["saved"] += 1
