@@ -1,13 +1,12 @@
 'use client';
 
 import { useState, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Loader2, KeyRound, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 
 function AccessForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const from = params.get('from') || '/dashboard';
 
@@ -30,7 +29,7 @@ function AccessForm() {
       });
 
       if (res.ok) {
-        router.push(from);
+        window.location.href = from;
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error || 'Invalid access code. Please try again.');
