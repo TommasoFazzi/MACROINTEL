@@ -8,12 +8,12 @@ import type { OracleChatMessage, QueryPlan } from '../../types/oracle';
 // ── Intent labels and colors ──────────────────────────────────────────────────
 
 const INTENT_LABELS: Record<string, string> = {
-  factual: 'Fattuale',
-  analytical: 'Analitico',
-  narrative: 'Narrativo',
-  market: 'Mercato',
-  comparative: 'Comparativo',
-  overview: 'Panoramica',
+  factual: 'Factual',
+  analytical: 'Analytical',
+  narrative: 'Narrative',
+  market: 'Market',
+  comparative: 'Comparative',
+  overview: 'Overview',
 };
 
 const INTENT_COLORS: Record<string, string> = {
@@ -42,7 +42,7 @@ function CitationBadge({ n, onClick }: { n: number; onClick: () => void }) {
       type="button"
       onClick={onClick}
       className="inline-flex items-center justify-center w-[18px] h-[18px] rounded text-[10px] font-bold bg-[#FF6B35]/20 text-[#FF6B35] border border-[#FF6B35]/40 hover:bg-[#FF6B35]/40 transition-colors cursor-pointer align-super mx-0.5 leading-none flex-shrink-0"
-      title={`Vai alla fonte ${n}`}
+      title={`Go to source ${n}`}
     >
       {n}
     </button>
@@ -67,7 +67,7 @@ function QueryPlanDetails({
         className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-400 transition-colors"
       >
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        <span>Analisi elaborazione</span>
+        <span>Processing details</span>
       </button>
 
       {open && (
@@ -93,7 +93,7 @@ function QueryPlanDetails({
 
           {/* Tools */}
           {plan.tools.length > 0 && (
-            <div className="text-gray-700">Strumenti: {plan.tools.join(', ')}</div>
+            <div className="text-gray-700">Tools: {plan.tools.join(', ')}</div>
           )}
 
           {/* Sub-queries (COMPARATIVE) */}
@@ -105,8 +105,8 @@ function QueryPlanDetails({
                 className="flex items-center gap-1 text-gray-600 hover:text-gray-400 transition-colors"
               >
                 {subOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                Decomposta in {plan.sub_queries.length} sotto-quer
-                {plan.sub_queries.length === 1 ? 'y' : 'y'}
+                Decomposed into {plan.sub_queries.length} sub-quer
+                {plan.sub_queries.length === 1 ? 'y' : 'ies'}
               </button>
               {subOpen && (
                 <ul className="mt-1 pl-3 space-y-0.5 text-gray-700">
@@ -168,7 +168,7 @@ export function AssistantBubble({
         {isFollowUp && (
           <div className="mb-2">
             <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 text-gray-600 border border-white/8">
-              ↩ Continuazione
+              ↩ Follow-up
             </span>
           </div>
         )}
@@ -237,7 +237,7 @@ export function AssistantBubble({
           <div className="mt-2 flex items-center gap-2 text-xs text-gray-600">
             {executionTime !== undefined && <span>{executionTime.toFixed(1)}s</span>}
             {executionTime !== undefined && sourceCount > 0 && <span>·</span>}
-            {sourceCount > 0 && <span>{sourceCount} fonti</span>}
+            {sourceCount > 0 && <span>{sourceCount} source{sourceCount !== 1 ? 's' : ''}</span>}
           </div>
         )}
 

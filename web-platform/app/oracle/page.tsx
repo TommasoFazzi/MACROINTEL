@@ -108,13 +108,13 @@ export default function OraclePage() {
         <div className="mx-4 mt-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex-shrink-0">
           {byokError.toLowerCase().includes('required') ? (
             <>
-              <strong>API key richiesta.</strong> Configura la tua Gemini API key in{' '}
+              <strong>API key required.</strong> Configure your Gemini API key in{' '}
               <button
                 type="button"
                 onClick={() => setShowSettings(true)}
                 className="underline hover:text-amber-100"
               >
-                Impostazioni
+                Settings
               </button>
               .{' '}
               <a
@@ -123,12 +123,12 @@ export default function OraclePage() {
                 rel="noopener noreferrer"
                 className="underline hover:text-amber-100"
               >
-                Ottieni gratis →
+                Get it free →
               </a>
             </>
           ) : (
             <>
-              <strong>Errore Gemini API key:</strong> la chiave non è valida o ha esaurito la
+              <strong>Gemini API key error:</strong> the key is invalid or has exhausted its
               quota.{' '}
               <span className="text-amber-400/70 text-xs">({byokError})</span>
             </>
@@ -181,7 +181,7 @@ export default function OraclePage() {
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  placeholder="Fai una domanda intelligence..."
+                  placeholder="Ask an intelligence question..."
                   rows={1}
                   className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none resize-none min-h-[26px] max-h-[200px] py-1 leading-relaxed overflow-y-hidden"
                 />
@@ -189,14 +189,14 @@ export default function OraclePage() {
                   type="button"
                   onClick={handleSend}
                   disabled={!input.trim() || isLoading}
-                  aria-label="Invia messaggio"
+                  aria-label="Send message"
                   className="flex-shrink-0 w-8 h-8 rounded-xl bg-[#FF6B35] text-white flex items-center justify-center hover:bg-[#FF6B35]/80 active:bg-[#FF6B35]/70 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end mb-0.5"
                 >
                   <ArrowUp size={15} />
                 </button>
               </div>
               <div className="text-center mt-1.5 text-xs text-gray-700">
-                Enter per inviare · Shift+Enter per a capo
+                Enter to send · Shift+Enter for new line
               </div>
             </div>
           </div>
@@ -214,7 +214,7 @@ export default function OraclePage() {
       <BottomSheet
         open={showSourcesSheet}
         onClose={() => setShowSourcesSheet(false)}
-        title="Fonti & Analisi"
+        title="Sources & Analysis"
         heightClass="h-[75vh]"
         className="bg-[#0d1d35]"
       >
@@ -230,7 +230,7 @@ export default function OraclePage() {
             ))
           ) : (
             <div className="text-center text-gray-600 text-xs pt-8">
-              Le fonti compariranno dopo la prima risposta.
+              Sources will appear after the first response.
             </div>
           )}
         </div>

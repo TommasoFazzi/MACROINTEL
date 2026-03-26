@@ -8,9 +8,9 @@ function getFreshnessInfo(dateStr?: string): { label: string; classes: string } 
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return null;
   const days = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
-  if (days < 7) return { label: `${days}g`, classes: 'text-green-400 bg-green-500/10 border-green-500/30' };
-  if (days < 30) return { label: `${days}g`, classes: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' };
-  return { label: `${days}g`, classes: 'text-red-400 bg-red-500/10 border-red-500/30' };
+  if (days < 7) return { label: `${days}d`, classes: 'text-green-400 bg-green-500/10 border-green-500/30' };
+  if (days < 30) return { label: `${days}d`, classes: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' };
+  return { label: `${days}d`, classes: 'text-red-400 bg-red-500/10 border-red-500/30' };
 }
 
 interface OracleSourceCardProps {
@@ -46,7 +46,7 @@ export const OracleSourceCard = forwardRef<HTMLDivElement, OracleSourceCardProps
                 : 'bg-[#00A8E8]/20 text-[#00A8E8]'
             }`}
           >
-            {source.type === 'REPORT' ? 'REPORT' : 'ARTICOLO'}
+            {source.type === 'REPORT' ? 'REPORT' : 'ARTICLE'}
           </span>
           {freshness && (
             <span className={`text-xs px-1.5 py-0.5 rounded border ${freshness.classes}`}>

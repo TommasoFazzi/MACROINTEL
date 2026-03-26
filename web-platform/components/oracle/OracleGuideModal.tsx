@@ -6,51 +6,51 @@ import { X } from 'lucide-react';
 const INTENT_GUIDE = [
   {
     key: 'factual',
-    label: 'Fattuale',
+    label: 'Factual',
     labelColor: 'text-blue-300',
     bgColor: 'bg-blue-500/8 border-blue-500/15',
-    desc: 'Cerca eventi recenti, dichiarazioni e notizie. Usa priorità temporale recente con forte decay per i dati storici.',
-    example: 'Cosa è successo in Taiwan questa settimana?',
+    desc: 'Searches recent events, declarations, and news. Uses strong time-decay weighting — recent data is prioritised.',
+    example: 'What happened in Taiwan this week?',
   },
   {
     key: 'analytical',
-    label: 'Analitico',
+    label: 'Analytical',
     labelColor: 'text-yellow-300',
     bgColor: 'bg-yellow-500/8 border-yellow-500/15',
-    desc: 'Conta, raggruppa, calcola trend. Interroga direttamente il database con aggregazioni su articoli ed entità.',
-    example: 'Quanti articoli sulla Cina negli ultimi 30 giorni?',
+    desc: 'Counts, groups, calculates trends. Queries the database directly with aggregations on articles and entities.',
+    example: 'How many articles about China in the last 30 days?',
   },
   {
     key: 'narrative',
-    label: 'Narrativo',
+    label: 'Narrative',
     labelColor: 'text-purple-300',
     bgColor: 'bg-purple-500/8 border-purple-500/15',
-    desc: 'Esplora il network di storyline, l\'evoluzione narrativa nel tempo e le relazioni tra temi geopolitici.',
-    example: 'Come si è evoluta la narrativa sul conflitto israeliano?',
+    desc: 'Explores the storyline network, narrative evolution over time, and relationships between geopolitical themes.',
+    example: 'How has the narrative on the Israeli conflict evolved?',
   },
   {
     key: 'market',
-    label: 'Mercato',
+    label: 'Market',
     labelColor: 'text-green-300',
     bgColor: 'bg-green-500/8 border-green-500/15',
-    desc: 'Analizza segnali di trading (BULLISH/BEARISH/WATCHLIST), ticker, macro indicatori e correlazioni geopolitiche.',
-    example: 'Mostrami i segnali BUY sulla difesa europea',
+    desc: 'Analyses trading signals (BULLISH/BEARISH/WATCHLIST), tickers, macro indicators and geopolitical correlations.',
+    example: 'Show me BUY signals on European defense',
   },
   {
     key: 'comparative',
-    label: 'Comparativo',
+    label: 'Comparative',
     labelColor: 'text-pink-300',
     bgColor: 'bg-pink-500/8 border-pink-500/15',
-    desc: 'Confronta entità, periodi o prospettive. Oracle decompone automaticamente la query in sotto-query parallele.',
-    example: 'Confronta la copertura di Russia vs Cina negli ultimi 60 giorni',
+    desc: 'Compares entities, periods, or perspectives. Oracle automatically decomposes the query into parallel sub-queries.',
+    example: 'Compare Russia vs China coverage over the last 60 days',
   },
   {
     key: 'overview',
-    label: 'Panoramica',
+    label: 'Overview',
     labelColor: 'text-teal-300',
     bgColor: 'bg-teal-500/8 border-teal-500/15',
-    desc: 'Profilo geopolitico completo di un paese o regione. Usa tutta la storia disponibile nel database (decay lentissimo).',
-    example: "Panoramica geopolitica dell'Iran",
+    desc: 'Full geopolitical profile of a country or region. Uses all available history in the database (very slow decay).',
+    example: 'Geopolitical overview of Iran',
   },
 ];
 
@@ -86,9 +86,9 @@ export function OracleGuideModal({ open, onClose, onQuerySelect }: OracleGuideMo
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0a1628] z-10">
           <div>
-            <h2 className="text-white font-semibold text-base">Guida Oracle</h2>
+            <h2 className="text-white font-semibold text-base">Oracle Guide</h2>
             <p className="text-gray-500 text-xs mt-0.5">
-              Come interrogare il database di intelligence
+              How to query the intelligence database
             </p>
           </div>
           <button
@@ -104,23 +104,25 @@ export function OracleGuideModal({ open, onClose, onQuerySelect }: OracleGuideMo
           {/* What is Oracle */}
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
-              Cos&apos;è Oracle
+              What is Oracle
             </h3>
             <p className="text-gray-400 text-sm leading-relaxed">
-              Oracle è un motore di analisi intelligence che combina ricerca vettoriale semantica
-              (RAG) con sintesi LLM su un database proprietario di articoli geopolitici, report di
-              intelligence e segnali di mercato. Mantiene la memoria della conversazione per
-              rispondere a domande di follow-up contestuali.
+              Oracle is an intelligence analysis engine that combines semantic vector search
+              (RAG) with LLM synthesis over a proprietary database of geopolitical articles,
+              intelligence reports, and market signals. It retains conversation memory to
+              answer contextual follow-up questions.
             </p>
             <p className="text-gray-500 text-xs mt-2 leading-relaxed">
-              Le risposte includono citazioni numeriche <span className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold bg-[#FF6B35]/20 text-[#FF6B35] border border-[#FF6B35]/40 mx-0.5">1</span> cliccabili che rimandano direttamente alla fonte nella sidebar.
+              Responses include clickable numbered citations{' '}
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold bg-[#FF6B35]/20 text-[#FF6B35] border border-[#FF6B35]/40 mx-0.5">1</span>{' '}
+              that link directly to the source in the sidebar.
             </p>
           </div>
 
           {/* Intent types */}
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              Tipi di query supportati
+              Supported query types
             </h3>
             <div className="space-y-2.5">
               {INTENT_GUIDE.map((t) => (
@@ -137,7 +139,7 @@ export function OracleGuideModal({ open, onClose, onQuerySelect }: OracleGuideMo
                     }}
                     className="mt-2 text-xs text-gray-600 hover:text-white/80 italic transition-colors text-left"
                   >
-                    Es: &ldquo;{t.example}&rdquo; →
+                    E.g.: &ldquo;{t.example}&rdquo; →
                   </button>
                 </div>
               ))}
@@ -147,49 +149,49 @@ export function OracleGuideModal({ open, onClose, onQuerySelect }: OracleGuideMo
           {/* Filters */}
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
-              Filtri disponibili
+              Available filters
             </h3>
             <ul className="space-y-2 text-sm text-gray-400">
               <li>
-                <span className="text-white/60">Intervallo date</span> — limita la ricerca a un
-                periodo specifico
+                <span className="text-white/60">Date range</span> — limits the search to a
+                specific period
               </li>
               <li>
-                <span className="text-white/60">Paese / GPE</span> — filtra per entità geografica
-                (es. &quot;Russia, Iran&quot;)
+                <span className="text-white/60">Country / GPE</span> — filter by geographic
+                entity (e.g. &quot;Russia, Iran&quot;)
               </li>
               <li>
-                <span className="text-white/60">Modalità</span> —{' '}
-                <em>both</em> (report + articoli), <em>factual</em> (solo articoli),{' '}
-                <em>strategic</em> (solo report)
+                <span className="text-white/60">Mode</span> —{' '}
+                <em>both</em> (reports + articles), <em>factual</em> (articles only),{' '}
+                <em>strategic</em> (reports only)
               </li>
               <li>
-                <span className="text-white/60">Tipo di ricerca</span> —{' '}
-                <em>hybrid</em> (vettoriale + keyword), <em>vector</em>, <em>keyword</em>
+                <span className="text-white/60">Search type</span> —{' '}
+                <em>hybrid</em> (vector + keyword), <em>vector</em>, <em>keyword</em>
               </li>
             </ul>
             <p className="text-gray-600 text-xs mt-2">
-              Configura i filtri dal pannello ⚙ Impostazioni nell&apos;header.
+              Configure filters from the ⚙ Settings panel in the header.
             </p>
           </div>
 
-          {/* Limits */}
+          {/* Technical notes */}
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
-              Note tecniche
+              Technical notes
             </h3>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li>⏱ Timeout richiesta: 120 secondi (query complesse richiedono 15–30s)</li>
+              <li>⏱ Request timeout: 120 seconds (complex queries take 15–30s)</li>
               <li>
-                🔑 Richiede una Gemini API key valida — configurabile in{' '}
-                <span className="text-white/50">Impostazioni</span>
+                🔑 Requires a valid Gemini API key — configure in{' '}
+                <span className="text-white/50">Settings</span>
               </li>
-              <li>📚 Il database viene aggiornato ogni giorno alle 08:00 UTC</li>
+              <li>📚 Database is updated every day at 08:00 UTC</li>
               <li>
-                🔗 Le citazioni nel testo sono cliccabili e portano alla fonte corrispondente nella
-                sidebar
+                🔗 Citations in the text are clickable and link to the corresponding source in
+                the sidebar
               </li>
-              <li>🧠 La memoria di sessione persiste per tutta la conversazione corrente</li>
+              <li>🧠 Session memory persists throughout the current conversation</li>
             </ul>
           </div>
         </div>

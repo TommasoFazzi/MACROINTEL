@@ -120,48 +120,50 @@ def generate_recap_prompt(reports: List[Dict], aggregated_meta: Dict) -> str:
         Complete prompt string for LLM
     """
 
-    system_prompt = """SEI UN CHIEF STRATEGIC ANALYST DI UN THINK TANK GLOBALE.
+    system_prompt = """You are a CHIEF STRATEGIC ANALYST at a global think tank.
 
-COMPITO: Scrivere il "PERIOD RECAP REPORT" - una meta-analisi strategica basata sui weekly briefing del periodo.
+LANGUAGE REQUIREMENT: Write the entire report in ENGLISH. No exceptions.
 
-IMPORTANTE: Non riassumere i singoli weekly. Identifica META-PATTERN e trend di lungo periodo.
+TASK: Write the "PERIOD RECAP REPORT" — a strategic meta-analysis based on the weekly briefings of the period.
 
-STRUTTURA REPORT:
+IMPORTANT: Do not summarize individual weekly reports. Identify META-PATTERNS and long-term trends.
+
+REPORT STRUCTURE:
 
 1. 🎯 EXECUTIVE SUMMARY
-   - Qual è stata la NARRATIVA DOMINANTE del periodo?
-   - Quali SHIFT GEOPOLITICI significativi sono avvenuti?
-   - Qual è il "big picture" che emerge dall'insieme dei weekly?
+   - What was the DOMINANT NARRATIVE of the period?
+   - What significant GEOPOLITICAL SHIFTS occurred?
+   - What is the "big picture" emerging from the full set of weekly reports?
 
 2. 📊 TREND ANALYSIS
-   - TREND CONSOLIDATI: Pattern che si sono rafforzati nel tempo
-   - TREND INVERTITI: Dinamiche che hanno cambiato direzione
-   - TREND EMERGENTI: Nuovi pattern che iniziano a formarsi
-   - DISCONTINUITA': Eventi che hanno rotto la continuità
+   - CONSOLIDATED TRENDS: Patterns that strengthened over time
+   - REVERSED TRENDS: Dynamics that changed direction
+   - EMERGING TRENDS: New patterns beginning to form
+   - DISCONTINUITIES: Events that broke continuity
 
 3. 🌍 GEOGRAPHIC HOTSPOTS
-   - Quali aree geografiche sono rimaste critiche per tutto il periodo?
-   - Come è evoluta la situazione in ciascuna area chiave?
-   - Nuove aree di tensione emerse
+   - Which geographic areas remained critical throughout the period?
+   - How did the situation in each key area evolve?
+   - New areas of tension that emerged
 
 4. ⚔️ ACTORS ANALYSIS
-   - WINNERS: Chi ha guadagnato influenza/potere nel periodo?
-   - LOSERS: Chi ha perso terreno?
-   - RISING POWERS: Attori emergenti da monitorare
-   - DECLINING POWERS: Attori in fase di declino
+   - WINNERS: Who gained influence/power during the period?
+   - LOSERS: Who lost ground?
+   - RISING POWERS: Emerging actors to monitor
+   - DECLINING POWERS: Actors in a decline phase
 
 5. 🔮 STRATEGIC OUTLOOK
-   - Scenari probabili per il prossimo periodo
-   - Key watch items (cosa monitorare con attenzione)
-   - Rischi sistemici identificati
-   - Opportunità strategiche
+   - Probable scenarios for the next period
+   - Key watch items (what to monitor closely)
+   - Identified systemic risks
+   - Strategic opportunities
 
-STILE:
-- Strategico, non tattico
-- Focus su EVOLUZIONE temporale dei trend
-- Evidenzia CONNESSIONI tra eventi apparentemente separati
-- Usa riferimenti temporali (es. "dalla seconda settimana...")
-- Quantifica quando possibile (es. "3 settimane consecutive di...")
+STYLE:
+- Strategic, not tactical
+- Focus on TEMPORAL EVOLUTION of trends
+- Highlight CONNECTIONS between apparently unrelated events
+- Use temporal references (e.g. "from the second week...")
+- Quantify when possible (e.g. "3 consecutive weeks of...")
 """
 
     # Build context from weekly reports
@@ -192,11 +194,11 @@ STILE:
 
     # Metadata summary
     meta_summary = f"""
-METADATA AGGREGATO PERIODO:
-- Periodo complessivo: {aggregated_meta['date_range']['start']} → {aggregated_meta['date_range']['end']}
-- Weekly reports analizzati: {aggregated_meta['weekly_reports_count']}
-- Daily reports coperti: {aggregated_meta['total_daily_reports_covered']}
-- Articoli totali processati: {aggregated_meta['total_articles_analyzed']}
+PERIOD METADATA:
+- Overall period: {aggregated_meta['date_range']['start']} → {aggregated_meta['date_range']['end']}
+- Weekly reports analyzed: {aggregated_meta['weekly_reports_count']}
+- Daily reports covered: {aggregated_meta['total_daily_reports_covered']}
+- Total articles processed: {aggregated_meta['total_articles_analyzed']}
 """
 
     # Build final prompt
@@ -204,7 +206,7 @@ METADATA AGGREGATO PERIODO:
         system_prompt,
         meta_summary,
         "\n" + "=" * 80,
-        "WEEKLY INTELLIGENCE BRIEFINGS DEL PERIODO:",
+        "WEEKLY INTELLIGENCE BRIEFINGS FOR THE PERIOD:",
         "=" * 80,
         context
     ]

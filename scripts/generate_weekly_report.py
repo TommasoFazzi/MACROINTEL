@@ -124,54 +124,54 @@ def generate_weekly_prompt(reports: List[Dict], aggregated_meta: Dict, rag_conte
         Complete prompt string for LLM
     """
 
-    system_prompt = """SEI UN SENIOR STRATEGIC ANALYST DI UN THINK TANK GLOBALE.
+    system_prompt = """You are a SENIOR STRATEGIC ANALYST at a global think tank.
 
-COMPITO: Scrivere il "WEEKLY INTELLIGENCE BRIEFING".
-Non riassumere le notizie. Identifica l'EVOLUZIONE dei trend osservando i report giornalieri.
+LANGUAGE REQUIREMENT: Write the entire report in ENGLISH. No exceptions.
 
-FOCUS PRIMARIO: I report giornalieri di QUESTA SETTIMANA sono il focus principale.
-CONTESTO STORICO: Usa il contesto storico fornito SOLO per:
-- Confrontare trend attuali con eventi passati
-- Identificare accelerazioni/rallentamenti rispetto al passato
-- Fare previsioni più accurate basate su precedenti storici
+TASK: Write the "WEEKLY INTELLIGENCE BRIEFING".
+Do not summarize the news. Identify the EVOLUTION of trends by analyzing the daily reports.
 
-STRUTTURA REPORT:
+PRIMARY FOCUS: The daily reports from THIS WEEK are the primary focus.
+HISTORICAL CONTEXT: Use historical context ONLY to:
+- Compare current trends with past events
+- Identify accelerations/slowdowns relative to the past
+- Make more accurate forecasts based on historical precedents
+
+REPORT STRUCTURE:
 1. 🚨 THE BIG PICTURE
-   - Qual è stata la narrazione dominante della settimana?
-   - Come si sono spostati gli equilibri globali?
-   - Quali sono i cambiamenti di momentum (chi sta accelerando, chi sta rallentando)?
+   - What was the dominant narrative of the week?
+   - How did global balances shift?
+   - What are the momentum changes (who is accelerating, who is slowing down)?
 
 2. 📈 TREND WATCH
-   - ESCALATION: Cosa è peggiorato rispetto a inizio settimana? Quali crisi si sono intensificate?
-   - DE-ESCALATION: Cosa è migliorato? Quali tensioni si sono allentate?
-   - SEGNALI DEBOLI → FORTI: Quali pattern emergenti stanno consolidando?
-   - DISCONTINUITÀ: Eventi imprevisti che hanno cambiato il quadro?
+   - ESCALATION: What worsened compared to the start of the week? Which crises intensified?
+   - DE-ESCALATION: What improved? Which tensions eased?
+   - WEAK → STRONG SIGNALS: Which emerging patterns are consolidating?
+   - DISCONTINUITIES: Unexpected events that changed the picture?
 
 3. 🏆 WINNERS & LOSERS
-   - Chi (Nazioni, Aziende, Leader, Alleanze) esce rafforzato da questa settimana?
-   - Chi è indebolito? Chi ha perso credibilità o influenza?
-   - Quali strategie si sono rivelate efficaci? Quali hanno fallito?
+   - Who (Nations, Companies, Leaders, Alliances) comes out stronger from this week?
+   - Who is weakened? Who lost credibility or influence?
+   - Which strategies proved effective? Which failed?
 
 4. 🔮 NEXT WEEK FORECAST
-   - Basandoti sui trend identificati, cosa dobbiamo aspettarci?
-   - Quali sono le decisioni chiave attese?
-   - Dove concentrare l'attenzione?
+   - Based on the identified trends, what should we expect?
+   - What are the key decisions expected?
+   - Where should attention be focused?
 
-STILE:
-- Sintetico, Diretto, Analitico
-- Usa bullet points numerati
-- Evidenzia CAMBIAMENTI non fatti statici
-- Focus su EVOLUZIONE TEMPORALE (come le storie si sono sviluppate)
-- Cita specifici giorni quando rilevante (es. "Lunedì... poi Mercoledì...")
+STYLE:
+- Concise, direct, analytical
+- Use numbered bullet points
+- Highlight CHANGES not static facts
+- Focus on TEMPORAL EVOLUTION (how stories developed)
+- Reference specific days when relevant (e.g. "Monday… then Wednesday…")
 """
 
     # Build context from daily reports
     context_parts = []
     for report in reports:
-        # Format date in Italian
         date_obj = report['report_date']
-        # Get Italian weekday name
-        weekday_names = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica']
+        weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         weekday = weekday_names[date_obj.weekday()]
         date_str = f"{weekday} {date_obj.strftime('%d %B %Y')}"
 
@@ -190,11 +190,11 @@ STILE:
 
     # Metadata summary
     meta_summary = f"""
-METADATA AGGREGATO SETTIMANA:
-- Periodo: {aggregated_meta['date_range']['start']} → {aggregated_meta['date_range']['end']}
-- Report analizzati: {aggregated_meta['reports_count']}
-- Articoli totali considerati: {aggregated_meta['total_articles_analyzed']}
-- Fonti uniche: {aggregated_meta['unique_sources_count']}
+WEEKLY METADATA:
+- Period: {aggregated_meta['date_range']['start']} → {aggregated_meta['date_range']['end']}
+- Daily reports analyzed: {aggregated_meta['reports_count']}
+- Total articles considered: {aggregated_meta['total_articles_analyzed']}
+- Unique sources: {aggregated_meta['unique_sources_count']}
 """
 
     # Build final prompt
@@ -203,13 +203,13 @@ METADATA AGGREGATO SETTIMANA:
     # Add historical context if provided (BEFORE weekly reports)
     if rag_context:
         prompt_parts.append("\n" + "="*80)
-        prompt_parts.append("CONTESTO STORICO (per confronto e previsioni):")
+        prompt_parts.append("HISTORICAL CONTEXT (for comparison and forecasts):")
         prompt_parts.append("="*80)
         prompt_parts.append(rag_context)
         prompt_parts.append("\n" + "="*80 + "\n")
 
     # Add weekly reports (PRIMARY FOCUS)
-    prompt_parts.append("\nREPORT GIORNALIERI DELLA SETTIMANA (FOCUS PRINCIPALE):")
+    prompt_parts.append("\nDAILY REPORTS THIS WEEK (PRIMARY FOCUS):")
     prompt_parts.append(context)
 
     return "\n".join(prompt_parts)

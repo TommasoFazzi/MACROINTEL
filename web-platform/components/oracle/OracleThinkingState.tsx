@@ -3,10 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 
 const STEPS = [
-  'Analisi semantica della query',
-  'Scansione database vettoriale',
-  'Estrazione documenti rilevanti',
-  'Sintesi strategica in corso',
+  'Semantic query analysis',
+  'Scanning vector database',
+  'Extracting relevant documents',
+  'Strategic synthesis in progress',
 ];
 
 // Cumulative ms before advancing to each step
@@ -38,7 +38,7 @@ export function OracleThinkingState() {
 
   const label =
     stepIndex === 1
-      ? `Scansione database vettoriale (${sourceCountRef.current} fonti)`
+      ? `Scanning vector database (${sourceCountRef.current} sources)`
       : STEPS[stepIndex];
 
   return (

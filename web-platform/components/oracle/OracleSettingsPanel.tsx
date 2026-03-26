@@ -78,7 +78,7 @@ export function OracleSettingsPanel({
       <div className="relative bg-[#0a1628] border-l border-white/10 w-full max-w-sm flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-          <h2 className="text-white font-semibold text-sm">Impostazioni Oracle</h2>
+          <h2 className="text-white font-semibold text-sm">Oracle Settings</h2>
           <button
             type="button"
             onClick={onClose}
@@ -98,16 +98,16 @@ export function OracleSettingsPanel({
               </h3>
               {isKeyActive ? (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 border border-green-500/30">
-                  Attiva
+                  Active
                 </span>
               ) : (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
-                  Richiesta
+                  Required
                 </span>
               )}
             </div>
             <p className="text-gray-600 text-xs mb-3 leading-relaxed">
-              Necessaria per usare Oracle. Gratuita su{' '}
+              Required to use Oracle. Free at{' '}
               <a
                 href="https://aistudio.google.com/apikey"
                 target="_blank"
@@ -116,7 +116,7 @@ export function OracleSettingsPanel({
               >
                 aistudio.google.com
               </a>
-              . Salvata solo in localStorage, mai inviata ai server.
+              . Stored in localStorage only, never sent to our servers.
             </p>
             <div className="flex gap-2">
               <div className="relative flex-1">
@@ -145,12 +145,12 @@ export function OracleSettingsPanel({
                 disabled={!isKeyValid || draftKey === geminiApiKey}
                 className="px-3 py-2 rounded-lg bg-[#FF6B35]/80 text-white text-xs font-medium hover:bg-[#FF6B35] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
               >
-                Salva
+                Save
               </button>
             </div>
             {!isKeyValid && draftKey && (
               <p className="mt-1.5 text-xs text-red-400">
-                Formato non valido — atteso: AIza + 30–50 caratteri
+                Invalid format — expected: AIza + 30–50 characters
               </p>
             )}
             {geminiApiKey && (
@@ -162,7 +162,7 @@ export function OracleSettingsPanel({
                 }}
                 className="mt-2 text-xs text-gray-600 hover:text-red-400 transition-colors"
               >
-                Rimuovi chiave
+                Remove key
               </button>
             )}
           </section>
@@ -170,14 +170,14 @@ export function OracleSettingsPanel({
           {/* Search mode */}
           <section>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              Modalità ricerca
+              Search mode
             </h3>
             <div className="space-y-2">
               {(
                 [
-                  ['both', 'Entrambi (report + articoli)'],
-                  ['factual', 'Solo articoli'],
-                  ['strategic', 'Solo report'],
+                  ['both', 'Both (reports + articles)'],
+                  ['factual', 'Articles only'],
+                  ['strategic', 'Reports only'],
                 ] as const
               ).map(([val, label]) => (
                 <label key={val} className="flex items-center gap-2.5 cursor-pointer">
@@ -198,14 +198,14 @@ export function OracleSettingsPanel({
           {/* Search type */}
           <section>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              Tipo di ricerca
+              Search type
             </h3>
             <div className="space-y-2">
               {(
                 [
-                  ['hybrid', 'Hybrid (vettoriale + keyword)'],
-                  ['vector', 'Solo vettoriale'],
-                  ['keyword', 'Solo keyword'],
+                  ['hybrid', 'Hybrid (vector + keyword)'],
+                  ['vector', 'Vector only'],
+                  ['keyword', 'Keyword only'],
                 ] as const
               ).map(([val, label]) => (
                 <label key={val} className="flex items-center gap-2.5 cursor-pointer">
@@ -226,11 +226,11 @@ export function OracleSettingsPanel({
           {/* Date filter */}
           <section>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              Intervallo date
+              Date range
             </h3>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-gray-500 mb-1 block">Da</label>
+                <label className="text-xs text-gray-500 mb-1 block">From</label>
                 <input
                   type="date"
                   value={activeFilters.start_date ?? ''}
@@ -244,7 +244,7 @@ export function OracleSettingsPanel({
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500 mb-1 block">A</label>
+                <label className="text-xs text-gray-500 mb-1 block">To</label>
                 <input
                   type="date"
                   value={activeFilters.end_date ?? ''}
@@ -270,7 +270,7 @@ export function OracleSettingsPanel({
                 }
                 className="mt-2 text-xs text-gray-600 hover:text-white transition-colors"
               >
-                Rimuovi filtro date
+                Clear date filter
               </button>
             )}
           </section>
@@ -278,10 +278,10 @@ export function OracleSettingsPanel({
           {/* GPE filter */}
           <section>
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
-              Paese / GPE Filter
+              Country / GPE Filter
             </h3>
             <p className="text-gray-600 text-xs mb-2">
-              Es: &quot;Russia, Iran, Cina&quot; (separati da virgola)
+              E.g.: &quot;Russia, Iran, China&quot; (comma-separated)
             </p>
             <input
               type="text"
@@ -305,8 +305,7 @@ export function OracleSettingsPanel({
         {/* Footer — Reset Context */}
         <div className="px-5 py-4 border-t border-white/10 flex-shrink-0">
           <p className="text-xs text-gray-600 mb-3 leading-relaxed">
-            Azzera la memoria di sessione se Oracle si incarta sul contesto di conversazioni
-            precedenti.
+            Reset session memory if Oracle gets confused by the context of previous conversations.
           </p>
           <button
             type="button"
@@ -317,7 +316,7 @@ export function OracleSettingsPanel({
                 : 'border-red-500/20 text-red-400/50 hover:border-red-500/40 hover:text-red-400/80'
             }`}
           >
-            {confirmClear ? '⚠ Conferma: azzera memoria' : 'Azzera memoria di sessione'}
+            {confirmClear ? '⚠ Confirm: clear session memory' : 'Clear session memory'}
           </button>
           {confirmClear && (
             <button
@@ -325,7 +324,7 @@ export function OracleSettingsPanel({
               onClick={() => setConfirmClear(false)}
               className="w-full mt-1.5 text-xs text-gray-600 hover:text-white transition-colors py-1"
             >
-              Annulla
+              Cancel
             </button>
           )}
         </div>

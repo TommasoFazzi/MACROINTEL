@@ -3,59 +3,59 @@
 const INTENT_TYPES = [
   {
     key: 'factual',
-    label: 'Fattuale',
+    label: 'Factual',
     icon: '📰',
-    desc: 'Notizie, eventi recenti, dichiarazioni',
+    desc: 'Recent events, news, declarations',
     borderColor: 'border-blue-500/30 hover:border-blue-500/50',
-    example: 'Cosa è successo in Ucraina negli ultimi 7 giorni?',
+    example: 'What happened in Ukraine in the last 7 days?',
   },
   {
     key: 'analytical',
-    label: 'Analitico',
+    label: 'Analytical',
     icon: '📊',
-    desc: 'Trend, statistiche, conteggi',
+    desc: 'Trends, statistics, counts',
     borderColor: 'border-yellow-500/30 hover:border-yellow-500/50',
-    example: 'Quanti articoli sulla Cina negli ultimi 30 giorni?',
+    example: 'How many articles about China in the last 30 days?',
   },
   {
     key: 'narrative',
-    label: 'Narrativo',
+    label: 'Narrative',
     icon: '🕸',
-    desc: 'Evoluzione storyline e reti narrative',
+    desc: 'Storyline evolution and narrative networks',
     borderColor: 'border-purple-500/30 hover:border-purple-500/50',
-    example: 'Come si è evoluta la narrativa sul conflitto israeliano?',
+    example: 'How has the narrative on the Israeli conflict evolved?',
   },
   {
     key: 'market',
-    label: 'Mercato',
+    label: 'Market',
     icon: '📈',
-    desc: 'Segnali trading, ticker, macro',
+    desc: 'Trading signals, tickers, macro',
     borderColor: 'border-green-500/30 hover:border-green-500/50',
-    example: 'Mostrami i segnali BUY sulla difesa europea',
+    example: 'Show me BUY signals on European defense',
   },
   {
     key: 'comparative',
-    label: 'Comparativo',
+    label: 'Comparative',
     icon: '⚖',
-    desc: 'Confronti multi-asse, entità o periodi',
+    desc: 'Multi-axis comparisons, entities or periods',
     borderColor: 'border-pink-500/30 hover:border-pink-500/50',
-    example: 'Confronta la copertura di Cina vs USA negli ultimi 3 mesi',
+    example: 'Compare China vs USA coverage over the last 3 months',
   },
   {
     key: 'overview',
-    label: 'Panoramica',
+    label: 'Overview',
     icon: '🌐',
-    desc: 'Profilo geopolitico completo di un paese',
+    desc: 'Full geopolitical profile of a country',
     borderColor: 'border-teal-500/30 hover:border-teal-500/50',
-    example: "Panoramica geopolitica dell'Iran",
+    example: 'Geopolitical overview of Iran',
   },
 ];
 
 const QUICK_EXAMPLES = [
-  "Cosa succede in Ucraina questa settimana?",
-  "Segnali BUY sulla difesa europea",
-  "Panoramica geopolitica Iran",
-  "Confronta Russia vs Cina negli ultimi 60 giorni",
+  'What is happening in Ukraine this week?',
+  'BUY signals on European defense',
+  'Geopolitical overview of Iran',
+  'Compare Russia vs China over the last 60 days',
 ];
 
 export function OracleEmptyState({ onQuery }: { onQuery: (q: string) => void }) {
@@ -66,7 +66,7 @@ export function OracleEmptyState({ onQuery }: { onQuery: (q: string) => void }) 
         <div className="text-[#FF6B35] text-xl font-bold tracking-tight mb-1">◆ Oracle</div>
         <div className="text-white/60 text-sm">Intelligence Query Engine</div>
         <div className="text-gray-600 text-xs mt-2 max-w-xs leading-relaxed">
-          Analisi geopolitica e finanziaria RAG-augmented su database proprietario
+          RAG-augmented geopolitical and financial analysis on proprietary database
         </div>
       </div>
 
@@ -89,7 +89,7 @@ export function OracleEmptyState({ onQuery }: { onQuery: (q: string) => void }) 
       {/* Quick examples */}
       <div className="w-full max-w-2xl">
         <div className="text-xs text-gray-600 mb-2 text-center uppercase tracking-wider">
-          Esempi rapidi
+          Quick examples
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {QUICK_EXAMPLES.map((q) => (

@@ -27,7 +27,7 @@ export function OracleHeader({
         <span className="text-white font-semibold text-base tracking-tight">Oracle</span>
         {!isKeyActive && (
           <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 animate-pulse">
-            key mancante
+            key missing
           </span>
         )}
       </div>
@@ -50,7 +50,7 @@ export function OracleHeader({
           type="button"
           onClick={onGuide}
           className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-all"
-          title="Guida Oracle"
+          title="Oracle Guide"
         >
           <HelpCircle size={16} />
         </button>
@@ -59,7 +59,7 @@ export function OracleHeader({
           type="button"
           onClick={onSettings}
           className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-all"
-          title="Impostazioni"
+          title="Settings"
         >
           <Settings size={16} />
         </button>
@@ -68,10 +68,10 @@ export function OracleHeader({
           type="button"
           onClick={onNewSession}
           className="flex items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:border-white/20 text-xs transition-all"
-          title="Nuova sessione"
+          title="New session"
         >
           <Plus size={13} />
-          <span className="hidden sm:inline">Nuova sessione</span>
+          <span className="hidden sm:inline">New session</span>
         </button>
       </div>
     </header>

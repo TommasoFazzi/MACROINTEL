@@ -33,9 +33,9 @@ export function OracleSourcesSidebar({
   return (
     <div className="w-72 border-l border-white/10 flex-col overflow-hidden hidden md:flex flex-shrink-0">
       <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Fonti</h3>
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sources</h3>
         {sources.length > 0 && (
-          <span className="text-xs text-gray-600">{sources.length} risultati</span>
+          <span className="text-xs text-gray-600">{sources.length} result{sources.length !== 1 ? 's' : ''}</span>
         )}
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-3">
@@ -51,7 +51,7 @@ export function OracleSourcesSidebar({
           ))
         ) : (
           <div className="text-center text-gray-600 text-xs pt-8 leading-relaxed px-2">
-            Le fonti e le citazioni compariranno dopo la prima risposta.
+            Sources and citations will appear after the first response.
           </div>
         )}
       </div>
