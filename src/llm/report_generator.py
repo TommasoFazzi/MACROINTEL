@@ -21,6 +21,7 @@ from ..storage.database import DatabaseManager
 from ..nlp.processing import NLPProcessor
 from ..utils.logger import get_logger
 from .schemas import IntelligenceReportMVP, IntelligenceReport, MacroAnalysisResult, MacroDashboardItem
+from .tools.rag_tool import apply_authority_rerank
 
 # Financial Intelligence v2 - Lazy import to avoid circular dependencies
 def get_valuation_engine():
@@ -1517,6 +1518,15 @@ Respond with JSON only:"""
                 top_k=self.reranking_top_k * len(rag_queries)  # Scale by number of queries
             )
 
+        # Step 2e: Authority-weighted re-ranking (alpha=0.15 — tiebreaker, non dominant)
+        # Uses rerank_score when cross-encoder ran, similarity otherwise.
+        # Min-max normalization handles cross-encoder logits (can be negative).
+        if unique_rag_results:
+            authority_score_field = "rerank_score" if self.enable_reranking else "similarity"
+            unique_rag_results = apply_authority_rerank(
+                unique_rag_results, score_field=authority_score_field
+            )
+
         logger.info(f"✓ Final RAG context: {len(unique_rag_results)} unique historical chunks")
 
         # Step 2.5: Fetch narrative storyline context
@@ -1647,6 +1657,14 @@ If no storyline data is provided, skip this section entirely.
 - When information is unverified or conflicting, use confidence indicators (High/Medium/Low) and cite multiple sources
 - Never use generic language like "the sector could benefit" - always specify which companies, why, with what catalyst, and in what timeframe
 - REMINDER: All section titles use `##` (H2), all subsection titles use `###` (H3). No bold-only titles.
+
+**CREDIBILITÀ DELLE FONTI:**
+I chunk contengono metadati `Autorevolezza: X.X/5.0`. Usali come background knowledge nel ragionamento analitico — non esporli nel testo finale. Tier di riferimento:
+- **5.0** (RAND, CSIS, RUSI, Chatham House, CFR, GAO/CRS, ECB): massima autorevolezza analitica, revisione editoriale rigorosa.
+- **4.0–4.5** (ECFR, ISW, Bellingcat, Janes, War on the Rocks, The Economist, Defense News, Krebs on Security, SpaceNews, ecc.): alta affidabilità — verifica se in contrasto con tier 5.0.
+- **3.5** (Al Jazeera, Middle East Eye, Jerusalem Post, Il Sole 24 ORE, Americas Quarterly, ecc.): adeguate per copertura geografica specifica, incrociale con fonti tier 4.0+.
+- **3.0** (Kommersant e media di Stato in contesti sensibili): trattare come prospettiva da verificare, non fonte primaria.
+Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, segnala il contrasto e privilegia il tier più alto nelle conclusioni. Se una fonte a bassa autorevolezza è l'unica a segnalare un evento critico, includila con una nota "da confermare" — non sopprimerla.
 
 ---
 {recent_articles_text}

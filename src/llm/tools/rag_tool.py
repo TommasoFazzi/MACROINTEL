@@ -127,6 +127,68 @@ def apply_time_decay(
     return results
 
 
+def apply_authority_rerank(
+    results: List[Dict],
+    score_field: str,
+    authority_alpha: float = 0.15,
+) -> List[Dict]:
+    """
+    Re-rank results using a normalized weighted sum of relevance and source authority.
+
+    final_score = (1 - alpha) * norm_relevance + alpha * norm_authority
+
+    Both dimensions are normalized to [0, 1] before combining, so absolute score
+    quality is preserved (a chunk at 0.75 similarity is meaningfully different from
+    one at 0.51, unlike pure rank-based RRF which treats them equally).
+
+    Args:
+        results: Chunks already sorted by decayed score (output of apply_time_decay).
+        score_field: Name of the relevance score field (e.g. "similarity",
+            "fusion_score", "fts_score"). Normalized within the batch to [0, 1].
+        authority_alpha: Weight of the authority component (default 0.15 → authority
+            is 15% of final score). Authority acts as a tiebreaker for similar
+            relevance scores, not a dominant factor.
+
+    Returns:
+        Results re-sorted by authority_final_score descending.
+        Each result gains: authority_final_score, norm_relevance, norm_authority.
+
+    Notes:
+        - norm_relevance = score / max_score_in_batch (preserves absolute quality)
+        - norm_authority = authority_score / 5.0 (maps 1–5 → 0.2–1.0)
+        - Chunks with authority_score=None (pre-migration-024 articles) default to
+          3.0/5.0 = 0.6 — the neutral mid-point of the authority scale.
+        - High-relevance low-authority chunks (e.g. sole breaking-news source) are
+          preserved: their high norm_relevance outweighs the authority penalty.
+    """
+    if not results:
+        return results
+
+    # Normalization: floor = min(0, min_score_in_batch)
+    #   • For non-negative scores (similarity 0–1, fusion_score):
+    #     floor=0 → behaves as score/max_score, preserving absolute values
+    #     (0.82 similarity stays near 1.0, not collapsed to 0.0)
+    #   • For cross-encoder logits (can be negative, e.g. -10 to +5):
+    #     floor=min_score → maps the full range to [0, 1]
+    raw_scores = [r.get(score_field, 0) for r in results]
+    floor = min(0.0, min(raw_scores))
+    max_score = max(raw_scores)
+    score_range = (max_score - floor) or 1.0
+
+    for r in results:
+        norm_rel = (r.get(score_field, 0) - floor) / score_range
+        # authority: 1.0–5.0 → 0.2–1.0; None → 0.6 (neutral, equivalent to score 3.0)
+        auth = r.get("authority_score")
+        norm_auth = float(auth) / 5.0 if auth is not None else 0.6
+
+        r["norm_relevance"] = round(norm_rel, 4)
+        r["norm_authority"] = round(norm_auth, 4)
+        r["authority_final_score"] = (1 - authority_alpha) * norm_rel + authority_alpha * norm_auth
+
+    results.sort(key=lambda x: x.get("authority_final_score", 0), reverse=True)
+    return results
+
+
 class RAGTool(BaseTool):
     name = "rag_search"
     description = (
@@ -282,7 +344,11 @@ class RAGTool(BaseTool):
                 )
                 # Apply floor, but fallback to top results if floor eliminates everything
                 filtered = [c for c in chunks if c.get(score_field, 0) >= MIN_DECAYED_SCORE]
-                chunks = (filtered if filtered else chunks)[:top_k]
+                chunks = filtered if filtered else chunks
+
+                # Authority-weighted re-ranking: normalized weighted sum (alpha=0.15)
+                chunks = apply_authority_rerank(chunks, score_field=score_field)
+                chunks = chunks[:top_k]
 
             if reports:
                 reports = apply_time_decay(
@@ -423,10 +489,14 @@ class RAGTool(BaseTool):
                 else (str(pub_date)[:10] if pub_date else "N/A")
             )
             score_line = self._score_line(chunk, chunk_score_field)
+            auth = chunk.get("authority_score")
+            authority_line = f"Autorevolezza: {float(auth):.1f}/5.0\n" if auth is not None else ""
             doc = (
                 f"\n<DOCUMENTO_{j}>\n"
                 f"Tipo: ARTICOLO\nTitolo: {chunk.get('title', 'N/A')}\n"
-                f"Fonte: {chunk.get('source', 'Unknown')}\nData: {date_str}\n"
+                f"Fonte: {chunk.get('source', 'Unknown')}\n"
+                f"{authority_line}"
+                f"Data: {date_str}\n"
                 f"{score_line}\n\n"
                 f"[INIZIO_TESTO]\n{chunk.get('content', '')}\n[FINE_TESTO]\n"
                 f"</DOCUMENTO_{j}>\n"
