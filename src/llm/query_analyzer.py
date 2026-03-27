@@ -150,12 +150,15 @@ OUTPUT FORMAT: Valid JSON matching the schema. Use null for empty optional field
 
 JSON OUTPUT:"""
 
-    def analyze(self, query: str) -> Dict[str, Any]:
+    def analyze(self, query: str, reference_date: Optional[str] = None) -> Dict[str, Any]:
         """
         Analyze query and extract structured filters.
 
         Args:
             query: User's natural language query
+            reference_date: Optional ISO date string (YYYY-MM-DD) to use as "today".
+                            If None, uses the actual current date. Inject a fixed date
+                            in tests to make temporal assertions deterministic.
 
         Returns:
             Dictionary with:
@@ -164,7 +167,7 @@ JSON OUTPUT:"""
             - original_query: str
             - error: str (if failed)
         """
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_date = reference_date if reference_date else datetime.now().strftime("%Y-%m-%d")
 
         try:
             prompt = self._build_prompt(query, current_date)

@@ -1,0 +1,36 @@
+name: Evals Fast
+
+# Fast evals: LLM mockato, nessuna chiamata API reale.
+# Testa la logica di parsing/grading, NON la qualità del modello.
+# Eseguito su ogni push e PR — non ha costi API.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  evals-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run fast evals (LLM mockato)
+        env:
+          GEMINI_API_KEY: "ci-fake-key-for-unit-tests"
+        run: |
+          pytest tests/evals/ -m "eval_fast" -v --tb=short

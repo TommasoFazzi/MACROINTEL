@@ -15,6 +15,10 @@ responses==0.24.1          # Mock HTTP requests
 # Utilities
 freezegun==1.4.0           # Mock datetime
 
+# Evals framework
+openai>=1.30.0             # LLM-as-judge (gpt-4o-mini, vendor diverso da Gemini per evitare self-serving bias)
+pytest-json-report>=1.5.0  # JSON output per slow evals nightly + regression check
+
 # Code quality (opzionali, utili per CI/CD futuro)
 # black==24.1.1            # Code formatter
 # flake8==7.0.0            # Linter

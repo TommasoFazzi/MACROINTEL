@@ -1,0 +1,145 @@
+name: Evals Nightly
+
+# Slow evals: LLM reale (Gemini + OpenAI judge).
+# Misura qualità del modello su eval set blindato (split=eval).
+# Confronta i risultati con la baseline per rilevare regressioni.
+# Eseguito ogni notte alle 06:00 UTC e manualmente da Actions tab.
+#
+# Costo stimato: <$0.02/notte
+#   ~50 chiamate Gemini (P1+P2+P3) + ~0 chiamate OpenAI (judge attivo da Fase 2)
+#
+# Prima run (baseline placeholder o assente):
+#   → confronto saltato, risultati committati come nuova baseline [skip ci]
+# Run successive:
+#   → confronto vs baseline, fallisce se drop > 5% su qualsiasi metrica
+#   → baseline NON aggiornata automaticamente (solo aggiornamento manuale accettato)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # 06:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write  # necessario per committare la baseline alla prima run
+
+jobs:
+  evals-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run slow evals (LLM reale, eval split only)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          pytest tests/evals/ -m "eval_slow" -v --tb=short \
+            --json-report --json-report-file=eval_results_raw.json
+
+      - name: Show collected metrics
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          from pathlib import Path
+
+          results_path = Path("eval_results.json")
+          if not results_path.exists():
+              print("WARNING: eval_results.json not found — no metrics were written by tests.")
+          else:
+              results = json.loads(results_path.read_text())
+              print("Metrics collected:")
+              for k, v in results.items():
+                  if not k.startswith("_"):
+                      print(f"  {k}: {v}")
+          EOF
+
+      - name: Regression check vs baseline
+        run: |
+          python3 tests/compare_baselines.py \
+            eval_results.json \
+            tests/evals/baselines/latest.json \
+            --threshold 0.05
+
+      - name: Initialize baseline on first run
+        # Eseguito solo se latest.json è il placeholder (tutti 0.0) o non esiste.
+        # Copia i risultati attuali come baseline e committa sul repo.
+        # Nelle run successive la baseline ha valori reali → questo step è no-op.
+        run: |
+          python3 - <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+
+          baseline_path = Path("tests/evals/baselines/latest.json")
+          results_path = Path("eval_results.json")
+
+          if not results_path.exists():
+              print("No eval_results.json — cannot initialize baseline.")
+              sys.exit(0)
+
+          # Determina se la baseline è il placeholder iniziale o assente
+          is_first_run = not baseline_path.exists()
+          if not is_first_run:
+              baseline = json.loads(baseline_path.read_text())
+              numeric_vals = []
+              for k, v in baseline.items():
+                  if k in ("_meta",):
+                      continue
+                  if isinstance(v, (int, float)):
+                      numeric_vals.append(v)
+                  elif isinstance(v, dict):
+                      numeric_vals.extend(vv for vv in v.values() if isinstance(vv, (int, float)))
+              is_first_run = not numeric_vals or all(abs(v) < 0.01 for v in numeric_vals)
+
+          if is_first_run:
+              results = json.loads(results_path.read_text())
+              # Aggiungi metadati alla baseline
+              results["_meta"] = {
+                  "note": "Aggiornare manualmente dopo ogni miglioramento accettato ai prompt.",
+                  "update_instructions": "git commit -m 'chore: update eval baseline after prompt improvement'"
+              }
+              baseline_path.write_text(json.dumps(results, indent=2))
+              # Segnala al passo successivo che serve committare
+              Path(".baseline_needs_commit").write_text("1")
+              print("First run: baseline initialized from current results.")
+          else:
+              print("Baseline already populated — skipping auto-init.")
+          EOF
+
+      - name: Commit initialized baseline
+        run: |
+          if [ -f .baseline_needs_commit ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add tests/evals/baselines/latest.json
+            git commit -m "chore: initialize eval baseline from first nightly run [skip ci]"
+            git push
+            echo "Baseline committed to repository."
+          else
+            echo "No baseline commit needed."
+          fi
+
+      - name: Upload eval results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: |
+            eval_results.json
+            eval_results_raw.json
+          retention-days: 90

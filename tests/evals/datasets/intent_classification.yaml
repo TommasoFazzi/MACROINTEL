@@ -1,0 +1,191 @@
+# Intent Classification Eval Dataset
+# 35 casi: 5 per ognuna delle 7 classi intent
+#
+# split: eval  → casi blindati, MAI usare per prompt engineering
+# split: dev   → usabili per migliorare i prompt, non contano nelle metriche CI
+#
+# Target: accuracy >= 85% sui casi eval (21 casi)
+# Metriche: accuracy aggregata + precision/recall per classe
+
+# ─── FACTUAL ───────────────────────────────────────────────────────────────
+- id: ic_f_001
+  query: "Cosa sta succedendo in Ucraina negli ultimi 7 giorni?"
+  expected_intent: "factual"
+  split: eval
+  notes: "Recente, entità geografica chiara, frame temporale esplicito"
+
+- id: ic_f_002
+  query: "Quali sono gli ultimi sviluppi sul conflitto in Sudan?"
+  expected_intent: "factual"
+  split: eval
+
+- id: ic_f_003
+  query: "Cosa è successo in Iran questa settimana?"
+  expected_intent: "factual"
+  split: eval
+
+- id: ic_f_004
+  query: "Notizie recenti sulla Corea del Nord"
+  expected_intent: "factual"
+  split: dev
+
+- id: ic_f_005
+  query: "Aggiornamenti sulla situazione in Afghanistan"
+  expected_intent: "factual"
+  split: dev
+
+# ─── ANALYTICAL ────────────────────────────────────────────────────────────
+- id: ic_a_001
+  query: "Analizza le implicazioni strategiche del ritiro USA dall'Afghanistan"
+  expected_intent: "analytical"
+  split: eval
+
+- id: ic_a_002
+  query: "Quali sono le conseguenze geopolitiche dell'allargamento NATO verso est?"
+  expected_intent: "analytical"
+  split: eval
+
+- id: ic_a_003
+  query: "Come influisce la politica energetica russa sulla sicurezza europea?"
+  expected_intent: "analytical"
+  split: eval
+
+- id: ic_a_004
+  query: "Spiega le dinamiche di potere nel Mar Cinese Meridionale"
+  expected_intent: "analytical"
+  split: dev
+
+- id: ic_a_005
+  query: "Quali sono le implicazioni dell'accordo AUKUS per l'equilibrio in Asia-Pacifico?"
+  expected_intent: "analytical"
+  split: dev
+
+# ─── NARRATIVE ─────────────────────────────────────────────────────────────
+- id: ic_n_001
+  query: "Come si è evoluta la narrativa sul conflitto a Gaza negli ultimi mesi?"
+  expected_intent: "narrative"
+  split: eval
+
+- id: ic_n_002
+  query: "Traccia l'evoluzione della crisi nucleare iraniana nel tempo"
+  expected_intent: "narrative"
+  split: eval
+
+- id: ic_n_003
+  query: "Segui lo sviluppo della storyline sul conflitto in Myanmar"
+  expected_intent: "narrative"
+  split: eval
+
+- id: ic_n_004
+  query: "Come è cambiata la situazione in Venezuela nel corso degli anni?"
+  expected_intent: "narrative"
+  split: dev
+
+- id: ic_n_005
+  query: "Racconta l'evoluzione delle relazioni tra USA e Arabia Saudita"
+  expected_intent: "narrative"
+  split: dev
+
+# ─── MARKET ────────────────────────────────────────────────────────────────
+- id: ic_m_001
+  query: "Impatto sui mercati finanziari delle tensioni tra Taiwan e Cina"
+  expected_intent: "market"
+  split: eval
+
+- id: ic_m_002
+  query: "Come reagiscono i mercati alle nuove sanzioni contro la Russia?"
+  expected_intent: "market"
+  split: eval
+
+- id: ic_m_003
+  query: "Effetti sul prezzo del petrolio del conflitto in Medio Oriente"
+  expected_intent: "market"
+  split: eval
+
+- id: ic_m_004
+  query: "Cosa succede all'euro durante la crisi energetica europea?"
+  expected_intent: "market"
+  split: dev
+
+- id: ic_m_005
+  query: "Impatto sui bond dei tassi Fed in contesto di tensioni geopolitiche"
+  expected_intent: "market"
+  split: dev
+
+# ─── COMPARATIVE ───────────────────────────────────────────────────────────
+- id: ic_c_001
+  query: "Confronta il rapporto di ieri con quello di due settimane fa"
+  expected_intent: "comparative"
+  split: eval
+
+- id: ic_c_002
+  query: "Quali sono le differenze tra l'analisi di lunedì e quella di oggi?"
+  expected_intent: "comparative"
+  split: eval
+
+- id: ic_c_003
+  query: "Come è cambiata la valutazione del rischio rispetto al mese scorso?"
+  expected_intent: "comparative"
+  split: eval
+
+- id: ic_c_004
+  query: "Confronta i due ultimi report settimanali pubblicati"
+  expected_intent: "comparative"
+  split: dev
+
+- id: ic_c_005
+  query: "Cosa è cambiato nelle previsioni di rischio dal primo all'ultimo report?"
+  expected_intent: "comparative"
+  split: dev
+
+# ─── TICKER ────────────────────────────────────────────────────────────────
+- id: ic_t_001
+  query: "Cosa sta succedendo con NVDA in relazione alle tensioni tech USA-Cina?"
+  expected_intent: "ticker"
+  split: eval
+
+- id: ic_t_002
+  query: "Analisi di LMT in relazione ai contratti difesa NATO"
+  expected_intent: "ticker"
+  split: eval
+
+- id: ic_t_003
+  query: "Come si muove XOM con il prezzo del petrolio nei conflitti mediorientali?"
+  expected_intent: "ticker"
+  split: eval
+
+- id: ic_t_004
+  query: "Notizie su RTX e i nuovi contratti con il Pentagono"
+  expected_intent: "ticker"
+  split: dev
+
+- id: ic_t_005
+  query: "Situazione di BA dopo le notizie sulla sicurezza Boeing"
+  expected_intent: "ticker"
+  split: dev
+
+# ─── OVERVIEW ──────────────────────────────────────────────────────────────
+- id: ic_o_001
+  query: "Dammi un quadro generale della situazione geopolitica attuale"
+  expected_intent: "overview"
+  split: eval
+
+- id: ic_o_002
+  query: "Panoramica dei principali rischi geopolitici questa settimana"
+  expected_intent: "overview"
+  split: eval
+
+- id: ic_o_003
+  query: "Cosa sta succedendo nel mondo in questo momento a livello geopolitico?"
+  expected_intent: "overview"
+  split: eval
+
+- id: ic_o_004
+  query: "Briefing generale sulla situazione globale"
+  expected_intent: "overview"
+  split: dev
+
+- id: ic_o_005
+  query: "Riassumi il contesto geopolitico e di sicurezza internazionale attuale"
+  expected_intent: "overview"
+  split: dev

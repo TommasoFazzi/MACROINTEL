@@ -1,0 +1,115 @@
+# Query Analyzer Eval Dataset
+# 10 casi che testano l'estrazione di filtri strutturati da query in linguaggio naturale.
+#
+# IMPORTANTE: current_date è SEMPRE incluso e viene passato come reference_date
+# al metodo analyze() — rende i test deterministici indipendentemente da quando girano.
+#
+# split: eval  → casi blindati per CI
+# split: dev   → usabili per prompt engineering
+#
+# Target: field precision >= 90% per campo su casi eval
+# Campi valutati: start_date, end_date, categories, gpe_filter
+
+# ─── DATE RELATIVE ─────────────────────────────────────────────────────────
+- id: qa_001
+  query: "Articoli sull'Iran degli ultimi 7 giorni"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: "2026-03-20"
+    end_date: "2026-03-27"
+    gpe_filter_contains: ["Iran"]
+    categories: null
+
+- id: qa_002
+  query: "Notizie di difesa europee di questa settimana"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: "2026-03-23"   # Lunedì della settimana corrente
+    end_date: "2026-03-27"
+    categories: ["DEFENSE"]
+    gpe_filter: null
+    # NON testiamo gpe_filter_contains: ["Europe"] — il modello estrae
+    # paesi specifici (Germany, France...) non entità regionali.
+
+- id: qa_003
+  query: "Tutto quello che sappiamo sulla guerra commerciale USA-Cina"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: null    # Nessun frame temporale → null
+    end_date: null
+    gpe_filter_contains: ["United States", "China"]
+    categories: ["ECONOMY"]
+
+- id: qa_004
+  query: "Report sul cyber nelle ultime 2 settimane"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: "2026-03-13"
+    end_date: "2026-03-27"
+    categories: ["CYBER"]
+    gpe_filter: null
+
+- id: qa_005
+  query: "Analisi energetica Russia-Europa del mese scorso"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: "2026-02-01"
+    end_date: "2026-02-28"
+    gpe_filter_contains: ["Russia"]
+    categories: ["ENERGY"]
+
+# ─── CASI SENZA DATE ───────────────────────────────────────────────────────
+- id: qa_006
+  query: "Situazione geopolitica in Medio Oriente"
+  current_date: "2026-03-27"
+  split: eval
+  expected:
+    start_date: null
+    end_date: null
+    categories: null   # "GEOPOLITICS" non è una categoria del sistema — null atteso
+    gpe_filter: null   # "Middle East" non è un paese — il modello potrebbe estrarre null
+
+- id: qa_007
+  query: "Articoli sull'energia degli ultimi 30 giorni"
+  current_date: "2026-03-27"
+  split: dev
+  expected:
+    start_date: "2026-02-25"
+    end_date: "2026-03-27"
+    categories: ["ENERGY"]
+    gpe_filter: null
+
+- id: qa_008
+  query: "Notizie sulla Corea del Nord da gennaio"
+  current_date: "2026-03-27"
+  split: dev
+  expected:
+    start_date: "2026-01-01"
+    end_date: null
+    gpe_filter_contains: ["North Korea"]
+    categories: null
+
+- id: qa_009
+  query: "Briefing difesa e cyber questa settimana"
+  current_date: "2026-03-27"
+  split: dev
+  expected:
+    start_date: "2026-03-23"
+    end_date: "2026-03-27"
+    categories: ["DEFENSE", "CYBER"]
+    gpe_filter: null
+
+- id: qa_010
+  query: "Geopolitica globale senza filtri temporali"
+  current_date: "2026-03-27"
+  split: dev
+  expected:
+    start_date: null
+    end_date: null
+    categories: null
+    gpe_filter: null

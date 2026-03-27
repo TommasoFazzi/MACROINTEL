@@ -1,0 +1,173 @@
+# Relevance Filter Eval Dataset
+# 20 casi: 10 RELEVANT + 10 NOT_RELEVANT
+#
+# split: eval  → casi blindati per CI
+# split: dev   → usabili per prompt engineering
+#
+# Target: accuracy >= 90%, recall >= 0.95
+# Il recall è la metrica critica: falsi negativi (articoli rilevanti scartati)
+# degradano il corpus e sono difficili da recuperare.
+
+# ─── RELEVANT ──────────────────────────────────────────────────────────────
+- id: rf_001
+  title: "NATO expands eastern flank with new battalions"
+  source: "Reuters"
+  text_preview: "NATO announced the deployment of additional multinational battalions to Poland and the Baltic states, reinforcing its eastern flank amid continued tensions with Russia."
+  expected: "RELEVANT"
+  category: "defense"
+  split: eval
+
+- id: rf_002
+  title: "China imposes new semiconductor export restrictions"
+  source: "Bloomberg"
+  text_preview: "Beijing announced sweeping new controls on rare earth and semiconductor exports, escalating the technology decoupling with the United States."
+  expected: "RELEVANT"
+  category: "tech_economy"
+  split: eval
+
+- id: rf_003
+  title: "Iran nuclear talks collapse as IAEA inspectors expelled"
+  source: "FT"
+  text_preview: "Nuclear negotiations in Vienna ended without agreement after Iran expelled IAEA inspectors, raising fears of rapid uranium enrichment toward weapons-grade levels."
+  expected: "RELEVANT"
+  category: "geopolitics"
+  split: eval
+
+- id: rf_004
+  title: "Russia cuts gas supplies to three EU member states"
+  source: "Reuters"
+  text_preview: "Gazprom confirmed it has halted natural gas deliveries to Hungary, Slovakia and Austria citing payment disputes, raising energy security concerns across Europe."
+  expected: "RELEVANT"
+  category: "energy"
+  split: eval
+
+- id: rf_005
+  title: "US cyber command attributes major grid attack to state actor"
+  source: "WSJ"
+  text_preview: "American officials attributed a series of intrusions into power grid control systems to a foreign state-sponsored group, marking a significant escalation in cyber operations."
+  expected: "RELEVANT"
+  category: "cyber"
+  split: eval
+
+- id: rf_006
+  title: "Taiwan Strait tensions rise after military exercises"
+  source: "AP"
+  text_preview: "China conducted its largest naval exercises near Taiwan in years, with aircraft carriers and guided-missile destroyers operating within Taiwan's air defence identification zone."
+  expected: "RELEVANT"
+  category: "geopolitics"
+  split: dev
+
+- id: rf_007
+  title: "SpaceX Starlink disrupted military communications in conflict zones"
+  source: "Politico"
+  text_preview: "A Pentagon report reveals that commercial satellite networks are becoming critical and vulnerable infrastructure in modern warfare."
+  expected: "RELEVANT"
+  category: "space_defense"
+  split: dev
+
+- id: rf_008
+  title: "Saudi Arabia joins BRICS, shifting petrodollar dynamics"
+  source: "Bloomberg"
+  text_preview: "Saudi Arabia's formal accession to the BRICS bloc could accelerate efforts to settle oil trades in non-dollar currencies, a move with significant implications for US financial dominance."
+  expected: "RELEVANT"
+  category: "geopolitics_finance"
+  split: dev
+
+- id: rf_009
+  title: "EU approves new sanctions package against Belarus"
+  source: "Reuters"
+  text_preview: "The European Union adopted its twelfth sanctions package targeting Belarusian officials and entities linked to the Lukashenko regime's crackdown on civil society."
+  expected: "RELEVANT"
+  category: "geopolitics"
+  split: dev
+
+- id: rf_010
+  title: "Critical lithium supply chain concentrated in Chile and Argentina raises strategic concerns"
+  source: "FT"
+  text_preview: "Western governments are scrambling to diversify lithium sourcing after a new study showed 78% of battery-grade lithium production remains concentrated in two South American countries."
+  expected: "RELEVANT"
+  category: "supply_chain"
+  split: dev
+
+# ─── NOT_RELEVANT ──────────────────────────────────────────────────────────
+- id: rf_011
+  title: "Juventus wins Serie A title in dramatic final-day victory"
+  source: "Gazzetta dello Sport"
+  text_preview: "Juventus Football Club secured the Italian championship for the third consecutive year after a 2-1 victory over Inter Milan on the final day of the season."
+  expected: "NOT_RELEVANT"
+  category: "sports"
+  split: eval
+
+- id: rf_012
+  title: "Best Italian pasta recipes for summer 2026"
+  source: "La Repubblica"
+  text_preview: "Our food editor selects the top ten pasta dishes to try this summer, from classic carbonara to creative seafood linguine variations perfect for the beach."
+  expected: "NOT_RELEVANT"
+  category: "food"
+  split: eval
+
+- id: rf_013
+  title: "Tesla unveils new Model S refresh with improved range"
+  source: "TechCrunch"
+  text_preview: "Elon Musk unveiled the updated Model S at a California event, announcing improved battery range and a redesigned interior aimed at luxury EV buyers."
+  expected: "NOT_RELEVANT"
+  category: "consumer_tech"
+  split: eval
+  notes: "Consumer tech, non geopolitics. Tesla geopolitically sensitive only when discussing factory locations or sanctions."
+
+- id: rf_014
+  title: "Cannes Film Festival: top 10 movies to watch this year"
+  source: "Variety"
+  text_preview: "The Cannes Film Festival returns with a star-studded lineup including new films from auteurs across Europe and Asia competing for the Palme d'Or."
+  expected: "NOT_RELEVANT"
+  category: "entertainment"
+  split: eval
+
+- id: rf_015
+  title: "New hiking trails open in the Dolomites for summer season"
+  source: "Corriere della Sera"
+  text_preview: "The Trentino tourism board announced the opening of 45 new marked hiking routes in the Dolomites, expected to draw 300,000 visitors over the summer."
+  expected: "NOT_RELEVANT"
+  category: "tourism"
+  split: eval
+
+- id: rf_016
+  title: "Olympic Games boost Greek economy by €2.3 billion"
+  source: "FT"
+  text_preview: "The Athens Summer Olympics generated €2.3 billion in tourism and infrastructure spending, according to a new government report on long-term economic impacts."
+  expected: "NOT_RELEVANT"
+  category: "edge_case_economic_sports"
+  split: eval
+  notes: "Edge case: economico ma sport. Deve essere NOT_RELEVANT — non riguarda geopolitica, difesa o rischio sistemico."
+
+- id: rf_017
+  title: "Apple reports record iPhone sales in Q1 2026"
+  source: "Bloomberg"
+  text_preview: "Apple Inc. reported record quarterly iPhone revenue of $98 billion, driven by strong demand in emerging markets and the success of the iPhone 17 Pro lineup."
+  expected: "NOT_RELEVANT"
+  category: "consumer_tech"
+  split: dev
+
+- id: rf_018
+  title: "Serie A transfer window: top 20 signings of the summer"
+  source: "Sky Sport"
+  text_preview: "We rank the most impactful transfers in Italian football this summer, from Napoli's new striker to Inter's defensive reinforcements."
+  expected: "NOT_RELEVANT"
+  category: "sports"
+  split: dev
+
+- id: rf_019
+  title: "Taylor Swift announces European stadium tour dates"
+  source: "Billboard"
+  text_preview: "Pop superstar Taylor Swift confirmed a 28-date European leg of her Eras Tour, including Milan, London, Paris and Berlin, starting in May 2027."
+  expected: "NOT_RELEVANT"
+  category: "entertainment"
+  split: dev
+
+- id: rf_020
+  title: "Best budget airlines for summer travel in Europe"
+  source: "Lonely Planet"
+  text_preview: "We compare the top low-cost carriers operating in Europe this summer, rating routes, punctuality, and baggage policy to help you plan your holiday."
+  expected: "NOT_RELEVANT"
+  category: "travel_consumer"
+  split: dev

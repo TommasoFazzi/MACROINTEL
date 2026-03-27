@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "note": "Aggiornare manualmente dopo ogni miglioramento accettato ai prompt.",
+    "update_instructions": "Eseguire i slow evals, verificare i risultati, poi aggiornare questo file con un commit esplicito: git commit -m 'chore: update eval baseline after prompt improvement'",
+    "initialized": "placeholder — popolare dopo il primo run slow eval reale"
+  },
+  "intent_classification_accuracy": 0.0,
+  "intent_classification_per_class": {
+    "factual":     {"precision": 0.0, "recall": 0.0},
+    "analytical":  {"precision": 0.0, "recall": 0.0},
+    "narrative":   {"precision": 0.0, "recall": 0.0},
+    "market":      {"precision": 0.0, "recall": 0.0},
+    "comparative": {"precision": 0.0, "recall": 0.0},
+    "ticker":      {"precision": 0.0, "recall": 0.0},
+    "overview":    {"precision": 0.0, "recall": 0.0}
+  },
+  "relevance_filter_accuracy": 0.0,
+  "relevance_filter_recall": 0.0,
+  "relevance_filter_f1": 0.0,
+  "query_analyzer_date_precision": 0.0,
+  "query_analyzer_category_precision": 0.0,
+  "query_analyzer_gpe_precision": 0.0
+}
