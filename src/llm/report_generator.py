@@ -1363,50 +1363,45 @@ Respond with JSON only:"""
 
     def _extract_bluf_from_text(self, text: str) -> str:
         """
-        Extract content for title generation: prefer H2/H3 section headings (specific to the day)
-        over the opening paragraph, which is usually boilerplate executive summary text.
-        Returns up to 5 H2/H3 headings joined, or falls back to the first real prose paragraph.
+        Extract a large chunk of report text for title generation.
+        Skips the H1 title line and collects up to 1800 chars of meaningful content
+        so the LLM has enough context to identify specific named events.
         """
         if not text:
             return ""
-        # Pass 1: collect H2/H3 headings (most specific, day-unique content)
-        headings = []
+        lines = []
+        total = 0
         for line in text.splitlines():
             stripped = line.strip()
-            if stripped.startswith('## ') or stripped.startswith('### '):
-                heading = stripped.lstrip('#').strip()
-                # Skip generic boilerplate headings
-                lower = heading.lower()
-                if any(skip in lower for skip in ('executive summary', 'strategic', 'investment', 'trade signal', 'macro', 'overview', 'key development', 'conclusion')):
-                    continue
-                headings.append(heading)
-                if len(headings) >= 5:
-                    break
-        if headings:
-            return ' | '.join(headings)[:400]
-        # Pass 2: fallback to first real prose paragraph
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
+            # Skip H1 (always the generic "Daily Intelligence Briefing" header)
+            if stripped.startswith('# '):
                 continue
-            if stripped.startswith('#') or stripped.startswith('---') or stripped.startswith('|') or stripped.startswith('*'):
+            if stripped.startswith('---'):
                 continue
             clean = stripped.replace('**', '').replace('*', '').strip()
-            if len(clean) > 40:
-                return clean[:300]
-        return ""
+            if not clean:
+                continue
+            lines.append(clean)
+            total += len(clean)
+            if total >= 1800:
+                break
+        return '\n'.join(lines)
 
     def _generate_report_title(self, report_date: str, focus_areas: list, bluf: str) -> str:
         """Generate a concise descriptive headline for the report using Gemini 2.0 Flash."""
         if not bluf and not focus_areas:
             return ""
-        themes = ", ".join(focus_areas[:3]) if focus_areas else "geopolitics"
         prompt = (
-            "You are an intelligence editor. Generate a concise, descriptive headline "
-            f"(maximum 80 characters) for a geopolitical intelligence briefing dated {report_date}.\n"
-            f"Key themes: {themes}\n"
-            f"Opening paragraph: {bluf[:250]}\n"
-            "Rules: return ONLY the headline text. No quotes, no trailing punctuation, no prefixes like 'Headline:'."
+            "You are an intelligence editor writing a headline for a daily geopolitical briefing.\n"
+            f"Date: {report_date}\n"
+            f"Report excerpt:\n{bluf[:1500]}\n\n"
+            "Task: Write a headline of maximum 80 characters that captures the MOST SPECIFIC event or development "
+            "in the excerpt — name actual countries, leaders, organizations, or conflicts involved.\n"
+            "AVOID generic phrases like 'Global Instability', 'Cyberwar', 'AI Race', 'Shifting Alliances', "
+            "'Geopolitical Tensions' unless paired with a specific named actor.\n"
+            "Good examples: 'Iran Strikes US Bases in Iraq; Israel Expands Ground Operations' or "
+            "'China Sanctions EU Officials Over Taiwan; NATO Activates Article 4'\n"
+            "Return ONLY the headline. No quotes, no trailing punctuation, no prefix."
         )
         try:
             title_model = genai.GenerativeModel('gemini-2.0-flash')
