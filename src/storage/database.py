@@ -1052,19 +1052,23 @@ class DatabaseManager:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    report_text = report.get('report_text', '')
                     cur.execute("""
                         INSERT INTO reports
-                        (report_date, model_used, draft_content, status, report_type, metadata, sources)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        (report_date, model_used, draft_content, final_content, status, report_type, metadata, sources,
+                         human_reviewed_at, human_reviewer)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                         RETURNING id
                     """, (
                         datetime.now().date(),
                         report.get('metadata', {}).get('model_used', 'unknown'),
-                        report.get('report_text', ''),
-                        'draft',
+                        report_text,
+                        report_text,
+                        'approved',
                         report.get('report_type', 'daily'),  # Default to 'daily' for backward compatibility
                         Json(report.get('metadata', {})),
-                        Json(report.get('sources', {}))
+                        Json(report.get('sources', {})),
+                        'auto'
                     ))
 
                     report_id = cur.fetchone()[0]
