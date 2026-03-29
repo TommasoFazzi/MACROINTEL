@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Eye, Calendar, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -21,15 +21,10 @@ interface ReportsTableProps {
   onPageChange: (page: number) => void;
 }
 
-const statusColors: Record<string, string> = {
-  draft: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  reviewed: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  approved: 'bg-green-500/20 text-green-400 border-green-500/30',
-};
-
 const typeColors: Record<string, string> = {
   daily: 'bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/30',
   weekly: 'bg-[#00A8E8]/20 text-[#00A8E8] border-[#00A8E8]/30',
+  recap: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
 };
 
 function formatDate(dateString: string | null): string {
@@ -51,7 +46,7 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
     );
   }
 
-  const Pagination = () => (
+  const PaginationControls = () => (
     pagination && pagination.pages > 1 ? (
       <div className="flex items-center justify-between px-2">
         <p className="text-sm text-gray-400">
@@ -95,21 +90,21 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
             className="block rounded-lg border border-white/5 bg-white/[0.02] p-4 active:bg-white/[0.04] transition-colors"
           >
             <div className="flex items-start justify-between gap-3 mb-2">
-              <span className="font-medium text-white text-sm leading-snug flex-1 min-w-0">
-                {report.title || 'Untitled'}
-              </span>
-              <Eye className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <span className="font-medium text-white text-sm leading-snug block">
+                  {report.title || 'Untitled'}
+                </span>
+                {report.executive_summary && (
+                  <span className="text-xs text-gray-500 mt-0.5 block line-clamp-2">
+                    {report.executive_summary}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" className={`capitalize text-xs ${statusColors[report.status] || ''}`}>
-                {report.status}
-              </Badge>
               <Badge variant="outline" className={`capitalize text-xs ${typeColors[report.report_type] || ''}`}>
                 {report.report_type}
               </Badge>
-              {report.category && (
-                <span className="text-xs text-gray-500">{report.category}</span>
-              )}
             </div>
             <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
               <div className="flex items-center gap-1.5">
@@ -127,33 +122,32 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
         <Table>
           <TableHeader>
             <TableRow className="border-white/5 hover:bg-transparent">
-              <TableHead className="text-gray-400 font-medium">Status</TableHead>
               <TableHead className="text-gray-400 font-medium">Title</TableHead>
-              <TableHead className="text-gray-400 font-medium">Type</TableHead>
-              <TableHead className="text-gray-400 font-medium">Category</TableHead>
-              <TableHead className="text-gray-400 font-medium">Date</TableHead>
-              <TableHead className="text-gray-400 font-medium text-right">Articles</TableHead>
-              <TableHead className="text-gray-400 font-medium w-[80px]"></TableHead>
+              <TableHead className="text-gray-400 font-medium w-[100px]">Type</TableHead>
+              <TableHead className="text-gray-400 font-medium w-[130px]">Date</TableHead>
+              <TableHead className="text-gray-400 font-medium text-right w-[90px]">Articles</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {reports.map((report) => (
               <TableRow
                 key={report.id}
-                className="border-white/5 hover:bg-white/[0.02] transition-colors"
+                className="border-white/5 hover:bg-white/[0.02] transition-colors cursor-pointer"
               >
                 <TableCell>
-                  <Badge variant="outline" className={`capitalize ${statusColors[report.status] || ''}`}>
-                    {report.status}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-medium text-white max-w-[300px] truncate">
                   <Link
                     href={`/dashboard/report/${report.id}`}
                     prefetch={false}
-                    className="hover:text-[#FF6B35] transition-colors"
+                    className="block group"
                   >
-                    {report.title || 'Untitled'}
+                    <span className="font-medium text-white group-hover:text-[#FF6B35] transition-colors">
+                      {report.title || `Report ${report.report_date}`}
+                    </span>
+                    {report.executive_summary && (
+                      <span className="block text-xs text-gray-500 mt-0.5 line-clamp-1">
+                        {report.executive_summary}
+                      </span>
+                    )}
                   </Link>
                 </TableCell>
                 <TableCell>
@@ -161,7 +155,6 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
                     {report.report_type}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-gray-400">{report.category || '-'}</TableCell>
                 <TableCell className="text-gray-400">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
@@ -171,25 +164,13 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
                 <TableCell className="text-right text-gray-400 tabular-nums">
                   {report.article_count}
                 </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    asChild
-                    className="text-gray-400 hover:text-white hover:bg-white/5"
-                  >
-                    <Link href={`/dashboard/report/${report.id}`} prefetch={false}>
-                      <Eye className="w-4 h-4" />
-                    </Link>
-                  </Button>
-                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
 
-      <Pagination />
+      <PaginationControls />
     </div>
   );
 }

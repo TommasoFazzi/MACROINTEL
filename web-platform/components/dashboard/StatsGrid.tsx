@@ -1,17 +1,18 @@
 'use client';
 
-import { FileText, Users, FileCheck, MapPin, Percent } from 'lucide-react';
+import { FileText, BookOpen, GitBranch, Radio } from 'lucide-react';
 import StatsCard from './StatsCard';
 import type { DashboardStats } from '@/types/dashboard';
 
 interface StatsGridProps {
   stats: DashboardStats | undefined;
+  storiesCount: number | null;
 }
 
-export default function StatsGrid({ stats }: StatsGridProps) {
+export default function StatsGrid({ stats, storiesCount }: StatsGridProps) {
   if (!stats) return null;
 
-  const { overview, articles, quality } = stats;
+  const { overview, articles } = stats;
 
   const statsItems = [
     {
@@ -21,29 +22,24 @@ export default function StatsGrid({ stats }: StatsGridProps) {
       trend: articles.recent_7d > 0 ? { value: articles.recent_7d, isPositive: true } : undefined,
     },
     {
-      icon: <Users className="w-6 h-6" />,
-      value: overview.total_entities,
-      label: 'Entities Detected',
-    },
-    {
-      icon: <FileCheck className="w-6 h-6" />,
+      icon: <BookOpen className="w-6 h-6" />,
       value: overview.total_reports,
-      label: 'Reports Generated',
+      label: 'Intelligence Briefs',
     },
     {
-      icon: <MapPin className="w-6 h-6" />,
-      value: overview.geocoded_entities,
-      label: 'Geocoded Entities',
+      icon: <GitBranch className="w-6 h-6" />,
+      value: storiesCount ?? '—',
+      label: 'Active Storylines',
     },
     {
-      icon: <Percent className="w-6 h-6" />,
-      value: `${overview.coverage_percentage.toFixed(1)}%`,
-      label: 'Geocoding Coverage',
+      icon: <Radio className="w-6 h-6" />,
+      value: 33,
+      label: 'Sources Monitored',
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {statsItems.map((item, index) => (
         <StatsCard
           key={index}

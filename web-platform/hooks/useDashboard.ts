@@ -122,6 +122,23 @@ export function useReportDetail(reportId: number | null) {
 }
 
 /**
+ * Hook for fetching total count of active storylines
+ */
+export function useStoriesCount() {
+  const { data } = useSWR(
+    '/api/proxy/stories?per_page=1',
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 300000,         // Cache for 5 minutes
+      errorRetryCount: 1,
+    }
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data as any)?.data?.pagination?.total ?? null;
+}
+
+/**
  * Hook for comparing two reports and getting delta analysis
  * Key is null when either ID is null, disabling the SWR hook
  */

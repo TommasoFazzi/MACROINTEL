@@ -96,7 +96,7 @@ Key database objects consumed:
 
 **`ReportFeedback`**: `section: str`, `rating: Optional[int]` (1–5), `comment: Optional[str]`.
 
-**`ReportListItem`**: `id`, `report_date: date`, `report_type: str`, `status: str`, `title: Optional[str]`, `category: Optional[str]`, `executive_summary: Optional[str]` (first 300 chars of content), `article_count: int`, `generated_at`, `reviewed_at`, `reviewer`.
+**`ReportListItem`**: `id`, `report_date: date`, `report_type: str`, `status: str`, `title: Optional[str]`, `category: Optional[str]`, `executive_summary: str` (BLUF: first meaningful non-heading line from `final_content`/`draft_content` via `_extract_bluf()`, max 150 chars), `article_count: int`, `generated_at`, `reviewed_at`, `reviewer`.
 
 **`ReportSection`**: `category: str`, `content: str`, `entities: list[str]`. (Defined but not populated — sections list is always empty in current router.)
 

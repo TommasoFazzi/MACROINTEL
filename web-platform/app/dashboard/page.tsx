@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { RefreshCw, Clock, Map } from 'lucide-react';
-import { useDashboardStats, useReports } from '@/hooks/useDashboard';
+import { useDashboardStats, useReports, useStoriesCount } from '@/hooks/useDashboard';
 import {
   StatsGrid,
   ReportsTable,
@@ -26,6 +26,8 @@ function formatTimestamp(timestamp: string | undefined): string {
 
 export default function DashboardPage() {
   const [page, setPage] = useState(1);
+
+  const storiesCount = useStoriesCount();
 
   const {
     stats,
@@ -149,7 +151,7 @@ export default function DashboardPage() {
                 onRetry={() => refreshStats()}
               />
             ) : (
-              <StatsGrid stats={stats} />
+              <StatsGrid stats={stats} storiesCount={storiesCount} />
             )}
           </section>
 

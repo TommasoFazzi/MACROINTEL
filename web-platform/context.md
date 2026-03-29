@@ -83,10 +83,10 @@ See `components/StorylineGraph/context.md` for full detail.
   - Collapsible design with default expanded state
 
 #### Dashboard Components (`components/dashboard/`)
-- `StatsCard.tsx` - Individual KPI card
-- `StatsGrid.tsx` - Grid of stats cards
-- `ReportsTable.tsx` - Paginated reports table
-- `DashboardSkeleton.tsx` - Loading skeletons
+- `StatsCard.tsx` - Individual KPI card (accepts `string | number` value)
+- `StatsGrid.tsx` - 4-card grid: Total Articles (7d trend), Intelligence Briefs, Active Storylines (from `useStoriesCount()`), Sources Monitored (static 33). Accepts `storiesCount: number | null` prop.
+- `ReportsTable.tsx` - Paginated reports table. Columns: Title (+ BLUF preview from `executive_summary`) | Type | Date | Articles. Status and Category columns removed. `recap` type has purple badge.
+- `DashboardSkeleton.tsx` - Loading skeletons (4-col grid)
 - `ErrorState.tsx` - Error handling states
 
 #### Oracle Chat Components (`components/oracle/`)

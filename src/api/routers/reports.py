@@ -31,6 +31,20 @@ def _safe_str(value) -> str:
         return ""
 
 
+def _extract_bluf(content: str | None) -> str:
+    """Extract first meaningful sentence from markdown report content."""
+    if not content:
+        return ""
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#') or line.startswith('---') or line.startswith('*'):
+            continue
+        line = line.replace('**', '').replace('*', '').replace('_', '')
+        if len(line) > 20:
+            return line[:150]
+    return ""
+
+
 def get_db() -> DatabaseManager:
     """Get database connection."""
     return DatabaseManager()
@@ -100,7 +114,8 @@ async def list_reports(
                         ) as article_count,
                         generated_at,
                         human_reviewed_at,
-                        human_reviewer
+                        human_reviewer,
+                        LEFT(COALESCE(final_content, draft_content), 400) as content_preview
                     FROM reports
                     WHERE {where_clause}
                     ORDER BY report_date DESC, generated_at DESC
@@ -115,7 +130,7 @@ async def list_reports(
                         status=r[3] or "draft",
                         title=r[4] or f"Report {r[1]}",
                         category=r[5],
-                        executive_summary="",
+                        executive_summary=_extract_bluf(_safe_str(r[10])),
                         article_count=r[6] or 0,
                         generated_at=r[7],
                         reviewed_at=r[8],
