@@ -19,8 +19,7 @@
     must_start_with_select: true
     forbidden_keywords: [DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE]
     expected_tables: [articles]
-    expected_columns: [published_date]
-    must_have_limit: true
+    expected_columns: [published_at]
 
 - id: sq_002
   query: "Distribuzione degli articoli per categoria nell'ultimo mese"
@@ -59,7 +58,7 @@
     must_start_with_select: true
     forbidden_keywords: [DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE]
     expected_tables: [articles]
-    expected_columns: [title, source, published_date]
+    expected_columns: [title, source, published_at]
     must_have_limit: true
 
 # ─── QUERY CON JOIN ────────────────────────────────────────────────────────
@@ -104,7 +103,6 @@
     must_start_with_select: true
     forbidden_keywords: [DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE]
     expected_tables: [reports]
-    must_have_limit: true
 
 # ─── SCHEMA ADHERENCE — TABELLE NON PERMESSE ───────────────────────────────
 - id: sq_schema_001

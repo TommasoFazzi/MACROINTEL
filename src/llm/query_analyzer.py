@@ -177,8 +177,8 @@ JSON OUTPUT:"""
                 contents=[prompt],
                 generation_config={
                     "response_mime_type": "application/json",
-                    "temperature": 0.1,  # Very low for deterministic extraction
-                    "max_output_tokens": 500  # Short response expected
+                    "temperature": 0.1,
+                    "max_output_tokens": 2048,
                 },
                 request_options={"timeout": 30}
             )

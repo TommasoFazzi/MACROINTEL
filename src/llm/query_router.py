@@ -178,9 +178,8 @@ Respond ONLY with valid JSON:
             result = self._llm_call_with_retry(
                 prompt,
                 genai.types.GenerationConfig(
-                    response_mime_type="application/json",
                     temperature=0.1,
-                    max_output_tokens=150,
+                    max_output_tokens=1024,
                 ),
             )
             raw = (result.text or "").strip()
@@ -425,7 +424,7 @@ Output ONLY the SQL query, nothing else."""
         try:
             result = self._llm_call_with_retry(
                 prompt,
-                genai.types.GenerationConfig(temperature=0.1, max_output_tokens=300),
+                genai.types.GenerationConfig(temperature=0.1, max_output_tokens=2048),
             )
             sql = result.text.strip().strip("```sql").strip("```").strip()
             # Basic sanity check before returning — SQLTool does full validation
@@ -451,9 +450,8 @@ Respond ONLY with valid JSON: {{"queries": ["sub-query 1", "sub-query 2", "sub-q
             result = self._llm_call_with_retry(
                 prompt,
                 genai.types.GenerationConfig(
-                    response_mime_type="application/json",
                     temperature=0.2,
-                    max_output_tokens=200,
+                    max_output_tokens=1024,
                 ),
             )
             raw = (result.text or "").strip()
