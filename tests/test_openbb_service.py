@@ -118,8 +118,10 @@ class TestMacroContext:
             assert 'category' in config
 
     def test_macro_indicators_has_all_categories(self, service):
-        """Should have indicators for all required categories."""
-        expected_categories = {
+        """Should have indicators for all required core categories.
+        Uses subset check so new categories can be added without breaking this test.
+        """
+        required_categories = {
             'RATES', 'CREDIT_RISK', 'INFLATION', 'SHIPPING',
             'COMMODITIES', 'FX', 'VOLATILITY', 'INDICES'
         }
@@ -129,7 +131,9 @@ class TestMacroContext:
             for config in service.MACRO_INDICATORS.values()
         }
 
-        assert expected_categories == actual_categories
+        assert required_categories <= actual_categories, (
+            f"Missing required categories: {required_categories - actual_categories}"
+        )
 
 
 # =============================================================================

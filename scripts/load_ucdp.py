@@ -27,6 +27,7 @@ sys.path.insert(0, str(project_root))
 from dotenv import load_dotenv
 load_dotenv(project_root / '.env')
 
+import os
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -36,6 +37,19 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 UCDP_API = "https://ucdpapi.pcr.uu.se/api/gedevents/24.1"
+
+
+def _get_headers() -> dict:
+    """Build request headers. UCDP now requires an API token (free registration).
+    Set UCDP_API_TOKEN in .env — obtain at: https://ucdp.uu.se/apidocs/
+    """
+    token = os.environ.get("UCDP_API_TOKEN", "").strip()
+    if not token:
+        raise EnvironmentError(
+            "UCDP_API_TOKEN not set. Register at https://ucdp.uu.se/apidocs/ "
+            "and add UCDP_API_TOKEN=<your_token> to .env"
+        )
+    return {"x-ucdp-access-token": token}
 
 
 @retry(
@@ -52,13 +66,13 @@ def _fetch_page(page: int, page_size: int, year: int = None) -> dict:
     params = {"pagesize": page_size, "page": page}
     if year:
         params["Year"] = year
-    resp = requests.get(UCDP_API, params=params, timeout=30)
+    resp = requests.get(UCDP_API, params=params, headers=_get_headers(), timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
-    """Stream UCDP GED events via paginated API. No registration needed."""
+    """Stream UCDP GED events via paginated API. Requires UCDP_API_TOKEN in .env."""
     page = 0
     total_yielded = 0
     while True:

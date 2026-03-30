@@ -6,10 +6,10 @@ Downloads macro projections from IMF WEO SDMX/JSON API and inserts
 into macro_forecasts table with vintage tracking.
 
 Key indicators:
-    NGDP_RPCH  — Real GDP Growth (%)
-    PCPIPCH    — Inflation, avg CPI (%)
-    LUR        — Unemployment rate (%)
-    GGR_NGDP   — Government Revenue (% GDP)
+    NGDP_RPCH   — Real GDP Growth (%)
+    PCPIPCH     — Inflation, avg CPI (%)
+    LUR         — Unemployment rate (%)
+    GGXCNL_NGDP — Govt Net Lending/Borrowing (% GDP, fiscal balance proxy)
     GGXWDG_NGDP — Government Debt (% GDP)
     BCA_NGDPD   — Current Account Balance (% GDP)
 
@@ -50,7 +50,7 @@ WEO_INDICATORS = {
     'LUR': {'name': 'Unemployment Rate', 'unit': '%'},
     'GGXWDG_NGDP': {'name': 'Government Debt', 'unit': '% GDP'},
     'BCA_NGDPD': {'name': 'Current Account Balance', 'unit': '% GDP'},
-    'GGR_NGDP': {'name': 'Government Revenue', 'unit': '% GDP'},
+    'GGXCNL_NGDP': {'name': 'Govt Net Lending/Borrowing (fiscal balance)', 'unit': '% GDP'},
 }
 
 
