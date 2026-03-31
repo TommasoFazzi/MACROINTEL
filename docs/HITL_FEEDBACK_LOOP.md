@@ -386,26 +386,23 @@ NOW GENERATE TODAY'S REPORT:
    - Target: 90% report approvati senza major rewrites
    - Trend: Aumenta con prompt improvements
 
-### Dashboard Metriche (Streamlit Extension)
+### Dashboard Metriche (Next.js / FastAPI)
 
-```python
-# Aggiungi pagina "Analytics" alla dashboard
+L'interfaccia principale per visualizzare l'andamento della qualità dei report è ora integrata nella dashboard Next.js. I dati vengono recuperati dall'endpoint `/api/v1/dashboard/stats`.
 
-st.title("HITL Analytics")
-
-# Quality trend chart
-df_quality = get_quality_trend_data()
-st.line_chart(df_quality, x='date', y='avg_rating')
-
-# Correction heatmap
-df_corrections = get_corrections_by_section()
-st.bar_chart(df_corrections)
-
-# Improvement velocity
-improvement_rate = calculate_improvement_rate()
-st.metric("Miglioramento Mensile", f"{improvement_rate:.1f}%", 
-          delta=f"{improvement_rate - 10:.1f}%")
+```typescript
+// Esempio aggregazione fornita dalla FastAPI
+export interface QualityStats {
+    reports_reviewed: number;
+    average_rating: number | null;
+    pending_review: number;
+}
 ```
+
+La pipeline FastAPI calcola automaticamente:
+- **reports_reviewed**: Conteggio dei report in stato 'reviewed' o 'approved'.
+- **average_rating**: Media matematica del campo `rating` della tabella `report_feedback`.
+- **pending_review**: Conteggio dei report ancora in 'draft'.
 
 ## Advanced: Fine-Tuning LLM (Futuro)
 

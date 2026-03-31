@@ -91,13 +91,13 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 ```
 
 **Seven phases:**
-1. **Ingestion** (`src/ingestion/`): Async RSS parsing via aiohttp (parallel feed fetching + concurrent content extraction), full-text extraction (Trafilatura primary → **Scrapling curl_cffi/StealthyFetcher** for WAF/Cloudflare sites → Newspaper3k fallback → Cloudscraper), 2-phase deduplication (hash + content), **keyword blocklist filter** (off-topic rejection at ingestion), PDF auto-detection via pymupdf4llm
-2. **NLP** (`src/nlp/`): spaCy multilingual NER (`xx_ent_wiki_sm`), semantic chunking (500-word sliding window), embeddings (`paraphrase-multilingual-MiniLM-L12-v2`, 384-dim), **LLM relevance classification** (Gemini-based scope filter)
-3. **Storage** (`src/storage/database.py`): PostgreSQL + pgvector with HNSW indexing, connection pooling (psycopg2 SimpleConnectionPool)
-4. **Narrative Engine** (`src/nlp/narrative_processor.py`): HDBSCAN micro-clustering of orphan events, embedding-based matching to existing storylines, LLM summary evolution (Gemini 2.0 Flash), TF-IDF weighted Jaccard entity-overlap graph edges (uses `entity_idf` materialized view), momentum scoring with decay, **post-clustering validation filter** (regex-based off-topic archival). Community detection via `scripts/compute_communities.py` (Louvain algorithm).
-5. **Report Generation** (`src/llm/`): Google Gemini 2.5 Flash, 2-stage RAG (vector search → cross-encoder reranking with ms-marco-MiniLM), **narrative storyline context** (top 10 storylines injected as XML), **JIT ontological context** (anomaly screener → OntologyManager → focused macro theory injection), trade signal extraction, "Strategic Storyline Tracker" section
-6. **HITL** (`src/hitl/`, `Home.py`): Streamlit dashboard for review, editing, rating, feedback loop
-7. **Automation** (`scripts/daily_pipeline.py`): 6 core steps (ingestion → market_data → nlp_processing → load_to_database → **narrative_processing** → generate_report) + 2 conditional steps (weekly_report on Sundays → monthly_recap after 4 weekly reports); scheduled via **GitHub Actions** on Hetzner
+1. **Ingestion** (`src/ingestion/`): Async RSS parsing via aiohttp, full-text extraction (Trafilatura primary → Scrapling/StealthyFetcher → Newspaper3k fallback), 2-phase deduplication, keyword blocklist filter, PDF auto-detection via pymupdf4llm. Incorporates structured ingestion from OpenSanctions, UCDP, World Bank, and IMF.
+2. **NLP** (`src/nlp/`): spaCy multilingual NER, semantic chunking, embeddings (384-dim), LLM relevance classification.
+3. **Storage** (`src/storage/database.py`): PostgreSQL + pgvector + PostGIS, connection pooling.
+4. **Narrative Engine** (`src/nlp/narrative_processor.py`): HDBSCAN micro-clustering, embedding matching, LLM summary evolution, TF-IDF weighted Jaccard graph edges, momentum scoring with decay.
+5. **Report Generation & Oracle 2.0** (`src/llm/`): 2-stage RAG (vector → cross-encoder reranking). Uses **Chain-of-Verification (CoVe)** to prevent hallucinations between structured data (macros, sanctions) and unstructured text.
+6. **Web Platform & Visuals** (`web-platform/`): Next.js dashboard, Mapbox GL + PostGIS geospatial mapping, Force-graph narrative nodes.
+7. **Automation & Observability** (`scripts/daily_pipeline.py`): 10 core steps (ingestion → market_data → nlp_processing → load_to_database → narrative_processing → community_detection → entity_extraction → geocoding → refresh_map_data → generate_report) + conditional weekly/monthly reports. Deployed via Docker Compose on Hetzner, monitored via Grafana, Loki, and Promtail.
 
 ### Key Modules by Size/Complexity
 
@@ -262,7 +262,11 @@ docker compose -p app logs frontend --tail 30
 docker compose -p app restart backend
 docker compose -p app restart frontend
 
-# Rebuild and restart (after code changes)
+# Esegui pipeline completa
+docker compose -p app exec backend python scripts/daily_pipeline.py
+
+# Access Grafana Dashboard (Logs & Metrics)
+# http://<HETZNER_HOST>:3000 (admin / macrointel2026)
 docker compose -p app up -d --build backend
 docker compose -p app up -d --build frontend
 

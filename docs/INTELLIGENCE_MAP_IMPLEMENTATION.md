@@ -1,236 +1,76 @@
-# Intelligence Map Intelligence Map - Implementation Guide
+# Intelligence Map - Implementation Guide
 
 ## 🎯 Project Overview
 
-**Goal:** Create a Call of Duty-style tactical intelligence map with cinematic interactions, entity-based visualization, and real-time data from PostgreSQL.
+**Goal:** Create a Call of Duty-style tactical intelligence map with cinematic interactions, entity-based visualization, and real-time narrative data from PostgreSQL/PostGIS.
 
 **Tech Stack:**
-- **Frontend:** Next.js 14 (App Router), React, TypeScript
-- **Map Engine:** Mapbox GL JS
+- **Frontend:** Next.js (App Router), React 19, TypeScript
+- **Map Engine:** Mapbox GL JS (`react-map-gl` wrapper not used, raw mapboxgl used for fine-grained performance)
 - **Animations:** Framer Motion
 - **Backend:** FastAPI (Python)
-- **Database:** PostgreSQL + pgvector
-- **Geocoding:** Nominatim (OpenStreetMap) or Google Geocoding API
+- **Database:** PostgreSQL 17 + pgvector + PostGIS
+- **Geocoding:** Hybrid Pipeline (GeoNames local DB + Gemini Flash for disambiguation + Photon fallback)
 
 ---
 
-## 📦 Phase 1: Foundation Setup
+## 🏗️ Architecture & Core Components
 
-### 1.1 Create Next.js Project
+### 1. The Map Engine (`TacticalMap.tsx`)
+The map is built on a dark military style (`mapbox://styles/mapbox/dark-v11`) and uses a custom React implementation managing raw `mapboxgl` instances to optimize GeoJSON source updates.
 
-```bash
-cd /Users/tommasofazzi/INTELLIGENCE_ITA/INTELLIGENCE_ITA
-npx create-next-app@latest intelligence-map --typescript --tailwind --app --no-src-dir
-cd intelligence-map
-```
+It relies on a layered architecture (Tier 3 layers):
 
-### 1.2 Install Dependencies
+- **Heatmap Layer (`HEATMAP`)**: Density is weighted by the `intelligence_score` of entities. Areas with higher narrative activity and stronger macro signals burn brighter (orange/pink).
+- **Arc Lines (`ARCS`)**: Cyan arcs connect entities that share active storylines. Line width scales with the number of shared storylines; opacity scales with the maximum `momentum_score`.
+- **Pulse Indicator (`PULSE`)**: A green pulsing ring that highlights entities mentioned in articles published within the last 48 hours, signaling fresh intelligence.
+- **Color Modes (`COLOR: TYPE` / `COLOR: COMM`)**: Dynamic coloring. Nodes can be colored by their entity type (GeoPolitical, Organization, Person) or by their assigned Louvain narrative community (matching the Storyline Graph colors).
+- **Storyline Highlight**: Cross-navigation from the Narrative Graph. Clicking "View on Map" isolates and highlights all entities within that specific storyline, dimming the rest and showing a gold banner.
 
-```bash
-npm install mapbox-gl react-map-gl framer-motion
-npm install @types/mapbox-gl
-npm install use-sound  # Optional for sound effects
-npm install axios swr  # For API calls
-```
-
-### 1.3 Setup Mapbox Account
-
-1. Go to https://www.mapbox.com/
-2. Sign up for free account
-3. Get API token from dashboard
-4. Add to `.env.local`:
-
-```env
-NEXT_PUBLIC_MAPBOX_TOKEN=your_token_here
-```
-
-### 1.4 Project Structure
-
-```
-intelligence-map/
-├── app/
-│   ├── page.tsx                 # Home/Dashboard
-│   ├── intelligence-map/
-│   │   └── page.tsx            # Intelligence Map main page
-│   └── layout.tsx
-├── components/
-│   ├── WarRoom/
-│   │   ├── TacticalMap.tsx     # Main map component
-│   │   ├── DossierPanel.tsx    # Entity detail panel
-│   │   ├── HUDOverlay.tsx      # Tactical HUD
-│   │   ├── GridOverlay.tsx     # Grid pattern
-│   │   └── EntityMarker.tsx    # Custom markers
-│   └── ui/                      # Reusable UI components
-├── lib/
-│   ├── api.ts                   # API client
-│   ├── geocoding.ts             # Geocoding service
-│   └── types.ts                 # TypeScript types
-└── public/
-    ├── sounds/                  # Sound effects
-    └── images/                  # Icons, textures
-```
+### 2. Frontend UI Overlays
+- **`HUDOverlay.tsx`**: A tactical Heads-Up Display showing live map coordinates, zoom level, total entity counts, and intelligence stats.
+- **`EntityDossier.tsx`**: A side-panel that pops open when an entity marker is clicked. It fetches detailed intelligence (scores, recent articles, top storylines) from the `/api/v1/map/entities/{id}` endpoint.
+- **`FilterPanel.tsx`**: Allows live filtering of the map features based on entity type, date range, or score thresholds.
+- **`GridOverlay.tsx`**: Provides the cinematic, tactical aesthetic via a subtle CSS grid pattern layered over the map.
 
 ---
 
-## 🗺️ Phase 2: Geographic Entity Extraction
+## 🗺️ Geographic Entity Extraction
 
-### 2.1 Geocoding Service
+### Hybrid Geocoding Service (`scripts/geocode_geonames.py`)
 
-Create a Python service to extract coordinates from entity names:
+To ensure high accuracy and overcome API rate limits, the system uses a 4-step geocoding pipeline rather than basic Nominatim:
 
-```python
-# scripts/geocode_entities.py
-import requests
-from src.storage.database import DatabaseManager
+1. **GeoNames Lookup**: Exact/ascii/alternate name matching against a local `geo_gazetteer` table (populated by `scripts/load_geonames.py`).
+2. **LLM Disambiguation (Gemini 2.0 Flash)**: If GeoNames returns multiple candidates (e.g., "Paris" in France vs. Texas), Gemini uses the narrative context to resolve the correct location.
+3. **Filtered GeoNames Lookup**: Re-queries the local database with the LLM's spatial constraints.
+4. **Photon Fallback**: For hyper-specific or edge-case locations not available in the local gazetteer, it falls back to a self-hosted Photon instance (or `komoot.io`).
 
-def geocode_entity(entity_name: str, entity_type: str):
-    """
-    Geocode entity using Nominatim (free) or Google Geocoding API
-    """
-    # Nominatim (OpenStreetMap) - Free
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        'q': entity_name,
-        'format': 'json',
-        'limit': 1
-    }
-    
-    response = requests.get(url, params=params, headers={'User-Agent': 'INTEL_ITA'})
-    data = response.json()
-    
-    if data:
-        return {
-            'lat': float(data[0]['lat']),
-            'lng': float(data[0]['lon'])
-        }
-    return None
-
-def backfill_entity_coordinates():
-    """
-    Add coordinates to existing entities
-    """
-    db = DatabaseManager()
-    
-    # Get all GPE (Geo-Political Entity) and LOC (Location) entities
-    entities = db.get_entities_by_type(['GPE', 'LOC'])
-    
-    for entity in entities:
-        coords = geocode_entity(entity['name'], entity['type'])
-        if coords:
-            db.update_entity_coordinates(entity['id'], coords['lat'], coords['lng'])
-            print(f"✓ {entity['name']}: {coords}")
-        else:
-            print(f"✗ {entity['name']}: No coordinates found")
-
-if __name__ == "__main__":
-    backfill_entity_coordinates()
-```
-
-### 2.2 Database Schema Update
+### Database Spatial Integration
+The database leverages **PostGIS** for spatial indexing, allowing fast bounding-box queries and geographic radius searches:
 
 ```sql
--- Add coordinates to entities table
+-- Spatial columns built into the entities/gazetteer infrastructure
 ALTER TABLE entities 
-ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8),
-ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
+ADD COLUMN IF NOT EXISTS geom geometry(Point, 4326);
 
--- Add spatial index for performance
-CREATE INDEX IF NOT EXISTS idx_entities_coordinates 
-ON entities(latitude, longitude) 
-WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+-- PostGIS spatial index
+CREATE INDEX IF NOT EXISTS idx_entities_geom 
+ON entities USING GIST(geom);
 ```
 
 ---
 
-## 🎨 Phase 3: Intelligence Map UI - Base Map
+## 🚦 Data Flow & State Management
 
-### 3.1 Custom Mapbox Style
+The frontend uses specialized SWR hooks to manage state without blocking the UI:
 
-Create dark military style in Mapbox Studio:
-- Base color: `#0A1628` (your navy)
-- Water: `#0d1b2a`
-- Land: `#1a2332`
-- Borders: `#FF6B35` (orange, subtle)
-- Labels: Minimal, monospace font
+- `useMapData`: Fetches GeoJSON entities and arcs from the FastAPI backend. Implements a unified `addSourceAndLayers` callback to inject data into Mapbox GL efficiently.
+- `useMapLayers`: Manages the state of the toggles (HEATMAP, ARCS, PULSE, Color Mode).
+- `useMapPosition`: Persists coordinates and zoom levels across route changes.
 
-### 3.2 TacticalMap Component
+## 🚀 Performance Considerations
 
-```typescript
-// components/WarRoom/TacticalMap.tsx
-'use client';
-
-import { useState, useCallback } from 'react';
-import Map, { Marker, FlyToInterpolator } from 'react-map-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
-
-interface ViewState {
-  latitude: number;
-  longitude: number;
-  zoom: number;
-  pitch: number;
-  bearing: number;
-}
-
-export default function TacticalMap() {
-  const [viewState, setViewState] = useState<ViewState>({
-    latitude: 41.9028,
-    longitude: 12.4964,
-    zoom: 3,
-    pitch: 0,
-    bearing: 0
-  });
-
-  return (
-    <div className="relative w-full h-screen bg-black">
-      <Map
-        {...viewState}
-        onMove={evt => setViewState(evt.viewState)}
-        mapStyle="mapbox://styles/mapbox/dark-v11"
-        mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
-        style={{ width: '100%', height: '100%' }}
-      />
-      
-      {/* Grid Overlay */}
-      <GridOverlay />
-      
-      {/* HUD */}
-      <HUDOverlay coordinates={viewState} />
-    </div>
-  );
-}
-```
-
----
-
-## 🎯 Phase 4-10: Detailed in Separate Docs
-
-Each phase will have its own implementation guide as we progress.
-
----
-
-## 🚀 Getting Started
-
-1. **Setup Mapbox account** (5 min)
-2. **Create Next.js project** (10 min)
-3. **Install dependencies** (5 min)
-4. **Create basic map** (30 min)
-5. **Test with mock data** (15 min)
-
-**Total time for Phase 1:** ~1 hour
-
----
-
-## 📝 Notes
-
-- We'll build incrementally, testing each phase
-- Mock data first, then real API integration
-- Focus on visual polish (this is the wow factor)
-- Performance optimization comes later
-
----
-
-## 🔗 Resources
-
-- [Mapbox GL JS Docs](https://docs.mapbox.com/mapbox-gl-js/)
-- [Framer Motion Docs](https://www.framer.com/motion/)
-- [Next.js App Router](https://nextjs.org/docs/app)
+- **Clustering**: Entity markers are clustered (`cluster: true`) natively via Mapbox GL to handle thousands of items without dropping frames. Clusters break apart smoothly at higher zoom levels.
+- **Property-Driven UI**: Storyline highlighting (`_hl: 'on' | 'off'`) is applied via GeoJSON properties to leverage Mapbox's WebGL renderer, avoiding heavy React re-renders.
+- **Entity Mentions Bridge**: The `intelligence_score` is aggregated via the `mv_entity_storyline_bridge` materialized view to prevent expensive JOINs during map load.

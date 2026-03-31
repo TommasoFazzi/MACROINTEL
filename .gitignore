@@ -72,3 +72,6 @@ htmlcov/
 # Dev artifacts
 COMMIT_MESSAGE.md
 scripts/com.intelligence-ita.daily-pipeline.plist
+
+# Archive
+docs/archive/
