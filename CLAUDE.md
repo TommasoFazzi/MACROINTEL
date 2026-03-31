@@ -175,6 +175,9 @@ Off-topic content is filtered at 3 pipeline stages:
 - **Embeddings:** `paraphrase-multilingual-MiniLM-L12-v2` for cross-language semantic similarity (Italian + English sources)
 - **Schema validation:** Pydantic v2 models in `src/llm/schemas.py` for all LLM structured output
 - **Time-weighted decay (Oracle 2.0):** `score * exp(-k * days)` post-retrieval in RAGTool (`src/llm/tools/rag_tool.py`). Over-fetch 3x to avoid Top-K bias. K dinamico per intent (FACTUAL=0.03, ANALYTICAL=0.015, MARKET=0.04). Time-shifting for historical queries (reference_date = end_date). Min floor 0.15 post-decay. Report Generator and Oracle 1.0 are NOT affected.
+- **Chain-of-Verification CoVe (Oracle 2.0 synthesis):** When structured data (country_profiles, macro_forecasts, macro_indicators) and RAG context disagree on the same quantitative KPI, Oracle annotates both values: "Dato strutturato [fonte]: X | Contesto narrativo [fonte]: Y — possibile lag temporale". Structured data takes priority for official KPIs; RAG for sentiment and recent events (<30d). Configured in `oracle_orchestrator.py` `_synthesize()` prompt.
+- **Few-Shot SQL Store (Oracle 2.0 QueryRouter):** `_SQL_EXAMPLES` dict in `query_router.py` injects 2-3 canonical query patterns per table for PostGIS (`conflict_events`), vintage subqueries (`macro_forecasts`), GIN array search (`v_sanctions_public`), etc. Activated when keywords in the user query match a table. Evidence: +30% schema adherence vs zero-shot (Spider/BIRD benchmarks).
+- **v_sanctions_public — PII-sanitized view (migration 034):** All Oracle 2.0 tools use `v_sanctions_public`, not raw `sanctions_registry`. The view strips `birthDate`, `birthPlace`, `address`, `idNumber`, `taxNumber`, `passportNumber`, `nationalId`, `registrationNumber`, `phone`, `email` from the `properties` JSONB field. `SQLTool.ALLOWED_TABLES` and `ReferenceTool.SAFE_QUERIES` reference the view. The base table is writable by data loaders only.
 
 ## Testing
 
@@ -211,6 +214,7 @@ When updating documentation, always check for and update context.md files in sub
 - **Gemini model split:** NLP layer (`narrative_processor.py`, `relevance_filter.py`) → `gemini-2.0-flash` (speed-critical, structured tasks); LLM layer (`report_generator.py`, `query_analyzer.py`, `oracle_engine.py`, `oracle_orchestrator.py`, `query_router.py`) → `gemini-2.5-flash` (deep reasoning).
 - **Oracle 2.0 singleton:** `get_oracle_orchestrator_singleton()` in `oracle_orchestrator.py` is thread-safe (double-checked locking). The singleton holds 400MB embedding model and LLM connection — never re-initialize per request.
 - **SQLTool safety layers:** sqlparse token-level detection → forbidden keywords → max 3 JOINs → LIMIT enforcement → EXPLAIN cost check (≤10000) → 5s `statement_timeout`. SQLTool's `_execute` wraps all in BaseTool.execute() which catches all exceptions.
+- **`sanctions_registry` NOT in ALLOWED_TABLES:** Raw table is excluded from SQLTool and ReferenceTool. Use `v_sanctions_public` (migration 034 — PII-sanitized view). If you add a new tool or query that needs sanctions data, always reference the view.
 - **oracle_query_log table:** Migration `013_oracle_query_log.sql`. If table doesn't exist, `log_oracle_query()` in `database.py` silently no-ops (non-critical).
 - **Migrations are manual:** SQL files in `migrations/` applied via `psql` or `load_to_database.py --init-only`.
 - **CI test config:** GitHub Actions test step needs `GEMINI_API_KEY: "ci-fake-key-for-unit-tests"` env var + `--ignore=tests/test_sprint2_full.py` (e2e test requiring real DB).

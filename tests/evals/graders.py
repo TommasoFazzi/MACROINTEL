@@ -198,11 +198,20 @@ def grade_query_analyzer(output: dict, expected: dict) -> dict:
 # P4 — SQL Generation (grading deterministico, nessun LLM-as-judge)
 # ---------------------------------------------------------------------------
 
-# Tabelle consentite nel prompt di _generate_sql
+# Tabelle consentite nel prompt di _generate_sql (deve essere allineata con sql_tool.py ALLOWED_TABLES)
 SQL_ALLOWED_TABLES = {
+    # Tabelle core
     "articles", "chunks", "reports", "storylines", "entities",
     "entity_mentions", "trade_signals", "macro_indicators", "market_data",
     "article_storylines", "storyline_edges", "v_active_storylines", "v_storyline_graph",
+    # Knowledge Base expansion (migrations 027-034)
+    "country_profiles",
+    "v_sanctions_public",   # PII-sanitized view (migration 034)
+    "conflict_events",
+    "country_boundaries",
+    "strategic_infrastructure",
+    "macro_forecasts",
+    "trade_flow_indicators",
 }
 
 # Keyword DML/DDL che non devono mai comparire nell'SQL generato

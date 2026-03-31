@@ -1,6 +1,6 @@
 # INTELLIGENCE_ITA
 
-End-to-end geopolitical intelligence platform: 33+ RSS feeds → NLP → PostgreSQL/pgvector → Narrative Engine → RAG + LLM reports → Oracle 2.0 AI chat → FastAPI + Next.js frontend.
+End-to-end geopolitical intelligence platform: 33+ RSS feeds + Structured Entities (OpenSanctions) → NLP → PostgreSQL/pgvector/PostGIS → Narrative Engine → RAG + CoVe validation → FastAPI + Next.js frontend.
 
 ---
 
@@ -15,7 +15,7 @@ End-to-end geopolitical intelligence platform: 33+ RSS feeds → NLP → Postgre
 ## Architecture
 
 ```
-RSS Feeds (33+ sources)
+RSS Feeds (33+ sources) + Structured Data (OpenSanctions, UCDP, World Bank, IMF)
     │
     ▼
 Ingestion ── async aiohttp (parallel) ── Trafilatura → Scrapling → Newspaper3k
@@ -27,7 +27,7 @@ NLP Processing ── spaCy xx_ent_wiki_sm (NER) ── 384-dim embeddings
     │              Filtro 2: LLM relevance classification (Gemini 2.0 Flash)
     │
     ▼
-PostgreSQL + pgvector (HNSW index)
+PostgreSQL 17 + pgvector (HNSW index) + PostGIS (Geospatial)
     │
     ▼
 Narrative Engine ─────────────────────────────────────────────────────────────┐
@@ -43,6 +43,7 @@ Narrative Engine ─────────────────────
     │
     ▼
 RAG + LLM Report Generation (Gemini 2.5 Flash)
+    │  Chain-of-Verification (CoVe) framework for hallucination prevention
     │  Multi-query expansion → HNSW vector search (top-20) → cross-encoder reranking → top-10
     │  Narrative context: top-10 storylines injected as XML
     │  Sections: Executive Summary, Key Developments, Trend Analysis,
@@ -59,7 +60,7 @@ RAG + LLM Report Generation (Gemini 2.5 Flash)
              ▼
          Next.js 16 frontend
              ├── /dashboard  (reports list + detail + comparison delta)
-             ├── /map        (Mapbox GL geospatial entity map)
+             ├── /map        (Mapbox GL PostGIS geospatial entity map)
              ├── /stories    (react-force-graph-2d narrative network)
              └── /oracle     (Oracle 2.0 AI chat)
 
@@ -262,7 +263,8 @@ npm run dev    # http://localhost:3000
 
 ## Production Deploy — Docker
 
-Four services: `postgres` (pgvector:pg17), `backend` (FastAPI), `frontend` (Next.js standalone), `nginx` (reverse proxy + TLS termination).
+Microservices architecture with observability stack: `postgres` (pgvector/PostGIS:pg17), `backend` (FastAPI), `frontend` (Next.js standalone), `nginx` (reverse proxy). 
+Logs are managed via `promtail` and `loki`, and monitored in `grafana`.
 
 ```bash
 cp .env.example .env
@@ -585,10 +587,12 @@ Mock HTTP with `responses`; mock datetime with `freezegun`; async tests with `py
 | NLP | spaCy `xx_ent_wiki_sm` (multilingual) |
 | Clustering | scikit-learn HDBSCAN (≥ 1.3) |
 | Community detection | python-louvain + networkx |
-| Vector DB | PostgreSQL 17 + pgvector (HNSW index) |
+| Vector DB | PostgreSQL 17 + pgvector (HNSW index) + PostGIS |
+| Reliability & Tracing | Chain-of-Verification (CoVe) framework |
+| Observability | Grafana, Loki, Promtail (Docker Compose) |
 | Content extraction | Trafilatura, Scrapling (curl_cffi + Chromium), Newspaper3k |
 | PDF extraction | pymupdf4llm (Markdown output) |
-| Market Data | yfinance 0.2.66+ (curl_cffi), OpenBB v4, FRED |
+| Market & Risk Data | yfinance 0.2.66+ (curl_cffi), OpenBB v4, FRED, OpenSanctions, UCDP |
 | Backend | FastAPI + uvicorn + slowapi |
 | Schema validation | Pydantic v2 |
 | HITL dashboard | Streamlit |

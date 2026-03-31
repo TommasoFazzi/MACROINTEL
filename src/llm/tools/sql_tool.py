@@ -27,7 +27,7 @@ ALLOWED_TABLES: Set[str] = {
     "v_storyline_graph",
     # Knowledge Base expansion (Sprint 3-10)
     "country_profiles",
-    "sanctions_registry",
+    "v_sanctions_public",  # PII-sanitized view (migration 034) — use instead of sanctions_registry
     "conflict_events",
     "country_boundaries",
     "strategic_infrastructure",

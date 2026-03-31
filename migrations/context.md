@@ -79,6 +79,7 @@ Schema evolution layer that extends the core database as new features are added.
 - `031_strategic_infra.sql` — Creates `strategic_infrastructure` table with `Point` + `LineString` geometries, GIST indexes, and `infra_type` CHECK constraint (11 types). Populated by TeleGeography data.
 - `032_macro_forecasts.sql` — Creates `macro_forecasts` table for IMF WEO forward-looking projections with vintage tracking. Populated by `scripts/load_imf_weo.py`.
 - `033_trade_flow_indicators.sql` — Creates `trade_flow_indicators` table for bilateral trade data with commodity classification.
+- `034_sanctions_view.sql` — Creates `v_sanctions_public` view over `sanctions_registry`. Strips PII fields from `properties` JSONB (`birthDate`, `birthPlace`, `address`, `idNumber`, `taxNumber`, `passportNumber`, `nationalId`, `registrationNumber`, `phone`, `email`) using JSONB `-` operator. Rationale: pseudo Row-Level Security without PostgreSQL roles — all Oracle 2.0 tools (`SQLTool`, `ReferenceTool`) must query this view instead of the base table. Base table remains writable by data loaders.
 
 ### Ontological Layer (no migration required)
 
@@ -89,7 +90,8 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
 Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 001 through 019: Applied
 - 020 through 025: Applied (confirmed via memory: 018, 019, 024)
-- 026 through 033: **NOT YET APPLIED** — requires PostGIS container rebuild first
+- 026 through 033: **Applied** (2026-03-31) — PostGIS 3.6 confirmed; all reference data loaded
+- 034: **Not yet applied** — apply with: `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita < migrations/034_sanctions_view.sql`
 
 ## Execution Order
 
@@ -102,6 +104,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 028 → 029 → 031 (require PostGIS)
   → 030 (no spatial dependency)
   → 032 → 033 (no spatial dependency)
+  → 034 (view only — no spatial dependency, requires 030 applied first)
 ```
 
 Run a single migration:

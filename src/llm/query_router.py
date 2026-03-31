@@ -477,14 +477,68 @@ Respond ONLY with valid JSON:
 
     # ── SQL generation (for ANALYTICAL/MARKET) with injection sanitization ────
 
+    # Few-Shot SQL examples per table (Spider/BIRD benchmark evidence: +30% accuracy vs zero-shot)
+    # Each entry shows the canonical query pattern. Use as reference when generating similar queries.
+    _SQL_EXAMPLES: Dict[str, str] = {
+        "conflict_events": (
+            "-- Conflicts in a region with fatalities, ordered most recent first:\n"
+            "SELECT event_date, country, location, actor1, actor2, fatalities, event_type\n"
+            "FROM conflict_events\n"
+            "WHERE country ILIKE '%Sudan%'\n"
+            "  AND event_date >= CURRENT_DATE - INTERVAL '365 days'\n"
+            "ORDER BY event_date DESC LIMIT 50;"
+        ),
+        "macro_forecasts": (
+            "-- Latest IMF GDP growth forecasts for a country (auto-select latest vintage):\n"
+            "SELECT mf.year, mf.value, mf.unit, mf.vintage\n"
+            "FROM macro_forecasts mf\n"
+            "WHERE mf.iso3 = 'DEU' AND mf.indicator_code = 'NGDP_RPCH'\n"
+            "  AND mf.vintage = (SELECT MAX(vintage) FROM macro_forecasts WHERE iso3 = 'DEU')\n"
+            "ORDER BY mf.year LIMIT 10;"
+        ),
+        "v_sanctions_public": (
+            "-- Sanctioned entities in a country (ISO2), most recent first:\n"
+            "SELECT caption, schema_type, datasets, first_seen\n"
+            "FROM v_sanctions_public\n"
+            "WHERE 'RU' = ANY(countries)\n"
+            "ORDER BY last_seen DESC NULLS LAST LIMIT 30;"
+        ),
+        "country_profiles": (
+            "-- Compare GDP and debt for countries in a region:\n"
+            "SELECT name, iso3, gdp_usd, gdp_growth, debt_to_gdp, inflation\n"
+            "FROM country_profiles\n"
+            "WHERE region = 'Middle East & North Africa'\n"
+            "ORDER BY gdp_usd DESC NULLS LAST LIMIT 20;"
+        ),
+        "trade_flow_indicators": (
+            "-- Export flows for a country, most recent year first:\n"
+            "SELECT tf.year, tf.partner_iso3, cp.name AS partner, tf.value, tf.unit\n"
+            "FROM trade_flow_indicators tf\n"
+            "LEFT JOIN country_profiles cp ON tf.partner_iso3 = cp.iso3\n"
+            "WHERE tf.reporter_iso3 = 'CHN' AND tf.indicator_code = 'EXPORT_VALUE'\n"
+            "ORDER BY tf.year DESC, tf.value DESC NULLS LAST LIMIT 30;"
+        ),
+        "country_boundaries": (
+            "-- Countries whose territory is within 500km of a point (PostGIS):\n"
+            "SELECT cb.iso3, cb.name, cb.continent\n"
+            "FROM country_boundaries cb\n"
+            "WHERE ST_DWithin(cb.geom::geography, ST_Point(37.9, 21.5)::geography, 500000)\n"
+            "LIMIT 20;"
+        ),
+    }
+
     def _generate_sql(self, query: str) -> Optional[str]:
         """Layer 1: sanitize user query → LLM generates SQL → return for Layer 2 (SQLTool)."""
+        from datetime import date as _date
         sanitized = self._sanitize_user_query(query)
+        today = _date.today().isoformat()
 
         allowed_tables = (
             "articles, chunks, reports, storylines, entities, entity_mentions, "
             "trade_signals, macro_indicators, market_data, article_storylines, "
-            "storyline_edges, v_active_storylines, v_storyline_graph"
+            "storyline_edges, v_active_storylines, v_storyline_graph, "
+            "country_profiles, v_sanctions_public, conflict_events, country_boundaries, "
+            "strategic_infrastructure, macro_forecasts, trade_flow_indicators"
         )
 
         schema_hints = (
@@ -494,13 +548,45 @@ Respond ONLY with valid JSON:
             "- trade_signals: id, ticker, signal (BULLISH/BEARISH/NEUTRAL/WATCHLIST), timeframe, rationale, confidence, signal_date\n"
             "- entities: id, name, entity_type, intelligence_score\n"
             "- v_active_storylines: id, title, momentum_score, narrative_status (view of active storylines)\n"
-            "- reports: id, report_date, status, report_type, title"
+            "- reports: id, report_date, status, report_type, title\n"
+            "- conflict_events: event_date DATE, event_type ('1'=state-based,'2'=non-state,'3'=one-sided), "
+            "country TEXT, location TEXT, actor1 TEXT, actor2 TEXT, fatalities INT, geom GEOMETRY(Point,4326)\n"
+            "- macro_forecasts: iso3 CHAR(3), indicator_code TEXT (e.g. NGDP_RPCH=GDP growth, PCPIPCH=inflation, "
+            "LUR=unemployment, GGXWDG_NGDP=debt/GDP), year INT, value NUMERIC, unit TEXT, vintage TEXT\n"
+            "- v_sanctions_public: id TEXT, caption TEXT, schema_type TEXT, aliases TEXT[], "
+            "countries CHAR(2)[] (ISO2), datasets TEXT[], first_seen DATE, last_seen DATE\n"
+            "- country_profiles: iso3 CHAR(3), iso2 CHAR(2), name TEXT, region TEXT, "
+            "population BIGINT, gdp_usd NUMERIC, gdp_growth NUMERIC, inflation NUMERIC, "
+            "debt_to_gdp NUMERIC, governance_score NUMERIC, data_year INT\n"
+            "- trade_flow_indicators: reporter_iso3, partner_iso3 (NULL=total), indicator_code "
+            "(EXPORT_VALUE/IMPORT_VALUE/TRADE_BALANCE), year INT, value NUMERIC, unit TEXT\n"
+            "- country_boundaries: iso3, name, geom GEOMETRY(MultiPolygon,4326), continent, subregion"
         )
+
+        # Build few-shot examples block — only include tables relevant to the query
+        examples_block = ""
+        query_lower = sanitized.lower()
+        relevant_examples = []
+        table_keywords = {
+            "conflict_events": ["conflitt", "conflict", "guerra", "war", "attack", "attacco", "fatalities", "morti"],
+            "macro_forecasts": ["imf", "previsioni", "forecast", "pil", "gdp", "inflazione", "inflation", "disoccup"],
+            "v_sanctions_public": ["sanzioni", "sanction", "sanzionat", "blacklist"],
+            "country_profiles": ["paese", "country", "pil", "gdp", "regione", "region", "popolazione", "population"],
+            "trade_flow_indicators": ["export", "import", "commercio", "trade", "bilancia"],
+            "country_boundaries": ["confine", "boundary", "vicino", "near", "within", "distanza"],
+        }
+        for table, keywords in table_keywords.items():
+            if any(kw in query_lower for kw in keywords):
+                relevant_examples.append(self._SQL_EXAMPLES[table])
+        if relevant_examples:
+            examples_block = "\n## Examples of correct SQL patterns:\n" + "\n\n".join(relevant_examples) + "\n"
 
         prompt = f"""Generate a safe read-only SQL SELECT query for this intelligence database query.
 Database: PostgreSQL — use PostgreSQL syntax (e.g. NOW() - INTERVAL '7 days', not DATE_SUB/CURDATE).
+TODAY = {today}  -- Use CURRENT_DATE or this date for temporal filters. Default to last 365 days for event tables.
 Available tables: {allowed_tables}
 {schema_hints}
+{examples_block}
 User request: {sanitized}
 
 Rules:
@@ -509,6 +595,9 @@ Rules:
 - No subqueries returning more than 1000 rows
 - Only reference the allowed tables above
 - Add LIMIT 50 if not already present for non-aggregate (non-COUNT/SUM) queries
+- For sanctions queries, always use v_sanctions_public (not sanctions_registry)
+- For conflict queries, add event_date >= CURRENT_DATE - INTERVAL '365 days' unless the user asks for historical data
+- For macro_forecasts, always filter to the latest vintage with a subquery
 
 Output ONLY the SQL query, nothing else."""
 
