@@ -61,22 +61,49 @@ def _get_headers() -> dict:
         requests.exceptions.HTTPError,
     )),
 )
-def _fetch_page(page: int, page_size: int, year: int = None) -> dict:
-    """Fetch single UCDP page with exponential backoff on 429/502/504."""
-    params = {"pagesize": page_size, "page": page}
-    if year:
-        params["Year"] = year
-    resp = requests.get(UCDP_API, params=params, headers=_get_headers(), timeout=30)
+def _fetch_page(page: int = 0, page_size: int = 1000, year: int = None, url: str = None) -> dict:
+    """Fetch single UCDP page with exponential backoff on 429/502/504.
+    If 'url' is provided, it takes precedence (used for HATEOAS NextPageUrl).
+    """
+    headers = _get_headers()
+    
+    if url:
+        resp = requests.get(url, headers=headers, timeout=30)
+    else:
+        params = {"pagesize": page_size, "page": page}
+        if year:
+            params["Year"] = year
+        resp = requests.get(UCDP_API, params=params, headers=headers, timeout=30)
+    
+    if resp.status_code == 401 or resp.status_code == 403:
+        logger.error("❌ Authentication failed (401/403). Check UCDP_API_TOKEN in .env")
+        resp.raise_for_status()
+    elif resp.status_code == 429:
+        logger.warning("⚠️ Rate limit reached (5,000 requests/day). Cooling down...")
+        time.sleep(60)  # Wait 1 minute on 429
+        resp.raise_for_status()
+        
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
-    """Stream UCDP GED events via paginated API. Requires UCDP_API_TOKEN in .env."""
-    page = 0
+    """Stream UCDP GED events via paginated API. Requires UCDP_API_TOKEN in .env.
+    Uses NextPageUrl HATEOAS for pagination (compliant with 2026 API spec).
+    """
+    next_url = None
     total_yielded = 0
+    request_count = 0
+    MAX_DAILY_REQUESTS = 5000  # UCDP 2026 strict limit
+
     while True:
-        data = _fetch_page(page, page_size, year)
+        if request_count >= MAX_DAILY_REQUESTS:
+            logger.error(f"❌ Stop: Daily limit of {MAX_DAILY_REQUESTS} requests reached.")
+            break
+
+        data = _fetch_page(page_size=page_size, year=year, url=next_url)
+        request_count += 1
+        
         events = data.get("Result", [])
         if not events:
             break
@@ -88,8 +115,13 @@ def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
 
         yield events
         total_yielded += len(events)
-        page += 1
-        time.sleep(0.3)  # Base rate limiting between successful requests
+        
+        # Follow the HATEOAS link for the next page
+        next_url = data.get("NextPageUrl")
+        if not next_url:
+            break
+            
+        time.sleep(0.3)  # Base rate limiting
 
 
 def transform_event(raw: dict) -> dict:
