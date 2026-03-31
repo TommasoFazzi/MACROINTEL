@@ -73,7 +73,7 @@ services:
       INTELLIGENCE_API_URL: http://backend:8000
     volumes:
       - reports:/app/reports
-      - appdata:/app/data
+      - ./data:/app/data
       - logs:/app/logs
     networks:
       - internal
