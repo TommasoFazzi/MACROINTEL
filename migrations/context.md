@@ -80,6 +80,10 @@ Schema evolution layer that extends the core database as new features are added.
 - `032_macro_forecasts.sql` — Creates `macro_forecasts` table for IMF WEO forward-looking projections with vintage tracking. Populated by `scripts/load_imf_weo.py`.
 - `033_trade_flow_indicators.sql` — Creates `trade_flow_indicators` table for bilateral trade data with commodity classification.
 
+### Ontological Layer (no migration required)
+
+The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asset_theory_library.yaml` at application boot — singleton pattern, pure application-layer. Provides JIT theoretical context for the top anomalous macro indicators during report generation via `_generate_macro_analysis()`. No DB schema changes; reads existing `macro_indicators` table. USD_CNH added to `MACRO_INDICATORS` in `openbb_service.py` (36 total indicators).
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):

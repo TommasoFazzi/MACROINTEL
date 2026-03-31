@@ -95,7 +95,7 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 2. **NLP** (`src/nlp/`): spaCy multilingual NER (`xx_ent_wiki_sm`), semantic chunking (500-word sliding window), embeddings (`paraphrase-multilingual-MiniLM-L12-v2`, 384-dim), **LLM relevance classification** (Gemini-based scope filter)
 3. **Storage** (`src/storage/database.py`): PostgreSQL + pgvector with HNSW indexing, connection pooling (psycopg2 SimpleConnectionPool)
 4. **Narrative Engine** (`src/nlp/narrative_processor.py`): HDBSCAN micro-clustering of orphan events, embedding-based matching to existing storylines, LLM summary evolution (Gemini 2.0 Flash), TF-IDF weighted Jaccard entity-overlap graph edges (uses `entity_idf` materialized view), momentum scoring with decay, **post-clustering validation filter** (regex-based off-topic archival). Community detection via `scripts/compute_communities.py` (Louvain algorithm).
-5. **Report Generation** (`src/llm/`): Google Gemini 2.5 Flash, 2-stage RAG (vector search → cross-encoder reranking with ms-marco-MiniLM), **narrative storyline context** (top 10 storylines injected as XML), trade signal extraction, "Strategic Storyline Tracker" section
+5. **Report Generation** (`src/llm/`): Google Gemini 2.5 Flash, 2-stage RAG (vector search → cross-encoder reranking with ms-marco-MiniLM), **narrative storyline context** (top 10 storylines injected as XML), **JIT ontological context** (anomaly screener → OntologyManager → focused macro theory injection), trade signal extraction, "Strategic Storyline Tracker" section
 6. **HITL** (`src/hitl/`, `Home.py`): Streamlit dashboard for review, editing, rating, feedback loop
 7. **Automation** (`scripts/daily_pipeline.py`): 6 core steps (ingestion → market_data → nlp_processing → load_to_database → **narrative_processing** → generate_report) + 2 conditional steps (weekly_report on Sundays → monthly_recap after 4 weekly reports); scheduled via **GitHub Actions** on Hetzner
 
@@ -110,11 +110,12 @@ RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narr
 - `scripts/compute_communities.py` (~198 lines) — Louvain community detection for storyline graph (python-louvain + networkx); saves community_id to storylines table. Defaults: `min_weight=0.05`, `resolution=0.2`. After detection calls Gemini to generate descriptive `community_name`.
 - `scripts/geocode_geonames.py` — **Primary geocoder**: 4-step GeoNames + Gemini + Photon hybrid pipeline. Requires `geo_gazetteer` table (migration 023, populated by `load_geonames.py`).
 - `scripts/load_geonames.py` — Loads GeoNames allCountries.txt + alternateNames.txt into `geo_gazetteer` (~2-3M rows, one-time ~15 min).
-- `src/integrations/openbb_service.py` (~1026 lines) — OpenBB financial data integration
+- `src/integrations/openbb_service.py` (~1026 lines) — OpenBB financial data integration (36 MACRO_INDICATORS incl. USD_CNH)
+- `src/knowledge/ontology_manager.py` — **OntologyManager** singleton: loads `config/asset_theory_library.yaml` (35 indicator ontologies + causal correlation maps), `screen_anomalies()` identifies top movers by delta %, `build_jit_context()` assembles focused theory for LLM injection into `_generate_macro_analysis()`
 - `src/llm/oracle_engine.py` (~566 lines) — Oracle 1.0 RAG chat engine (backward-compat, used by Streamlit HITL)
 - `src/llm/oracle_orchestrator.py` — **Oracle 2.0 main coordinator**: ToolRegistry + QueryRouter + ConversationMemory + caching + LLM synthesis + anti-hallucination; `get_oracle_orchestrator_singleton()` for FastAPI
 - `src/llm/query_router.py` — Intent classification (Gemini 2.5 Flash) + QueryPlan generation; double-layer SQL injection defense
-- `src/llm/tools/` — Tool package: RAGTool (multi-query expansion + time-weighted decay), SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool, TickerThemesTool, ReportCompareTool
+- `src/llm/tools/` — Tool package: RAGTool (multi-query expansion + time-weighted decay), SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool, TickerThemesTool, ReportCompareTool, ReferenceTool, SpatialTool
 - `src/api/main.py` + `src/api/auth.py` + `src/api/routers/` — FastAPI backend: X-API-Key auth (`secrets.compare_digest`), CORS (GET+POST), slowapi rate limiting, routers for dashboard/reports/stories/map/**oracle**
 
 ### Web Platform (Next.js)
