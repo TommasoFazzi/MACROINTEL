@@ -316,6 +316,13 @@ class RAGTool(BaseTool):
                         sources=sources,
                         gpe_entities=gpe_filter,
                     )
+                    if not results and gpe_filter:
+                        results = self.db.semantic_search(
+                            query_embedding=q_emb, top_k=per_query_k,
+                            category=categories[0] if categories else None,
+                            start_date=start_date, end_date=end_date, sources=sources,
+                            gpe_entities=None,
+                        )
                 elif search_type == "keyword":
                     results = self.db.full_text_search(
                         query=q_text,
@@ -326,6 +333,13 @@ class RAGTool(BaseTool):
                         sources=sources,
                         gpe_entities=gpe_filter,
                     )
+                    if not results and gpe_filter:
+                        results = self.db.full_text_search(
+                            query=q_text, top_k=per_query_k,
+                            category=categories[0] if categories else None,
+                            start_date=start_date, end_date=end_date, sources=sources,
+                            gpe_entities=None,
+                        )
                 else:  # hybrid
                     results = self.db.hybrid_search(
                         query=q_text,
@@ -337,6 +351,13 @@ class RAGTool(BaseTool):
                         sources=sources,
                         gpe_entities=gpe_filter,
                     )
+                    if not results and gpe_filter:
+                        results = self.db.hybrid_search(
+                            query=q_text, query_embedding=q_emb, top_k=per_query_k,
+                            category=categories[0] if categories else None,
+                            start_date=start_date, end_date=end_date, sources=sources,
+                            gpe_entities=None,
+                        )
                 all_chunks.append(results)
 
             if len(all_chunks) > 1:
