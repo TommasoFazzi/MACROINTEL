@@ -28,13 +28,17 @@ logger = get_logger(__name__)
 _BLOCKLIST_PATTERNS: List[re.Pattern] = [
     re.compile(p, re.IGNORECASE) for p in [
         # --- Sports ---
-        r'\b(?:NBA|NFL|NHL|MLB|MLS|UFC|ATP|WTA|FIFA|UEFA|ICC)\b',
+        # NOTE: ICC excluded — ambiguous with International Criminal Court (geopolitical entity)
+        # NOTE: UFC excluded — appears in sanctions/geopolitical contexts (e.g. "ex-UFC fighter sanctioned")
+        r'\b(?:NBA|NFL|NHL|MLB|MLS|ATP|WTA|FIFA|UEFA)\b',
         r'\b(?:Premier League|La Liga|Serie A|Bundesliga|Ligue 1|Champions League)\b',
         r'\b(?:Super Bowl|World Series|Grand Slam|Grand Prix|MotoGP|Formula [12])\b',
         r'\b(?:Australian Open|Roland Garros|Wimbledon|US Open Tennis)\b',
         r'\b(?:T20|ODI|Test cricket|IPL|Ashes)\b',
         r'\b(?:Lakers|Warriors|Celtics|Yankees|Cowboys|Patriots)\b',
-        r'\b(?:Real Madrid|Barcelona|Man(?:chester)? (?:United|City)|Arsenal|Liverpool|Chelsea|Tottenham|Juventus|PSG|Bayern)\b',
+        # Arsenal requires football club context to avoid blocking "arsenal" as military term
+        r'\b(?:Real Madrid|Barcelona|Man(?:chester)? (?:United|City)|Arsenal\s+F\.?C\.?|Liverpool\s+F\.?C\.?|Chelsea\s+F\.?C\.?|Tottenham|Juventus|PSG|Bayern)\b',
+        r'\bArsenal\b(?!\s+(?:of|as|beneath|weapon|missile|military|air|naval|nuclear|bomb|drone|stockpile|cache|depot))',
         r'\b(?:Ronaldo|Messi|Guardiola|Mourinho|Klopp)\b',
         # --- Entertainment ---
         r'\b(?:Grammy|Oscar|Emmy|Golden Globe|BAFTA|Cannes Film)\b',

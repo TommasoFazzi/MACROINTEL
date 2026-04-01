@@ -2,10 +2,10 @@
 Integration test: SpatialTool + RAGTool multimodal query routing.
 
 Verifies that:
-1. QueryRouter classifies spatial queries with SPATIAL intent
+1. SpatialQuerySpec validates and clamps parameters correctly
 2. SpatialTool produces valid structured results
-3. SpatialQuerySpec validates and clamps parameters correctly
-4. QueryRouter builds correct spec from natural language queries
+3. SpatialQuerySpec correctly represents common spatial query patterns
+   (in agentic mode the LLM generates the spec via function calling)
 
 Run: pytest tests/test_llm/test_spatial_multimodal.py -v
 """
@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.llm.schemas import QueryIntent, QueryComplexity, ExecutionStep, QueryPlan
 from src.llm.tools.spatial_tool import SpatialQuerySpec, SpatialTool, ALLOWED_INFRA_TYPES
 
 
@@ -137,58 +136,44 @@ class TestSpatialToolQueryBuilder:
         assert self.tool._build_conflict_block(spec, center) is None
 
 
-# ── QueryRouter SPATIAL intent tests ───────────────────────────────────────────
+# ── SpatialQuerySpec construction tests (agentic architecture) ─────────────────
+#
+# In Oracle 2.0 agentic mode, the LLM generates the SpatialQuerySpec via the
+# function calling interface. These tests verify that SpatialQuerySpec correctly
+# accepts the parameters the LLM would produce for common spatial query patterns.
 
 class TestSpatialRouting:
-    """Test that QueryRouter correctly routes spatial queries."""
+    """Test that SpatialQuerySpec correctly represents common spatial query patterns."""
 
     def test_select_tools_spatial(self):
-        """Test that SPATIAL intent produces spatial_query + rag_search tools."""
-        from src.llm.query_router import QueryRouter
-
-        router = QueryRouter(llm=MagicMock())
-
-        # Directly call _select_tools with SPATIAL intent
-        tool_names, steps = router._select_tools(
-            intent=QueryIntent.SPATIAL,
-            complexity=QueryComplexity.MEDIUM,
-            query="Infrastructure near UKR within 300km",
+        """Test spec for infrastructure-near-country query."""
+        spec = SpatialQuerySpec(
+            center_iso3="UKR",
+            radius_km=300,
+            include_infrastructure=True,
+            include_conflicts=True,
         )
-
-        assert "spatial_query" in tool_names
-        assert "rag_search" in tool_names
-        assert len(steps) == 2
-
-        # First step should be spatial_query with spec
-        spatial_step = steps[0]
-        assert spatial_step.tool_name == "spatial_query"
-        assert "spec" in spatial_step.parameters
-        spec = spatial_step.parameters["spec"]
-        assert spec.get("center_iso3") == "UKR"
+        assert spec.center_iso3 == "UKR"
+        assert spec.radius_km == 300
+        assert spec.include_infrastructure is True
+        assert spec.include_conflicts is True
 
     def test_spatial_radius_extraction(self):
-        """Test radius extraction from query."""
-        from src.llm.query_router import QueryRouter
-
-        router = QueryRouter(llm=MagicMock())
-        _, steps = router._select_tools(
-            intent=QueryIntent.SPATIAL,
-            complexity=QueryComplexity.MEDIUM,
-            query="Conflicts within 500km of UKR",
+        """Test that explicit radius is stored correctly."""
+        spec = SpatialQuerySpec(
+            center_iso3="UKR",
+            radius_km=500,
+            include_infrastructure=False,
+            include_conflicts=True,
         )
-        spec = steps[0].parameters["spec"]
-        assert spec.get("radius_km") == 500
+        assert spec.radius_km == 500
 
     def test_spatial_conflict_only(self):
-        """Test that conflict-only keywords disable infrastructure."""
-        from src.llm.query_router import QueryRouter
-
-        router = QueryRouter(llm=MagicMock())
-        _, steps = router._select_tools(
-            intent=QueryIntent.SPATIAL,
-            complexity=QueryComplexity.MEDIUM,
-            query="Active conflicts and wars near UKR",
+        """Test conflict-only spec (infrastructure disabled)."""
+        spec = SpatialQuerySpec(
+            center_iso3="UKR",
+            include_infrastructure=False,
+            include_conflicts=True,
         )
-        spec = steps[0].parameters["spec"]
-        assert spec.get("include_infrastructure") is False
-        assert spec.get("include_conflicts") is True
+        assert spec.include_infrastructure is False
+        assert spec.include_conflicts is True
