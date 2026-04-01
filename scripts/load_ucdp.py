@@ -7,11 +7,22 @@ and inserts into the conflict_events table with PostGIS Point geometries.
 
 Uses tenacity exponential backoff for API resilience.
 
+Two dataset modes:
+  - Stable GED (default): UCDP_GED_API — verified data, coverage through 2024-12-31
+  - GED Candidate (--candidate): UCDP_CANDIDATE_API — provisional monthly data,
+    coverage through ~Feb 2026 (version 26.0.2). Supports StartDate/EndDate filtering.
+
 Usage:
-    python scripts/load_ucdp.py                 # Load all events
-    python scripts/load_ucdp.py --dry-run        # Count events without saving
-    python scripts/load_ucdp.py --year 2024      # Filter by year
-    python scripts/load_ucdp.py --limit 5000     # Limit total events
+    python scripts/load_ucdp.py                              # Full stable load (1989-2024)
+    python scripts/load_ucdp.py --dry-run                    # Count without saving
+    python scripts/load_ucdp.py --limit 5000                 # Limit events fetched
+    python scripts/load_ucdp.py --candidate                  # Full candidate load
+    python scripts/load_ucdp.py --candidate --start-date 2025-01-01   # 2025+ only
+    python scripts/load_ucdp.py --candidate --start-date 2025-01-01 --end-date 2025-12-31
+
+NOTE: The stable GED endpoint ignores StartDate/EndDate/Year filters — it always
+returns all events. Use --candidate for date-filtered incremental updates.
+Deduplication is handled via ON CONFLICT on data_source_id.
 """
 
 import sys
@@ -36,7 +47,12 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-UCDP_API = "https://ucdpapi.pcr.uu.se/api/gedevents/25.1"
+# Stable GED: verified data, updated annually. v25.1 covers 1989–2024-12-31.
+UCDP_GED_API = "https://ucdpapi.pcr.uu.se/api/gedevents/25.1"
+
+# GED Candidate: provisional monthly data. v26.0.2 covers up to ~Feb 2026.
+# Supports StartDate/EndDate filters for incremental updates.
+UCDP_CANDIDATE_API = "https://ucdpapi.pcr.uu.se/api/gedeventscandidate/26.0.2"
 
 
 def _get_headers() -> dict:
@@ -61,35 +77,51 @@ def _get_headers() -> dict:
         requests.exceptions.HTTPError,
     )),
 )
-def _fetch_page(page: int = 0, page_size: int = 1000, year: int = None, url: str = None) -> dict:
+def _fetch_page(
+    base_url: str,
+    page_size: int = 1000,
+    start_date: str = None,
+    end_date: str = None,
+    url: str = None,
+) -> dict:
     """Fetch single UCDP page with exponential backoff on 429/502/504.
     If 'url' is provided, it takes precedence (used for HATEOAS NextPageUrl).
+    StartDate/EndDate only work on the Candidate endpoint.
     """
     headers = _get_headers()
-    
+
     if url:
         resp = requests.get(url, headers=headers, timeout=30)
     else:
-        params = {"pagesize": page_size, "page": page}
-        if year:
-            params["Year"] = year
-        resp = requests.get(UCDP_API, params=params, headers=headers, timeout=30)
-    
-    if resp.status_code == 401 or resp.status_code == 403:
+        params = {"pagesize": page_size}
+        if start_date:
+            params["StartDate"] = start_date
+        if end_date:
+            params["EndDate"] = end_date
+        resp = requests.get(base_url, params=params, headers=headers, timeout=30)
+
+    if resp.status_code in (401, 403):
         logger.error("❌ Authentication failed (401/403). Check UCDP_API_TOKEN in .env")
         resp.raise_for_status()
     elif resp.status_code == 429:
         logger.warning("⚠️ Rate limit reached (5,000 requests/day). Cooling down...")
-        time.sleep(60)  # Wait 1 minute on 429
+        time.sleep(60)
         resp.raise_for_status()
-        
+
     resp.raise_for_status()
     return resp.json()
 
 
-def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
+def fetch_ucdp_events(
+    base_url: str,
+    page_size: int = 1000,
+    start_date: str = None,
+    end_date: str = None,
+    max_events: int = None,
+):
     """Stream UCDP GED events via paginated API. Requires UCDP_API_TOKEN in .env.
     Uses NextPageUrl HATEOAS for pagination (compliant with 2026 API spec).
+    StartDate/EndDate filtering only effective on the Candidate endpoint.
     """
     next_url = None
     total_yielded = 0
@@ -101,9 +133,15 @@ def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
             logger.error(f"❌ Stop: Daily limit of {MAX_DAILY_REQUESTS} requests reached.")
             break
 
-        data = _fetch_page(page_size=page_size, year=year, url=next_url)
+        data = _fetch_page(
+            base_url=base_url,
+            page_size=page_size,
+            start_date=start_date,
+            end_date=end_date,
+            url=next_url,
+        )
         request_count += 1
-        
+
         events = data.get("Result", [])
         if not events:
             break
@@ -115,12 +153,11 @@ def fetch_ucdp_events(page_size=1000, year=None, max_events=None):
 
         yield events
         total_yielded += len(events)
-        
-        # Follow the HATEOAS link for the next page
+
         next_url = data.get("NextPageUrl")
         if not next_url:
             break
-            
+
         time.sleep(0.3)  # Base rate limiting
 
 
@@ -166,16 +203,26 @@ INSERT_SQL = """
 def main():
     parser = argparse.ArgumentParser(description="Load UCDP GED conflict events")
     parser.add_argument('--dry-run', action='store_true', help='Count events without saving')
-    parser.add_argument('--year', type=int, help='Filter by specific year')
+    parser.add_argument('--candidate', action='store_true',
+                        help='Use GED Candidate endpoint (provisional, more recent data)')
+    parser.add_argument('--start-date', type=str, metavar='YYYY-MM-DD',
+                        help='Filter by start date (Candidate endpoint only)')
+    parser.add_argument('--end-date', type=str, metavar='YYYY-MM-DD',
+                        help='Filter by end date (Candidate endpoint only)')
     parser.add_argument('--limit', type=int, help='Maximum events to fetch')
     args = parser.parse_args()
+
+    base_url = UCDP_CANDIDATE_API if args.candidate else UCDP_GED_API
 
     logger.info("=" * 80)
     logger.info("UCDP GED CONFLICT EVENTS LOADER")
     logger.info("=" * 80)
-
-    if args.year:
-        logger.info(f"Filtering by year: {args.year}")
+    logger.info(f"Endpoint: {'GED Candidate (provisional)' if args.candidate else 'GED Stable'}")
+    logger.info(f"URL: {base_url}")
+    if args.start_date:
+        logger.info(f"Start date: {args.start_date}")
+    if args.end_date:
+        logger.info(f"End date: {args.end_date}")
     if args.limit:
         logger.info(f"Maximum events: {args.limit}")
 
@@ -186,7 +233,13 @@ def main():
 
     db = None if args.dry_run else DatabaseManager()
 
-    for batch in fetch_ucdp_events(page_size=1000, year=args.year, max_events=args.limit):
+    for batch in fetch_ucdp_events(
+        base_url=base_url,
+        page_size=1000,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        max_events=args.limit,
+    ):
         total_pages += 1
         total_events += len(batch)
         logger.info(f"  Page {total_pages}: {len(batch)} events (total: {total_events})")
