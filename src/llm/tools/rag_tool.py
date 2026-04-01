@@ -269,7 +269,7 @@ class RAGTool(BaseTool):
     def _execute(self, **kwargs) -> ToolResult:
         query: str = kwargs["query"]
         mode: str = kwargs.get("mode", "both")
-        top_k: int = kwargs.get("top_k", 10)
+        top_k: int = int(kwargs.get("top_k", 10))
         filters: Dict = kwargs.get("filters") or {}
         multi_query: Optional[List[str]] = kwargs.get("multi_query")
 
@@ -288,7 +288,7 @@ class RAGTool(BaseTool):
         time_decay_k = filters.get("time_decay_k", DEFAULT_DECAY_K)
         decay_active = time_decay_k is not None and time_decay_k > 0
         # Over-fetch when decay active to avoid Top-K bias
-        fetch_k = top_k * OVER_FETCH_MULTIPLIER if decay_active else top_k
+        fetch_k = int(top_k * OVER_FETCH_MULTIPLIER) if decay_active else top_k
 
         chunks: List[Dict] = []
         reports: List[Dict] = []
@@ -303,7 +303,7 @@ class RAGTool(BaseTool):
             logger.info(f"Multi-query expansion: {len(query_variants)} total queries")
 
         if mode in ("both", "factual"):
-            per_query_k = max(fetch_k // len(query_variants), top_k) if len(query_variants) > 1 else fetch_k
+            per_query_k = int(max(fetch_k // len(query_variants), top_k)) if len(query_variants) > 1 else fetch_k
             all_chunks = []
             for q_text, q_emb in query_variants:
                 if search_type == "vector":
