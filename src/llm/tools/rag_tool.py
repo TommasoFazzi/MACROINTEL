@@ -265,6 +265,7 @@ class RAGTool(BaseTool):
 
     DEFAULT_MIN_SIMILARITY = 0.30
     DEFAULT_CONTEXT_MAX_CHARS = 60000
+    HISTORY_MAX_CHARS = 50000  # Override base class (8000) — Gemini 2.5 Flash supports 1M tokens
 
     def _execute(self, **kwargs) -> ToolResult:
         query: str = kwargs["query"]
@@ -374,6 +375,11 @@ class RAGTool(BaseTool):
                 start_date=start_date,
                 end_date=end_date,
             )
+            # Pre-extract focused excerpt per report (Executive Summary + most relevant section)
+            # Avoids naive head-truncation which misses sections in the middle of 30k reports
+            for report in reports:
+                full_content = report.get("final_content") or report.get("draft_content", "")
+                report["relevant_excerpt"] = self._extract_report_excerpt(full_content, query)
 
         # ── Deduplicate chunks: keep highest-scoring chunk per article ────
         if chunks:
@@ -409,21 +415,25 @@ class RAGTool(BaseTool):
             # Time-shifting: use end_date as reference for historical queries
             ref_date = filters.get("time_decay_reference")
 
+            # When cross-encoder has reranked, decay on rerank_score so we preserve
+            # the cross-encoder ordering instead of reverting to raw similarity.
+            effective_score_field = "rerank_score" if has_reranked else score_field
+
             if chunks:
                 chunks = apply_time_decay(
                     chunks, decay_k=time_decay_k,
-                    date_field="published_date", score_field=score_field,
+                    date_field="published_date", score_field=effective_score_field,
                     reference_date=ref_date,
                 )
-                
-                # Apply floor ONLY if score is similarity. FTS and Fusion scores have different scales.
-                if score_field == "similarity":
-                    filtered = [c for c in chunks if c.get(score_field, 0) >= MIN_DECAYED_SCORE]
-                    chunks = filtered if filtered else chunks
 
-                # Authority-weighted re-ranking: normalized weighted sum (alpha=0.15)
-                auth_score_field = "rerank_score" if has_reranked else score_field
-                chunks = apply_authority_rerank(chunks, score_field=auth_score_field)
+                # Log how many chunks fall below the quality floor (informational only —
+                # no hard filter, to avoid discarding high-rerank/low-similarity chunks)
+                below_floor = [c for c in chunks if c.get(effective_score_field, 0) < MIN_DECAYED_SCORE]
+                if below_floor:
+                    logger.debug(f"Decay floor info: {len(below_floor)} chunks below {MIN_DECAYED_SCORE} (kept)")
+
+                # Authority-weighted re-ranking as final tiebreaker (alpha=0.15)
+                chunks = apply_authority_rerank(chunks, score_field=effective_score_field)
                 chunks = chunks[:top_k]
 
             if reports:
@@ -438,7 +448,7 @@ class RAGTool(BaseTool):
             ref_label = ref_date.isoformat()[:10] if ref_date else "now"
             logger.info(
                 f"Time decay applied: k={time_decay_k:.3f}, ref={ref_label}, "
-                f"chunks={len(chunks)}, reports={len(reports)}"
+                f"score_field={effective_score_field}, chunks={len(chunks)}, reports={len(reports)}"
             )
 
         # ── Recency boost: ensure fresh reports are present (ONLY when explicitly requested) ──
@@ -494,6 +504,74 @@ class RAGTool(BaseTool):
         return ToolResult(success=True, data=data, metadata=metadata)
 
     @staticmethod
+    def _extract_report_excerpt(content: str, query: str, exec_summary_chars: int = 2500, section_chars: int = 2500) -> str:
+        """Extract a focused excerpt from a report: Executive Summary + most query-relevant section.
+
+        Reports follow a fixed structure (Executive Summary → Focus Areas → Trend Analysis →
+        Implications → Storylines). Section titles are generic ("Geopolitics", "Economy"),
+        so relevance is scored by keyword frequency in the section BODY, not the title.
+
+        Args:
+            content: Full report markdown content (~30,000 chars).
+            query: The user's search query (used to score section relevance).
+            exec_summary_chars: Max chars to include from the Executive Summary section.
+            section_chars: Max chars to include from the most relevant non-summary section.
+
+        Returns:
+            Focused excerpt: Executive Summary + best matching section (max ~5,000 chars total).
+            Falls back to first `exec_summary_chars + section_chars` chars if no sections found.
+        """
+        import re
+
+        # Tokenize query into lowercase keywords (2+ chars, alpha only)
+        query_tokens = {w.lower() for w in query.replace("-", " ").split() if len(w) >= 2 and w.isalpha()}
+
+        # Split by level-2 markdown headers (## Title), keeping the header in each chunk
+        section_pattern = re.compile(r'(?=\n## )', re.MULTILINE)
+        raw_sections = section_pattern.split(content)
+
+        if not raw_sections or len(raw_sections) < 2:
+            # No markdown structure — naive truncation as fallback
+            return content[:exec_summary_chars + section_chars]
+
+        # Parse sections into (title_lower, full_text) pairs
+        header_re = re.compile(r'^##\s+(.+)', re.MULTILINE)
+        parsed = []
+        for sec in raw_sections:
+            m = header_re.search(sec)
+            title = m.group(1).strip().lower() if m else ""
+            parsed.append((title, sec))
+
+        # Find Executive Summary section by title keyword
+        exec_summary = ""
+        EXEC_KEYWORDS = ("executive", "sintesi", "summary", "esecutiva", "overview")
+        for title, body in parsed:
+            if any(kw in title for kw in EXEC_KEYWORDS):
+                exec_summary = body[:exec_summary_chars]
+                break
+        # Fallback: use preamble (first raw chunk, before any ## header)
+        if not exec_summary:
+            exec_summary = parsed[0][1][:exec_summary_chars]
+
+        # Score ALL sections by keyword frequency in body text (excluding exec summary)
+        best_section = ""
+        best_score = 0
+        for title, body in parsed:
+            if any(kw in title for kw in EXEC_KEYWORDS):
+                continue  # skip exec summary — already included above
+            body_lower = body.lower()
+            score = sum(body_lower.count(tok) for tok in query_tokens)
+            if score > best_score:
+                best_score = score
+                best_section = body[:section_chars]
+
+        if best_score == 0 or not best_section:
+            # No keyword match (generic/broad query) — return exec summary with more room
+            return exec_summary[:exec_summary_chars + section_chars]
+
+        return exec_summary + "\n\n---\n" + best_section
+
+    @staticmethod
     def _rrf_merge(result_lists: List[List[Dict]], id_field: str = "chunk_id", k: int = 60) -> List[Dict]:
         """Reciprocal Rank Fusion across multiple result lists."""
         scores: Dict[Any, float] = {}
@@ -533,39 +611,11 @@ class RAGTool(BaseTool):
         chunk_score_field = "rerank_score" if chunks and "rerank_score" in chunks[0] else SEARCH_TYPE_SCORE_FIELD.get(search_type, "similarity")
         parts = []
         current_len = 0
-        
-        report_budget = 24000
-        report_len = 0
 
-        for i, report in enumerate(reports, 1):
-            if report_len >= report_budget:
-                break
-            report_date = report.get("report_date")
-            date_str = (
-                report_date.strftime("%d/%m/%Y")
-                if hasattr(report_date, "strftime")
-                else (str(report_date)[:10] if report_date else "N/A")
-            )
-            content = (report.get("final_content") or report.get("draft_content", ""))[:12000]
-            score_line = self._score_line(report, "similarity")
-            doc = (
-                f"\n<DOCUMENTO_{i}>\n"
-                f"Tipo: REPORT\nID: {report.get('id', 'N/A')}\n"
-                f"Data: {date_str}\nStatus: {report.get('status', 'draft')}\n"
-                f"{score_line}\n\n"
-                f"[INIZIO_TESTO]\n{content}\n[FINE_TESTO]\n"
-                f"</DOCUMENTO_{i}>\n"
-            )
-            if report_len + len(doc) > report_budget and i > 1:
-                break
-            if current_len + len(doc) > self.DEFAULT_CONTEXT_MAX_CHARS:
-                break
-            parts.append(doc)
-            report_len += len(doc)
-            current_len += len(doc)
-
-        offset = len(reports) + 1
-        for j, chunk in enumerate(chunks, offset):
+        # ── Chunks (articles) FIRST — specific factual sources go in before reports ──
+        # Reports are daily briefings (generic) — articles are the targeted evidence.
+        # Ordering articles first ensures they are never starved by long report content.
+        for j, chunk in enumerate(chunks, 1):
             pub_date = chunk.get("published_date")
             date_str = (
                 pub_date.strftime("%d/%m/%Y")
@@ -588,6 +638,38 @@ class RAGTool(BaseTool):
             if current_len + len(doc) > self.DEFAULT_CONTEXT_MAX_CHARS:
                 break
             parts.append(doc)
+            current_len += len(doc)
+
+        # ── Reports AFTER — strategic context, max 2, using smart excerpt ──
+        # Each report contributes Executive Summary + most query-relevant section (~5,000 chars).
+        # Pre-computed by _extract_report_excerpt() in _execute(), stored as "relevant_excerpt".
+        REPORT_BUDGET = 12000  # max chars for all reports combined (~2 reports × 5,000 chars)
+        report_len = 0
+        offset = len(chunks) + 1
+        for i, report in enumerate(reports, offset):
+            if report_len >= REPORT_BUDGET:
+                break
+            report_date = report.get("report_date")
+            date_str = (
+                report_date.strftime("%d/%m/%Y")
+                if hasattr(report_date, "strftime")
+                else (str(report_date)[:10] if report_date else "N/A")
+            )
+            # Use smart excerpt (Executive Summary + relevant section), fall back to head-truncation
+            content = report.get("relevant_excerpt") or (report.get("final_content") or report.get("draft_content", ""))[:5000]
+            score_line = self._score_line(report, "similarity")
+            doc = (
+                f"\n<DOCUMENTO_{i}>\n"
+                f"Tipo: REPORT\nID: {report.get('id', 'N/A')}\n"
+                f"Data: {date_str}\nStatus: {report.get('status', 'draft')}\n"
+                f"{score_line}\n\n"
+                f"[INIZIO_TESTO]\n{content}\n[FINE_TESTO]\n"
+                f"</DOCUMENTO_{i}>\n"
+            )
+            if current_len + len(doc) > self.DEFAULT_CONTEXT_MAX_CHARS:
+                break
+            parts.append(doc)
+            report_len += len(doc)
             current_len += len(doc)
 
         return "\n".join(parts) if parts else "[RAG: nessun documento trovato]"

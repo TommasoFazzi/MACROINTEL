@@ -35,7 +35,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - **Architecture**: Native Gemini Function Calling agentic loop (max 4 iterations) replaces the static QueryRouter → Tool Plan → Synthesis pipeline
   - `_create_agentic_model()` — creates `GenerativeModel` with all 9 tool `FunctionDeclaration` objects and system SOPs; called inside `_byok_lock` for BYOK users
   - `_build_system_prompt()` — encodes 9 Standard Operating Procedures (PATH FACTUAL / ANALYTICAL / OVERVIEW / MARKET / REFERENCE / NARRATIVE / TICKER / SPATIAL / COMPARATIVE) with intent-based time decay K values (FACTUAL=0.03, ANALYTICAL=0.015, NARRATIVE=0.02, MARKET=0.04, COMPARATIVE=0.015, TICKER=0.03, OVERVIEW=0.005, REFERENCE=0.001, SPATIAL=0.005). Includes explicit fallback rules (try rag_search after sql returns 0) and PATH SPATIAL trigger keywords ("km", "raggio", "epicentro", "infrastrutture vicino a")
-  - `_process_agentic()` — runs `start_chat(history=serialized_session)` + iterative function call loop; each tool result compressed to 8000 chars via `format_for_history()` before being added to history; full data retained in `result.data` for source collection
+  - `_process_agentic()` — runs `start_chat(history=serialized_session)` + iterative function call loop; each tool result compressed via `format_for_history()` before being added to history (RAGTool overrides to 50,000 chars); full data retained in `result.data` for source collection
   - **Anti-hallucination guard**: fires ONLY when `answer` is empty AND all tools returned empty data — does NOT override an LLM-synthesized response (fix: was unconditionally overwriting `answer`)
   - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
   - `TTLCache` for SQL results (5min) preserved; intent cache removed (routing handled by LLM)
@@ -55,13 +55,13 @@ Intelligence synthesis layer that consumes context from the vector database and 
 
 - `tools/` - **Oracle 2.0 tool registry**
   - `base.py` - `BaseTool` ABC + `ToolResult` Pydantic model
-    - `format_for_history()` — compresses tool output to max 8000 chars for chat history
+    - `format_for_history()` — compresses tool output to max `HISTORY_MAX_CHARS` chars for chat history (default 8000; overridden to 50000 in RAGTool)
     - `_json_schema_to_genai_schema()` — recursive classmethod converts JSON Schema dict → `genai.protos.Schema`
     - `to_function_declaration()` — classmethod generates `genai.protos.FunctionDeclaration` from class schema
     - All tools have mandatory `rationale` as first parameter (CoT forcing; empirical +20-35% SQL accuracy on Spider/BIRD)
   - `registry.py` - `ToolRegistry` with lazy instantiation
     - `get_function_declarations()` — returns list of `genai.protos.FunctionDeclaration` for all registered tools
-  - `rag_tool.py` - `RAGTool` - hybrid search with **time-weighted decay**: `score * exp(-k * days_old)` post-retrieval. Over-fetch 3x to avoid Top-K bias, min floor 0.15, K dinamico per intent (FACTUAL=0.03, MARKET=0.04, ANALYTICAL=0.015), time-shifting for historical queries (reference_date = end_date)
+  - `rag_tool.py` - `RAGTool` - hybrid search with **time-weighted decay**: `score * exp(-k * days_old)` post-retrieval. Over-fetch 3x to avoid Top-K bias, K dinamico per intent (FACTUAL=0.03, MARKET=0.04, ANALYTICAL=0.015), time-shifting for historical queries (reference_date = end_date). `HISTORY_MAX_CHARS=50000` (overrides base class 8000 — Gemini 2.5 Flash handles 1M tokens). **Context assembly**: chunks (articles) formatted FIRST, reports after with `_extract_report_excerpt()` (Executive Summary + most query-relevant section, max 5,000 chars per report). **Reranking pipeline**: RRF (multi-query) → cross-encoder → time-decay on `rerank_score` when cross-encoder ran → authority rerank (alpha=0.15). MIN_DECAYED_SCORE is informational only (no hard filter) to avoid discarding high cross-encoder / low similarity chunks.
   - `sql_tool.py` - `SQLTool` - LLM-generated SQL with 5-layer safety (sqlparse, forbidden keywords, max 3 JOINs, LIMIT enforcement, EXPLAIN cost check ≤10000, 5s timeout). `ALLOWED_TABLES` includes knowledge base expansion tables; uses `v_sanctions_public` (not raw `sanctions_registry`).
   - `aggregation_tool.py` - `AggregationTool` - pre-parametrized stats (trend_over_time, top_n, distribution, statistics)
   - `graph_tool.py` - `GraphTool` - recursive CTE graph traversal on `storyline_edges`
