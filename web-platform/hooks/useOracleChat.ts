@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type {
   OracleChatMessage,
   OracleActiveFilters,
@@ -31,12 +31,12 @@ export function useOracleChat() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Gemini API key stored in localStorage — never sent to server logs
-  const [geminiApiKey, setGeminiApiKeyState] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('oracle_gemini_key') ?? '';
-    }
-    return '';
-  });
+  // Initialized to '' to match SSR, then hydrated from localStorage after mount
+  const [geminiApiKey, setGeminiApiKeyState] = useState<string>('');
+  useEffect(() => {
+    const stored = localStorage.getItem('oracle_gemini_key');
+    if (stored) setGeminiApiKeyState(stored);
+  }, []);
 
   const setGeminiApiKey = useCallback((key: string) => {
     setGeminiApiKeyState(key);
