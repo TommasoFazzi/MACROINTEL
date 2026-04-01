@@ -559,8 +559,14 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
 
     @staticmethod
     def _build_initial_message(query: str, ui_filters: Optional[Dict]) -> str:
-        """Build the first user message: query + UI filter hints."""
-        msg = query
+        """Build the first user message: current date + query + UI filter hints.
+
+        The current date is always injected so the LLM can correctly compute
+        relative temporal expressions ("ultimi 6 mesi", "ieri", "questa settimana").
+        Without it, the LLM uses its training cutoff as reference date.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        msg = f"[TODAY = {today}]\n{query}"
         if ui_filters:
             hints = []
             if ui_filters.get("start_date"):
