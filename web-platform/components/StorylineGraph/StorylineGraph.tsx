@@ -220,12 +220,21 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
     );
   }, [graphData.nodes, selectedEntities, titleQuery, filterIsolate]);
 
-  // Zoom to entity/title-matching nodes when filter is applied (dim mode)
+  // Zoom to matching nodes only when entity CHIPS change (not on title typing)
+  // Depends on selectedEntities only — avoids re-firing on every keystroke
   useEffect(() => {
-    if (entityHighlightIds.size > 0 && graphRef.current) {
-      graphRef.current.zoomToFit(400, 50, (node: GraphNode) => entityHighlightIds.has(node.id));
-    }
-  }, [entityHighlightIds]);
+    if (selectedEntities.length === 0 || !graphRef.current) return;
+    const timer = setTimeout(() => {
+      graphRef.current?.zoomToFit(400, 80, (node: any) => {
+        const n = node as GraphNode;
+        return selectedEntities.some(sel =>
+          n.key_entities?.some(ke => ke.toLowerCase().includes(sel.toLowerCase()))
+        );
+      });
+    }, 150);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEntities]);
 
   // Auto-select node from URL param (deep-link from map → graph)
   const highlightApplied = useRef(false);
