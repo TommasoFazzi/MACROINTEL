@@ -46,9 +46,8 @@ class AggregationTool(BaseTool):
             "time_bucket": {
                 "type": "string",
                 "enum": list(VALID_TIME_BUCKETS),
-                "default": "day",
             },
-            "limit": {"type": "integer", "default": 10},
+            "limit": {"type": "integer"},
         },
         "required": ["rationale", "aggregation_type", "target"],
     }

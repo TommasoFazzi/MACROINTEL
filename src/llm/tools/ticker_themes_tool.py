@@ -30,12 +30,10 @@ class TickerThemesTool(BaseTool):
             },
             "top_n": {
                 "type": "integer",
-                "default": 5,
                 "description": "Maximum number of storylines to return (1-20)",
             },
             "days": {
                 "type": "integer",
-                "default": 30,
                 "description": "Look back this many days for articles (1-365)",
             },
         },

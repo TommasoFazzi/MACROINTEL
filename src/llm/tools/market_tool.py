@@ -39,7 +39,6 @@ class MarketTool(BaseTool):
             "timeframe": {
                 "type": "string",
                 "enum": list(VALID_TIMEFRAMES),
-                "default": "SHORT_TERM",
             },
         },
         "required": ["rationale", "analysis_type"],

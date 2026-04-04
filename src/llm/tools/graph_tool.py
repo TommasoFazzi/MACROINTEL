@@ -38,8 +38,8 @@ class GraphTool(BaseTool):
             },
             "source": {"type": "integer", "description": "Source storyline ID (required for connected_storylines/entity_path)"},
             "target": {"type": "integer", "description": "Target storyline ID (required for entity_path only)"},
-            "max_depth": {"type": "integer", "default": 3, "description": "Maximum traversal depth (1-5)"},
-            "weight_threshold": {"type": "number", "default": 0.3, "description": "Minimum edge weight to traverse (0.0-1.0)"},
+            "max_depth": {"type": "integer", "description": "Maximum traversal depth (1-5)"},
+            "weight_threshold": {"type": "number", "description": "Minimum edge weight to traverse (0.0-1.0)"},
         },
         "required": ["rationale", "operation"],
     }

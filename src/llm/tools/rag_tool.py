@@ -216,12 +216,10 @@ class RAGTool(BaseTool):
             "mode": {
                 "type": "string",
                 "enum": ["both", "factual", "strategic"],
-                "default": "both",
                 "description": "'both' searches articles+reports, 'factual' articles only, 'strategic' reports only",
             },
             "top_k": {
                 "type": "integer",
-                "default": 10,
                 "description": "Number of results to return (5-20 recommended)",
             },
             "filters": {
