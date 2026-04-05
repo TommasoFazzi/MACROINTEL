@@ -133,12 +133,13 @@ _SQL_EXAMPLES = SQL_EXAMPLES
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import google.generativeai as genai
 import google.api_core.exceptions
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from .schemas import QueryIntent
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -152,12 +153,12 @@ class QueryRouter:
 
     # ── Intent classification ──────────────────────────────────────────────
 
-    def _classify_intent(self, query: str) -> Tuple[str, List[str]]:
+    def _classify_intent(self, query: str) -> Tuple[QueryIntent, List[str]]:
         """Classify query intent. Returns (intent_str, key_entities)."""
         q_lower = query.lower()
         if any(kw in q_lower for kw in OVERVIEW_KEYWORDS):
             logger.info("QueryRouter: overview keyword detected, overriding to OVERVIEW")
-            return "overview", []
+            return QueryIntent.OVERVIEW, []
 
         examples_block = "\n".join(
             f"  {intent}: {', '.join(exs[:2])}"
@@ -199,14 +200,15 @@ Respond ONLY with valid JSON:
                     else:
                         raise
                 intent_str = parsed.get("intent", "factual").lower()
+                intent = QueryIntent(intent_str) if intent_str in QueryIntent._value2member_map_ else QueryIntent.FACTUAL
                 key_entities = parsed.get("key_entities", [])
-                logger.info(f"QueryRouter: intent={intent_str} confidence={parsed.get('confidence', 0):.0%}")
-                return intent_str, key_entities
+                logger.info(f"QueryRouter: intent={intent.value} confidence={parsed.get('confidence', 0):.0%}")
+                return intent, key_entities
             except Exception as e:
                 last_exc = e
                 break
         logger.warning(f"QueryRouter: intent classification failed ({last_exc}), defaulting to FACTUAL")
-        return "factual", []
+        return QueryIntent.FACTUAL, []
 
     # ── SQL generation ─────────────────────────────────────────────────────
 
@@ -217,7 +219,10 @@ Respond ONLY with valid JSON:
         allowed_tables = (
             "articles, chunks, reports, storylines, entities, entity_mentions, "
             "trade_signals, macro_indicators, market_data, article_storylines, "
-            "storyline_edges, v_active_storylines, v_storyline_graph"
+            "storyline_edges, v_active_storylines, v_storyline_graph, "
+            "conflict_events, macro_forecasts, country_profiles, "
+            "trade_flow_indicators, country_boundaries, strategic_infrastructure, "
+            "v_sanctions_public"
         )
         schema_hints = (
             "Key columns (PostgreSQL):\n"
@@ -226,7 +231,13 @@ Respond ONLY with valid JSON:
             "- trade_signals: id, ticker, signal (BULLISH/BEARISH/NEUTRAL/WATCHLIST), timeframe, rationale, confidence, signal_date\n"
             "- entities: id, name, entity_type, intelligence_score\n"
             "- v_active_storylines: id, title, momentum_score, narrative_status (view of active storylines)\n"
-            "- reports: id, report_date, status, report_type, title"
+            "- reports: id, report_date, status, report_type, title\n"
+            "- conflict_events: event_date, country, location, actor1, actor2, fatalities, event_type\n"
+            "- macro_forecasts: iso3, indicator_code, year, value, unit, vintage (use MAX(vintage) subquery for latest)\n"
+            "- country_profiles: iso3, name, region, gdp_usd, gdp_growth, debt_to_gdp, inflation\n"
+            "- trade_flow_indicators: reporter_iso3, partner_iso3, indicator_code, year, value, unit\n"
+            "- v_sanctions_public: caption, schema_type, datasets, countries (text[]), first_seen, last_seen\n"
+            "  IMPORTANT: always use v_sanctions_public, never sanctions_registry (raw table is restricted)"
         )
 
         prompt = f"""Generate a safe read-only SQL SELECT query for this intelligence database query.
@@ -239,7 +250,7 @@ Rules:
 - Use only SELECT statements
 - Max 3 JOINs
 - Only reference the allowed tables above
-- Add LIMIT 50 if not already present for non-aggregate (non-COUNT/SUM) queries
+- Always add LIMIT 50 unless the query is a pure COUNT(*) with no GROUP BY
 
 Output ONLY the SQL query, nothing else."""
 
