@@ -143,7 +143,7 @@ class OracleOrchestrator:
         """
         _ = llm_key  # key is already active in genai global config when this is called
         return genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-2.0-flash",
             tools=[genai.protos.Tool(function_declarations=self._function_declarations)],
             system_instruction=self._system_prompt,
             generation_config=genai.types.GenerationConfig(
@@ -373,6 +373,19 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
                 last_exc = e
                 if "MALFORMED_FUNCTION_CALL" not in str(e):
                     break  # Non-retryable error
+                # Log candidate details to diagnose which tool/args are malformed
+                candidate = getattr(e, "candidate", None)
+                if candidate:
+                    try:
+                        parts = candidate.content.parts
+                        for p in parts:
+                            fc = getattr(p, "function_call", None)
+                            if fc:
+                                logger.error(
+                                    f"[MALFORMED FC] tool={fc.name!r} args={dict(fc.args)}"
+                                )
+                    except Exception:
+                        logger.error(f"[MALFORMED FC] raw candidate: {candidate}")
 
         if response is None:
             logger.error(f"Initial send_message failed after {_attempt + 1} attempt(s): {last_exc}")
