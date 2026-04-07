@@ -351,14 +351,32 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
         sources: List[Dict] = []
         iterations_done = 0
 
-        try:
-            response = chat.send_message(
-                initial_msg,
-                request_options={"timeout": 60},
-            )
-        except Exception as e:
-            logger.error(f"Initial send_message failed: {e}")
-            return self._error_response(query, session_id, user_id, start_time, str(e))
+        # Initial send_message with retry on MALFORMED_FUNCTION_CALL.
+        # Gemini occasionally generates a malformed function call on first attempt;
+        # retrying with a fresh session (no history) resolves it in most cases.
+        _MAX_MALFORMED_RETRIES = 2
+        response = None
+        last_exc: Optional[Exception] = None
+        for _attempt in range(1 + _MAX_MALFORMED_RETRIES):
+            try:
+                if _attempt > 0:
+                    logger.warning(
+                        f"MALFORMED_FUNCTION_CALL on attempt {_attempt}, retrying with fresh session"
+                    )
+                    chat = model.start_chat(history=[])
+                response = chat.send_message(
+                    initial_msg,
+                    request_options={"timeout": 60},
+                )
+                break
+            except Exception as e:
+                last_exc = e
+                if "MALFORMED_FUNCTION_CALL" not in str(e):
+                    break  # Non-retryable error
+
+        if response is None:
+            logger.error(f"Initial send_message failed after {_attempt + 1} attempt(s): {last_exc}")
+            return self._error_response(query, session_id, user_id, start_time, str(last_exc))
 
         for iteration in range(MAX_AGENTIC_ITERATIONS):
             iterations_done = iteration + 1
