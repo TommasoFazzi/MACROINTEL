@@ -1,4 +1,5 @@
-# INTELLIGENCE_ITA
+# MACROINTEL
+
 
 End-to-end geopolitical intelligence platform: 33+ RSS feeds + Structured Entities (OpenSanctions) → NLP → PostgreSQL/pgvector/PostGIS → Narrative Engine → RAG + CoVe validation → FastAPI + Next.js frontend.
 
