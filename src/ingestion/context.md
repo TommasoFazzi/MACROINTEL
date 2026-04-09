@@ -23,14 +23,17 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - User-Agent rotation on every request to avoid blocks
 
 - `content_extractor.py` - Full-text extraction from URLs
-  - `ContentExtractor` class - Multi-method extraction with `max_concurrent=10`
-  - `extract_with_trafilatura(url)` - Primary method (fast, news-optimized)
-  - `extract_with_newspaper(url)` - Newspaper3k fallback
+  - `ContentExtractor` class - Multi-method extraction with `max_concurrent=10` global semaphore
+  - **Per-domain concurrency control** (Fix 3, 2026-04-09): `_domain_semaphores` dict limits max 2 concurrent requests per domain. Reduces anti-bot triggering (e.g., Chatham House rate limiting). Async method `_get_domain_semaphore(url)` lazily creates semaphores.
+  - **Per-article timeout** (Fix 1, 2026-04-09): `PER_ARTICLE_TIMEOUT = 30s`. Each extraction wrapped in `asyncio.wait_for(..., timeout)` to escape indefinite hangs on Cloudflare challenges or unresponsive servers. If timeout fires → `asyncio.TimeoutError` caught, article marked failed, pipeline continues.
+  - `extract_with_trafilatura(url)` - Primary method (fast, news-optimized). Note: `trafilatura.fetch_url()` called without explicit timeout; per-article timeout wrapper provides safety.
+  - `extract_with_newspaper(url)` - Newspaper3k fallback. Now passes `request_timeout=self.timeout` to `NewspaperArticle` constructor.
   - `extract_with_cloudscraper(url)` - For anti-bot sites (e.g., politico.com)
-  - `_extract_content_async(semaphore, article, idx, total)` - Async: acquires semaphore, delegates to `asyncio.to_thread(self.extract_content, url)`
-  - `_extract_batch_async(articles)` - Async: concurrent extraction via `asyncio.gather()` with `asyncio.Semaphore(max_concurrent)`
+  - `_extract_content_async(semaphore, article, idx, total)` - Async: acquires global semaphore → per-domain semaphore → wraps extraction with `asyncio.wait_for(..., timeout=PER_ARTICLE_TIMEOUT)` → delegates to `asyncio.to_thread(self.extract_content, url)`. Catches `asyncio.TimeoutError` separately.
+  - `_extract_batch_async(articles)` - Async: concurrent extraction via `asyncio.gather()` with per-task timeouts (no global timeout on gather itself)
   - `extract_batch(articles)` - Sync wrapper (`asyncio.run()`) for standalone use only
-  - Extraction strategy: Trafilatura → Newspaper3k → Cloudscraper
+  - `SCRAPLING_TIER1_DOMAINS` - curl_cffi WAF bypass: understandingwar.org, chathamhouse.org, kcl.ac.uk, **timesofisrael.com** (Fix 2, 2026-04-09: added for Cloudflare anti-bot)
+  - Extraction strategy: Trafilatura → Newspaper3k → Cloudscraper → Scrapling Tier 1 (fallback)
   - **2-level PDF auto-detection** (integrated into RSS flow):
     - Level 1: Direct `.pdf` URL → routes to `PDFIngestor.extract_text()`
     - Level 2: Landing page scan → `_try_level2_pdf()` → `_find_pdf_link()` (think tank pattern: landing page → PDF download)

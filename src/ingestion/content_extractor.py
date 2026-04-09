@@ -47,12 +47,19 @@ SCRAPLING_TIER1_DOMAINS = [
     'understandingwar.org',  # ISW — daily Ukraine/ME assessments, no RSS
     'chathamhouse.org',      # Chatham House — redirects to homepage, content accessible
     'kcl.ac.uk',             # King's College War Studies — if needed in future
+    'timesofisrael.com',     # Times of Israel — Cloudflare anti-bot protection
 ]
 
 from .pdf_ingestor import PDFIngestor, PYMUPDF_AVAILABLE
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# =========================================================================
+# Global timeouts and concurrency limits
+# =========================================================================
+PER_ARTICLE_TIMEOUT = 30   # max seconds per single article extraction (Fix 1)
+DOMAIN_MAX_CONCURRENT = 2  # max concurrent requests per domain (Fix 3)
 
 # Pool di User-Agent realistici per evitare blocchi
 USER_AGENTS = [
@@ -128,9 +135,27 @@ class ContentExtractor:
         # (prevents RAM exhaustion on GitHub Actions when max_concurrent=10)
         self.scrapling_stealth_semaphore = asyncio.Semaphore(2)
 
+        # Per-domain concurrency control (Fix 3)
+        self._domain_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._domain_semaphore_lock = asyncio.Lock()
+
     def _get_random_ua(self) -> str:
         """Get a random user agent from the pool."""
         return random.choice(USER_AGENTS)
+
+    async def _get_domain_semaphore(self, url: str) -> asyncio.Semaphore:
+        """
+        Get or create a per-domain semaphore (Fix 3).
+
+        Ensures that each domain has max DOMAIN_MAX_CONCURRENT concurrent requests,
+        reducing risk of triggering anti-bot protection or rate limiting.
+        """
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc
+        async with self._domain_semaphore_lock:
+            if domain not in self._domain_semaphores:
+                self._domain_semaphores[domain] = asyncio.Semaphore(DOMAIN_MAX_CONCURRENT)
+            return self._domain_semaphores[domain]
 
     def _is_protected_domain(self, url: str) -> bool:
         """Check if URL belongs to a known anti-bot protected domain."""
@@ -244,7 +269,7 @@ class ContentExtractor:
             Dictionary with extracted content or None
         """
         try:
-            article = NewspaperArticle(url)
+            article = NewspaperArticle(url, request_timeout=self.timeout)
             article.download()
             article.parse()
 
@@ -512,21 +537,38 @@ class ContentExtractor:
         idx: int,
         total: int,
     ) -> dict:
-        """Extract content for a single article asynchronously."""
+        """
+        Extract content for a single article asynchronously with timeouts (Fix 1, Fix 3).
+
+        Fix 1: Wrap extraction with asyncio.wait_for(..., timeout=PER_ARTICLE_TIMEOUT)
+               to prevent indefinite blocking on Cloudflare challenges or rate limiting.
+        Fix 3: Acquire per-domain semaphore to limit concurrent requests per domain.
+        """
         url = article.get('link')
         if not url:
             logger.warning(f"Article {idx}/{total} has no URL, skipping")
             return article
 
         try:
-            # Tier 2 (Chromium) limited to 2 concurrent to avoid RAM exhaustion
-            if self._is_scrapling_tier2(url) and SCRAPLING_STEALTH_AVAILABLE:
-                async with self.scrapling_stealth_semaphore:
-                    full_content = await asyncio.to_thread(self.extract_content, url)
-            else:
-                async with semaphore:
-                    # Delegate to sync extract_content in a thread
-                    full_content = await asyncio.to_thread(self.extract_content, url)
+            # Acquire global semaphore first
+            async with semaphore:
+                # Then acquire per-domain semaphore (Fix 3)
+                domain_semaphore = await self._get_domain_semaphore(url)
+                async with domain_semaphore:
+                    # Tier 2 (Chromium) uses its own semaphore (Chromium is heavy)
+                    if self._is_scrapling_tier2(url) and SCRAPLING_STEALTH_AVAILABLE:
+                        async with self.scrapling_stealth_semaphore:
+                            # Fix 1: wrap with timeout
+                            full_content = await asyncio.wait_for(
+                                asyncio.to_thread(self.extract_content, url),
+                                timeout=PER_ARTICLE_TIMEOUT
+                            )
+                    else:
+                        # Fix 1: wrap with timeout
+                        full_content = await asyncio.wait_for(
+                            asyncio.to_thread(self.extract_content, url),
+                            timeout=PER_ARTICLE_TIMEOUT
+                        )
 
             article['full_content'] = full_content
             article['extraction_success'] = full_content is not None
@@ -537,6 +579,16 @@ class ContentExtractor:
             else:
                 logger.warning(f"[{idx}/{total}] Failed: {article.get('title', 'N/A')[:50]}...")
 
+            return article
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[{idx}/{total}] Timeout ({PER_ARTICLE_TIMEOUT}s) extracting: "
+                f"{article.get('title', 'N/A')[:50]}... from {url}"
+            )
+            article['full_content'] = None
+            article['extraction_success'] = False
+            article['extraction_error'] = f"Timeout after {PER_ARTICLE_TIMEOUT}s"
             return article
 
         except Exception as e:
