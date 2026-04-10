@@ -1695,6 +1695,10 @@ Use them to:
 
         # Step 3: Format context for LLM
         logger.info(f"\n[STEP 3] Preparing prompt for LLM...")
+
+        # Build article link map for citation linkification (Phase 2 Smart Delta)
+        article_links = {i: article.get('link', '') for i, article in enumerate(recent_articles, 1)}
+
         recent_articles_text = self.format_recent_articles(recent_articles)
         rag_context_text = self.format_rag_context(unique_rag_results)
 
@@ -1832,6 +1836,21 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
             )
             report_text = response.text
             logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
+
+            # Phase 2: Linkify [Article N] citations to actual article URLs
+            import re
+            def linkify_citations(text: str, links_map: Dict[int, str]) -> str:
+                """Convert [Article N] to Markdown links [Article N](url)"""
+                def replace_citation(match):
+                    num = int(match.group(1))
+                    url = links_map.get(num, '')
+                    if url:
+                        return f"[Article {num}]({url})"
+                    return match.group(0)
+                return re.sub(r'\[Article\s+(\d+)\]', replace_citation, text)
+
+            report_text = linkify_citations(report_text, article_links)
+            logger.debug("✓ Article citations linkified")
 
             # Prepend pre-built title + macro dashboard programmatically
             # This guarantees consistent ticker format regardless of LLM variability.
