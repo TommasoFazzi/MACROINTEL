@@ -34,11 +34,17 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
   - `ensure_daily_macro_data()` - Fetch and persist macro indicators
     - FRED branch now uses `_fetch_indicator_openbb_fixed()` — saves with real `data_date` (not `target_date`). Fixes NICKEL/monthly mislabeling bug.
     - All fetch paths call `_upsert_indicator_metadata()` to track staleness and reliability.
-  - `get_macro_context_text(date)` - Formatted text for LLM prompt injection
+  - `get_macro_context_text(date)` - **Phase 2 enhanced**: Formatted text for LLM prompt injection with:
+    - Delta_type annotation (DoD/WoW/MoM) derived from `expected_frequency` in metadata (not gap days)
+    - Freshness headers per category ("NICKEL: Feb 2026 (structural)", etc.)
+    - ⚠️ warning for USD_CNH (restricted reliability, PBoC fixing)
+    - Loads `macro_indicator_metadata` table for staleness + frequency context
   - **New methods (Phase 1)**:
     - `_fetch_indicator_openbb_fixed(fred_series, target_date)` → `(value, data_date, frequency) | None` — extracts real FRED data date; staleness check before saving
     - `_upsert_indicator_metadata(key, frequency, last_updated, ...)` — writes to `macro_indicator_metadata` table (migration 035)
     - `_fred_series_to_key(fred_series)` — reverse lookup FRED series → MACRO_INDICATORS key
+  - **New methods (Phase 2)**:
+    - `_last_date_with_fresh_data(key, before)` → `Optional[date]` — queries `macro_indicator_metadata` for most recent non-stale date
   - **Class-level constants**:
     - `FRED_SERIES_FREQUENCY` — maps FRED series ID to frequency (daily/weekly/monthly)
     - `MAX_STALENESS_BY_FREQUENCY` — max acceptable gap per frequency

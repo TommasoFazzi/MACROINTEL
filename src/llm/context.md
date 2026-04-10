@@ -18,6 +18,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Trade signal extraction with ticker whitelist
   - Macro-first pipeline (`--macro-first` flag)
   - Output metadata includes `narrative_context` (storylines used, edges count)
+  - **Citation linkification** (Phase 2): Converts `[Article N]` references in report to Markdown links `[Article N](url)` using article URLs from `recent_articles` list. Applied post-generation before header prepend.
   - **LLM title generation** (`_generate_report_title()`, `_extract_bluf_from_text()`): After report text is produced, calls `gemini-2.0-flash` with date + focus_areas + BLUF to generate a headline (max 80 chars). Stored in `metadata['title']`. Non-critical — falls back to `""` on failure.
 
 - `query_analyzer.py` - Pre-search filter extraction

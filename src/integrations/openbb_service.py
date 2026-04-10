@@ -865,6 +865,33 @@ class OpenBBMarketService:
         except Exception as e:
             logger.error(f"_upsert_indicator_metadata failed for {key}: {e}")
 
+    def _last_date_with_fresh_data(self, key: str, before: date) -> Optional[date]:
+        """
+        Query macro_indicator_metadata for the most recent non-stale date for a key.
+
+        Args:
+            key: Indicator key (e.g., 'NICKEL', 'US_10Y_YIELD')
+            before: Look for dates before this date (usually today)
+
+        Returns:
+            Most recent date where is_stale=FALSE, or None if never non-stale
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT last_updated FROM macro_indicator_metadata
+                        WHERE key = %s AND is_stale = FALSE
+                          AND last_updated < %s
+                        ORDER BY last_updated DESC
+                        LIMIT 1
+                    """, (key, before))
+                    result = cur.fetchone()
+                    return result[0] if result else None
+        except Exception as e:
+            logger.error(f"_last_date_with_fresh_data failed for {key}: {e}")
+            return None
+
     def _fred_series_to_key(self, fred_series: str) -> str:
         """Reverse lookup: FRED series ID → MACRO_INDICATORS key."""
         for key, config in self.MACRO_INDICATORS.items():
@@ -917,7 +944,8 @@ class OpenBBMarketService:
         """
         Format macro indicators for LLM prompt injection.
 
-        Returns formatted text block with indicators and day-over-day changes.
+        Returns formatted text block with indicators, day-over-day changes, delta_type annotation,
+        and data freshness context.
 
         Args:
             target_date: Date to get context for (default: today)
@@ -931,13 +959,34 @@ class OpenBBMarketService:
         if not indicators:
             return ""
 
+        # Load metadata for all indicators (freshness, delta_type derivation)
+        metadata_dict = {}
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT key, expected_frequency, is_stale, staleness_days, last_updated
+                        FROM macro_indicator_metadata
+                    """)
+                    for row in cur.fetchall():
+                        key, freq, is_stale, staleness_days, last_updated = row
+                        metadata_dict[key] = {
+                            'expected_frequency': freq,
+                            'is_stale': is_stale,
+                            'staleness_days': staleness_days,
+                            'last_updated': last_updated
+                        }
+        except Exception as e:
+            logger.warning(f"Failed to load macro_indicator_metadata: {e}")
+            metadata_dict = {}
+
         # Get previous day for change calculation
         yesterday = target_date - timedelta(days=1)
         prev_indicators = self._get_macro_indicators(yesterday)
         prev_map = {i['indicator_key']: i['value'] for i in prev_indicators}
 
         def format_value(ind: Dict) -> str:
-            """Format value with change indicator."""
+            """Format value with change indicator and delta_type annotation."""
             key = ind['indicator_key']
             value = float(ind['value'])
             unit = ind['unit'] or ''
@@ -950,15 +999,38 @@ class OpenBBMarketService:
             else:
                 change_str = ""
 
+            # Derive delta_type from metadata expected_frequency, NOT from gap days
+            metadata = metadata_dict.get(key, {})
+            freq = metadata.get('expected_frequency', 'daily')
+            delta_type = {
+                'daily': 'DoD',
+                'weekly': 'WoW',
+                'monthly': 'MoM',
+                '24_7': 'DoD'
+            }.get(freq, 'N/A')
+
+            # Add freshness note for stale indicators
+            freshness_note = ""
+            if metadata.get('is_stale'):
+                last_updated = metadata.get('last_updated')
+                if last_updated:
+                    freshness_note = f" [dato: {last_updated.strftime('%b %Y') if freq == 'monthly' else last_updated.strftime('%d/%m')} — contesto strutturale]"
+
+            # Add ⚠️ for USD_CNH (restricted reliability)
+            warning_marker = " ⚠️ [PBoC fixing]" if key == 'USD_CNH' else ""
+
             # Format based on unit
             if unit == '%':
-                return f"{value:.2f}%{change_str}"
+                formatted = f"{value:.2f}%{change_str}"
             elif unit == 'USD':
-                return f"${value:,.2f}{change_str}"
+                formatted = f"${value:,.2f}{change_str}"
             elif unit == 'Points':
-                return f"{value:,.1f}{change_str}"
+                formatted = f"{value:,.1f}{change_str}"
             else:
-                return f"{value:.4f}{change_str}"
+                formatted = f"{value:.4f}{change_str}"
+
+            # Add delta_type annotation and freshness/warning notes
+            return f"{formatted} ({delta_type}){freshness_note}{warning_marker}"
 
         # Group by category
         by_category = {}
@@ -986,10 +1058,22 @@ class OpenBBMarketService:
             'INDICES': ''
         }
 
+        # Add freshness header per category
+        freshness_by_category = {
+            'RATES': 'FRED daily: current',
+            'CREDIT_RISK': 'FRED daily: current',
+            'INFLATION': 'NICKEL: Feb 2026 (structural); others: current',
+            'SHIPPING': 'Cass Freight: monthly structural',
+            'COMMODITIES': 'Daily CME futures: current',
+            'FX': 'yfinance: current',
+            'VOLATILITY': 'VIX daily: current',
+            'INDICES': 'Daily: current'
+        }
+
         for category in ['RATES', 'CREDIT_RISK', 'INFLATION', 'SHIPPING', 'COMMODITIES', 'FX', 'VOLATILITY', 'INDICES']:
             if category in by_category:
                 emoji = category_emojis.get(category, '')
-                lines.append(f"{emoji} {category}:")
+                lines.append(f"{emoji} {category}: [{freshness_by_category.get(category, 'current')}]")
                 for ind in by_category[category]:
                     key = ind['indicator_key'].replace('_', ' ')
                     lines.append(f"  - {key}: {format_value(ind)}")
