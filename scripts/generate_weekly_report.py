@@ -14,6 +14,7 @@ Usage:
 import sys
 import os
 import argparse
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any
@@ -326,7 +327,6 @@ def main():
                 all_focus_areas.extend(metadata.get('focus_areas', []))
 
             # Take top 5 most common focus areas
-            from collections import Counter
             focus_counter = Counter(all_focus_areas)
             top_focus_areas = [area for area, _ in focus_counter.most_common(5)]
 
@@ -417,11 +417,23 @@ def main():
     if not args.no_save_db:
         logger.info("\n[STEP 7] Saving weekly report to database...")
         try:
-            # Prepare report dictionary for database
+            # Generate title for the weekly report
+            all_focus = []
+            for report in reports:
+                all_focus.extend(report.get('metadata', {}).get('focus_areas', []))
+            top_focus = [a for a, _ in Counter(all_focus).most_common(5)]
+            end_date_str = aggregated_meta['date_range']['end'] or datetime.now().strftime('%Y-%m-%d')
+            report_title = generator._generate_report_title(
+                end_date_str, top_focus, weekly_report_text[:2000]
+            )
+            if report_title:
+                logger.info(f"✓ Report title: {report_title}")
+
             weekly_report_dict = {
                 'report_text': weekly_report_text,
                 'report_type': 'weekly',  # Mark as weekly report
                 'metadata': {
+                    'title': report_title,
                     'model_used': args.model,
                     'days_analyzed': args.days,
                     'reports_count': aggregated_meta['reports_count'],

@@ -378,10 +378,18 @@ def main():
         logger.info("\n[STEP 7] Saving recap report to database...")
         try:
             # Prepare report dictionary for database
+            # Generate title for the recap report
+            report_title = generator._generate_report_title(
+                end_date.isoformat(), [], recap_report_text[:2000]
+            )
+            if report_title:
+                logger.info(f"✓ Report title: {report_title}")
+
             recap_report_dict = {
                 'report_text': recap_report_text,
                 'report_type': 'recap',  # Mark as recap report
                 'metadata': {
+                    'title': report_title,
                     'model_used': args.model,
                     'period_start': start_date.isoformat(),
                     'period_end': end_date.isoformat(),
