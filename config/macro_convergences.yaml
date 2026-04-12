@@ -1,0 +1,384 @@
+# =============================================================================
+# MACRO CONVERGENCES — Pattern Library
+# =============================================================================
+#
+# Convenzioni:
+#   - Ogni convergenza è un pattern multivariato di co-movimento tra indicatori.
+#   - 'trigger': indicatori che devono muoversi per attivare il pattern (daily-compatible).
+#   - 'context': indicatori mensili/lenti usati come sfondo narrativo, non come trigger.
+#   - 'direction': direzione attesa del movimento (+1 = sale, -1 = scende).
+#   - 'causal_chain': meccanismo causale ordinato, dal trigger alle conseguenze.
+#   - 'llm_disambiguation': casi in cui il pattern può essere mal interpretato — il LLM
+#     deve leggere questa sezione prima di generare la narrativa.
+#   - 'narrative_horizon': orizzonte temporale della narrativa generata (non del dato).
+#   - 'daily_compatible': true se tutti i trigger sono disponibili a frequenza giornaliera.
+#
+# Convergenze RIMOSSE (bassa priorità / non solide per uso giornaliero):
+#   - "Incertezza di Policy e De-globalizzazione" (EPU lento, BTC relazione debole)
+#   - "Transizione Energetica e Metalli Critici" (macro-trend secolare, non trigger daily)
+#     → entrambe declassate a contesto ontologico nel layer YAML dell'OntologyManager.
+# =============================================================================
+
+convergences:
+
+  # ---------------------------------------------------------------------------
+  # 1. RISK-OFF / PANICO SISTEMICO
+  # ---------------------------------------------------------------------------
+  risk_off_systemic:
+    label: "Risk-Off / Panico Sistemico"
+    daily_compatible: true
+    narrative_horizon: "ore-giorni"
+    trigger:
+      VIX:          +1   # spike volatilità implicita
+      US_HY_SPREAD: +1   # allargamento spread credito
+      DOLLAR_INDEX: +1   # safe haven primario (aggiunto — mancava)
+      US_10Y_YIELD: -1   # flight-to-safety sui Treasury
+    context:
+      GOLD: >
+        Indicatore di conferma nella fase 2 del panic event (giorni 2-5),
+        non nella fase 1. In liquidation events acuti (marzo 2020, settembre 2008)
+        il gold scende insieme a tutto per margin call coverage.
+        Usarlo come trigger giornaliero genera falsi negativi nei momenti più critici.
+    causal_chain: >
+      Evento trigger (geopolitico, macro, creditizio)
+      → VIX spike → de-leveraging meccanico dei fondi vol-targeting
+      → vendita indiscriminata equity e HY
+      → fuga verso Treasury (10Y yield scende) e USD (DXY sale)
+      → [fase 2, 48-72h] rally gold quando la liquidità si stabilizza.
+    llm_disambiguation:
+      gold_divergence: >
+        Se GOLD scende mentre VIX e HY_SPREAD salgono, NON è una contraddizione:
+        è la firma di un liquidation event acuto. La narrativa corretta è
+        "vendita forzata di tutti gli asset per coprire margin call",
+        non "oro non funziona come safe haven".
+      dollar_vs_gold: >
+        In crisi sistemiche il DOLLAR_INDEX sale prima e più velocemente dell'oro.
+        Se entrambi salgono, il pattern è confermato ma l'intensità è estrema.
+        Se solo il dollaro sale e l'oro è flat, il mercato legge lo stress come
+        gestibile dalla Fed (intervento atteso), non come crisi esistenziale.
+
+  # ---------------------------------------------------------------------------
+  # 2. CICLO INDUSTRIALE GLOBALE IN ESPANSIONE
+  # ---------------------------------------------------------------------------
+  # MODIFICA: rimosso CASS_FREIGHT_INDEX (mensile, stale per 30gg).
+  # Rimossa YIELD_CURVE come trigger giornaliero (lead time 12-18 mesi, 2bp/day = rumore).
+  # Aggiunto USD_CNY come proxy real-time della domanda cinese.
+  # Aggiunta finestra minima di conferma.
+  # ---------------------------------------------------------------------------
+  industrial_cycle_expansion:
+    label: "Ciclo Industriale Globale in Espansione"
+    daily_compatible: true
+    narrative_horizon: "settimane-mesi"
+    minimum_confirmation_window_days: 5   # NON attivare su snapshot singolo
+    trigger:
+      COPPER:   +1   # domanda manifatturiera globale (Dr. Copper)
+      BRENT_OIL: +1  # domanda energetica industriale
+      USD_CNY:  -1   # yuan forte = economia cinese robusta = domanda reale
+    context:
+      YIELD_CURVE_10Y_2Y: >
+        Indicatore strutturale di contesto: una curva positiva è condizione necessaria
+        di lungo periodo ma non trigger giornaliero. Lead time 12-18 mesi.
+        Usato dal LLM come sfondo narrativo ("la curva conferma il regime espansivo")
+        ma mai come trigger di attivazione.
+      CASS_FREIGHT_INDEX: >
+        Mensile. Usato per conferma retroattiva mensile del pattern,
+        non per attivazione giornaliera.
+      US_INDUSTRIAL_PROD: >
+        Mensile. Stessa logica del Cass — contesto, non trigger.
+    causal_chain: >
+      Domanda cinese e globale in espansione
+      → copper sale (input manifatturiero universale, anticipa PMI di 2-3 mesi)
+      → oil sale (domanda energetica industriale)
+      → yuan si rafforza (surplus commerciale cinese in crescita)
+      → [conferma mensile] volumi logistici e produzione industriale USA seguono.
+    llm_disambiguation:
+      supply_shock_vs_demand: >
+        CRITICO: se copper SCENDE mentre oil SALE, NON è ciclo espansivo —
+        è uno supply shock energetico (stagflazione). Le implicazioni per gli asset
+        sono opposte. In questo caso attivare la convergenza "Spirale Inflattiva"
+        invece di questa.
+      china_stimulus_vs_organic: >
+        Se USD_CNY scende (yuan debole) mentre copper sale, la domanda di rame
+        è guidata da altri paesi (USA, India, Europa) o da speculazione,
+        non da crescita cinese organica. La narrativa cambia significativamente.
+
+  # ---------------------------------------------------------------------------
+  # 3. STRESS BANCARIO / LIQUIDITÀ
+  # ---------------------------------------------------------------------------
+  # TED_SPREAD: RIMOSSO dal sistema (decisione definitiva).
+  # FIN_STRESS_INDEX: settimanale, lag 3gg accettabile — solo in context.
+  # Trigger attivi: US_HY_SPREAD, DOLLAR_INDEX, VIX, US_2Y_YIELD.
+  # ---------------------------------------------------------------------------
+  banking_liquidity_stress:
+    label: "Stress Bancario / Liquidità Interbancaria"
+    daily_compatible: true
+    narrative_horizon: "giorni-settimane"
+    trigger:
+      VIX:          +1   # volatilità sistemica
+      US_HY_SPREAD: +1   # stress creditizio (proxy del funding stress bancario)
+      US_2Y_YIELD:  +1   # tensioni sul funding a breve (SOFR-based)
+      DOLLAR_INDEX: +1   # domanda di liquidità in USD
+    context:
+      FIN_STRESS_INDEX: >
+        Settimanale, pubblicato ogni venerdì. Usato come contesto di regime
+        (stress index > 0 = ambiente di allerta attivo) ma non come trigger daily.
+        Gap fino a 3 giorni (es. lunedì) è accettabile per questa frequenza.
+      # TED_SPREAD: RIMOSSO dal sistema — serie degradata post-transizione LIBOR→SOFR 2023.
+    causal_chain: >
+      Evento di stress (controparte, liquidità, regolatorio)
+      → banche riducono esposizione reciproca
+      → spread HY si allargano (proxy del rischio di funding)
+      → VIX sale per incertezza sistemica
+      → domanda di USD liquido sale (DXY)
+      → US_2Y_YIELD riflette tensioni SOFR vs T-Bill.
+    llm_disambiguation:
+      fed_intervention_speed: >
+        CRITICO nel contesto post-2020: la Fed può eliminare questo pattern
+        in 24-48h con strumenti di liquidità (BTFP, repo facility, swap lines).
+        Se il pattern persiste oltre 3 giorni senza risposta Fed, l'intensità
+        è genuina. Se si risolve rapidamente, la narrativa è
+        "stress contenuto da intervento preventivo", non "crisi sistemica evitata".
+      svb_signature: >
+        La firma SVB 2023: US_2Y_YIELD scende bruscamente (flight-to-safety)
+        mentre HY_SPREAD sale. Il 2Y che SCENDE in questo contesto è un segnale
+        di intensità estrema — il mercato prezza già tagli Fed emergenziali.
+
+  # ---------------------------------------------------------------------------
+  # 4. STRETTA MONETARIA STRUTTURALE / REAL RATE SHOCK
+  # ---------------------------------------------------------------------------
+  # MODIFICA MINIMA: aggiunta logica di disambiguazione dollaro (carry vs safe haven).
+  # Era già la convergenza più solida — struttura preservata.
+  # ---------------------------------------------------------------------------
+  real_rate_shock:
+    label: "Stretta Monetaria / Real Rate Shock"
+    daily_compatible: true
+    narrative_horizon: "settimane-mesi"
+    trigger:
+      REAL_RATE_10Y: +1  # tasso reale in salita
+      GOLD:          -1  # penalizzato dall'opportunity cost
+      NASDAQ:        -1  # growth stocks: alta duration nei cash flow futuri
+      DOLLAR_INDEX:  +1  # capitali attratti dai rendimenti reali USA
+    causal_chain: >
+      Fed restrittiva o aspettative di inflazione in calo
+      → tassi reali salgono
+      → opportunity cost degli asset non-yielding aumenta (gold scende)
+      → discount rate delle growth stocks aumenta (NASDAQ scende)
+      → differenziale reale USA vs RoW aumenta → capitali fluiscono in USD (DXY sale).
+    llm_disambiguation:
+      dollar_channel_ambiguity: >
+        CRITICO: il DOLLAR_INDEX sale sia per real rate alti (questo pattern)
+        sia per flight-to-safety in panic events (pattern risk_off_systemic).
+        Per disambiguare: se VIX > 25 e HY_SPREAD in spike simultaneo,
+        il dollaro sale per safe haven, NON per real rate.
+        In questo caso NON attivare real_rate_shock — attivare risk_off_systemic.
+        Se VIX è contenuto e il movimento è guidato da dati Fed/CPI,
+        il canale è quello del real rate.
+      r_star_context: >
+        Il livello assoluto del real rate va contestualizzato rispetto al R* stimato
+        (tasso reale naturale). Un real rate al 2% in un mondo con R* a 0.5%
+        (Summers, Rachel-Smith) è uno shock enorme rispetto ai modelli storici.
+        La narrativa deve distinguere "real rate alto in termini assoluti" da
+        "real rate alto rispetto all'equilibrio strutturale".
+
+  # ---------------------------------------------------------------------------
+  # 5. ALLARME RECESSIONE — FASE ANTICIPATORIA
+  # ---------------------------------------------------------------------------
+  # MODIFICA STRUTTURALE: convergenza originale spezzata in due.
+  # Questa è la fase anticipatoria (leading indicators, orizzonte 6-18 mesi).
+  # La fase coincidente è sotto (recession_in_progress).
+  # ---------------------------------------------------------------------------
+  recession_signal_leading:
+    label: "Segnale Anticipatore di Recessione"
+    daily_compatible: true
+    narrative_horizon: "6-18 mesi"
+    trigger:
+      YIELD_CURVE_10Y_2Y: -1  # inversione o compressione sostenuta
+      US_HY_SPREAD:       +1  # mercato del credito anticipa deterioramento
+    context:
+      US_UNEMPLOYMENT: >
+        Indicatore lagging — non è un trigger in questa fase.
+        Se unemployment inizia a salire mentre questi trigger sono attivi,
+        la recessione è già iniziata: passare a recession_in_progress.
+      SP500: >
+        L'equity può restare sostenuto per mesi dopo l'inversione della curva
+        (es. 2006-2007, 2022-2023). Non usarlo come trigger anticipatore —
+        usarlo come conferma ritardata.
+    causal_chain: >
+      Fed restrittiva → 2Y sale → curva si inverte
+      → margini bancari compressi → erogazione credito ridotta
+      → mercato HY prezza più default futuri → spread si allargano
+      → [6-18 mesi dopo] rallentamento reale dell'economia.
+    llm_disambiguation:
+      false_signal_risk: >
+        La curva invertita ha generato un falso segnale nel ciclo 2022-2024
+        (inversione per 2 anni, recessione non materializzata).
+        Fattori attenuanti: immigrazione record (offerta lavoro), excess savings,
+        fiscal dominance (deficit USA espansivo ha compensato la stretta monetaria).
+        Il LLM deve citare questi fattori e usare la Regola di Sahm come
+        cross-check: se UNRATE non attiva la Sahm Rule, il segnale è incerto.
+      sahm_rule: >
+        Regola di Sahm: se il tasso di disoccupazione sale di +0.5pp rispetto
+        alla media dei minimi degli ultimi 12 mesi, la recessione è già iniziata
+        con alta probabilità storica. Più affidabile dell'inversione della curva
+        come trigger effettivo nel ciclo moderno.
+
+  # ---------------------------------------------------------------------------
+  # 5b. RECESSIONE IN CORSO
+  # ---------------------------------------------------------------------------
+  recession_in_progress:
+    label: "Recessione in Corso (Conferma Coincidente)"
+    daily_compatible: true
+    narrative_horizon: "mesi"
+    trigger:
+      US_HY_SPREAD:       +1  # spread ampi e in allargamento
+      SP500:              -1  # equity in drawdown sostenuto
+      YIELD_CURVE_10Y_2Y: +1  # re-steepening (la curva torna positiva — segnale che la recessione è già iniziata)
+    context:
+      US_UNEMPLOYMENT: >
+        Lagging ma ora rilevante come conferma: se unemployment sale
+        con Sahm Rule attivata, la recessione è certificata.
+        Usato nella narrativa come evidenza di deterioramento del mercato del lavoro.
+    causal_chain: >
+      Credito si contrae → consumi e investimenti calano
+      → utili aziendali scendono → equity in drawdown
+      → disoccupazione sale (lagging, 3-6 mesi dopo l'inizio)
+      → mercato prezza tagli Fed → curva si re-irripidisce.
+    llm_disambiguation:
+      re_steepening_signal: >
+        CONTROINTUITIVO: la curva che torna positiva dopo l'inversione
+        NON è un segnale di ripresa — è spesso il segnale che la recessione
+        è appena iniziata (il 10Y scende per aspettative di tagli Fed
+        mentre il 2Y scende più lentamente). La narrativa deve spiegarlo
+        esplicitamente per evitare interpretazioni ottimistiche errate.
+
+  # ---------------------------------------------------------------------------
+  # 6. SPIRALE INFLATTIVA / SHOCK DELL'OFFERTA
+  # ---------------------------------------------------------------------------
+  # MODIFICA: US_CPI rimosso dai trigger (mensile, stale).
+  # Sostituito con BREAKEVEN_10Y e INFLATION_EXPECTATION_5Y come proxy real-time.
+  # Aggiunto COPPER come discriminante demand-pull vs supply shock.
+  # ---------------------------------------------------------------------------
+  inflationary_spiral:
+    label: "Spirale Inflattiva / Shock dell'Offerta"
+    daily_compatible: true
+    narrative_horizon: "settimane-mesi"
+    trigger:
+      BRENT_OIL:              +1  # shock energetico primario
+      BREAKEVEN_10Y:          +1  # aspettative inflazione in salita real-time
+      INFLATION_EXPECTATION_5Y: +1  # de-anchoring aspettative di lungo periodo
+      US_10Y_YIELD:           +1  # mercato prezza yield nominali più alti
+    context:
+      US_CPI: >
+        Mensile e lagging (componente shelter con lag strutturale di 12 mesi).
+        Usato come conferma retrospettiva mensile, non come trigger.
+        Quando il CPI viene pubblicato e conferma il pattern, la narrativa
+        si rafforza — ma il pattern deve essere già attivo prima.
+    causal_chain: >
+      Shock energetico (OPEC, geopolitica, domanda)
+      → BRENT sale → passthrough rapido a CPI energy
+      → BREAKEVEN sale (mercato prezza inflazione futura)
+      → se INFLATION_EXPECTATION_5Y sale, le aspettative si de-ancorano
+        (la Fed perde credibilità nel mandato 2%)
+      → US_10Y_YIELD sale per compensare la perdita di potere d'acquisto.
+    llm_disambiguation:
+      demand_pull_vs_supply_shock: >
+        CRITICO: se COPPER sale insieme a BRENT_OIL, l'inflazione è
+        demand-pull (domanda robusta spinge tutti i commodity) —
+        coesiste con crescita, implicazioni meno negative per equity.
+        Se COPPER scende mentre BRENT_OIL sale, è supply shock puro
+        (stagflazione) — implicazioni molto più negative.
+        Il LLM deve sempre verificare la direzione del copper prima
+        di generare la narrativa inflattiva.
+      anchoring_check: >
+        Se solo BREAKEVEN_10Y sale ma INFLATION_EXPECTATION_5Y resta stabile,
+        il mercato legge lo shock come temporaneo e la Fed come credibile.
+        Narrativa: "shock inflazionistico transitorio".
+        Se entrambi salgono, la narrativa diventa "de-anchoring delle aspettative" —
+        scenario molto più grave con implicazioni diverse per tassi e asset.
+
+  # ---------------------------------------------------------------------------
+  # 7. STRESS CINESE E RALLENTAMENTO GLOBALE
+  # ---------------------------------------------------------------------------
+  # MODIFICA: aggiunto NICKEL come quinto indicatore (più sensibile allo stress
+  # cinese specifico su EV + acciaio). Aggiunta disambiguazione CNH-copper lag.
+  # ---------------------------------------------------------------------------
+  china_stress_global_slowdown:
+    label: "Stress Cinese e Rallentamento Globale"
+    daily_compatible: true
+    narrative_horizon: "giorni-settimane"
+    trigger:
+      USD_CNH:   +1   # yuan offshore si indebolisce (mercato libero, leading vs CNY)
+      COPPER:    -1   # domanda industriale cinese in calo
+      BRENT_OIL: -1   # domanda energetica cinese in calo
+      NICKEL:    -1   # stress su EV + acciaio inox cinese (aggiunto)
+      SP500:     -1   # contagio risk-off globale
+    causal_chain: >
+      Stress interno cinese (immobiliare, credito, crescita)
+      → deflussi di capitale → CNH si indebolisce vs USD (leading indicator)
+      → mercato anticipa calo domanda materie prime cinesi
+      → copper e nickel scendono (Cina = 55% domanda copper, 50%+ nickel)
+      → brent scende (Cina = primo importatore mondiale)
+      → contagio equity globale (SP500).
+    llm_disambiguation:
+      cnh_copper_lag: >
+        Il copper può restare stabile per 1-2 settimane dopo che CNH segnala stress,
+        perché il mercato sconta un intervento di stimolo PBOC come risposta.
+        Se CNH è debole ma COPPER è flat o sale: narrativa = "mercato scommette
+        su stimolo Pechino", NON recessione cinese. Sono implicazioni opposte.
+        Attendere conferma del copper prima di attivare narrativa recessiva.
+      cny_vs_cnh_spread: >
+        Monitorare lo spread USD_CNH - USD_CNY:
+        spread positivo ampio (CNH più debole del CNY) = stress non ancora
+        validato dalla PBOC → allerta anticipatoria.
+        spread stretto = PBOC sta intervenendo per difendere il tasso → stress
+        contenuto o in via di risoluzione.
+
+  # ---------------------------------------------------------------------------
+  # 8. CARRY TRADE UNWIND / FUGA VERSO IL JPY
+  # ---------------------------------------------------------------------------
+  # MODIFICA: aggiunta metadata sul trigger primario per disambiguare
+  # la direzione causale (JPY move vs VIX spike come origine).
+  # ---------------------------------------------------------------------------
+  carry_trade_unwind_jpy:
+    label: "Carry Trade Unwind / Fuga verso il JPY"
+    daily_compatible: true
+    narrative_horizon: "ore-giorni"
+    trigger:
+      USD_JPY:      -1   # yen si apprezza bruscamente
+      VIX:          +1   # volatilità sale
+      SP500:        -1   # equity in pressione
+      US_10Y_YIELD: -1   # yield scende (flight-to-safety + attesa tagli Fed)
+    trigger_disambiguation:
+      primary_trigger_jpy: >
+        Se USD_JPY scende per primo e bruscamente (>1% intraday) PRIMA del VIX spike:
+        il trigger è endogeno al carry trade — evento BoJ (rialzo tassi, modifica YCC)
+        o posizionamento estremo in JPY short che si scarica.
+        Narrativa: "carry trade unwind meccanico, auto-alimentante".
+        Agosto 2024 è il caso di riferimento.
+      primary_trigger_risk_off: >
+        Se VIX spike e SP500 cadono PRIMA del movimento JPY:
+        il trigger è esogeno (macro, geopolitico) e il JPY si apprezza
+        come conseguenza del risk-off (safe haven).
+        Narrativa: "fuga verso safe haven, JPY beneficia come valuta rifugio".
+        Le implicazioni per la durata e l'intensità del movimento sono diverse.
+    causal_chain: >
+      [Caso A — trigger JPY]:
+      BoJ move o short squeeze JPY
+      → carry trade si chiude forzatamente
+      → vendita asset finanziati in JPY (equity, EM, crypto)
+      → SP500 e asset risk-on scendono
+      → VIX sale per selling pressure meccanico
+      → US_10Y_YIELD scende per flight-to-safety.
+
+      [Caso B — trigger risk-off]:
+      Evento macro/geopolitico
+      → VIX spike → SP500 scende
+      → fuga verso safe haven → JPY si apprezza (USD/JPY scende)
+      → carry trade si chiude come conseguenza, non come causa.
+    llm_disambiguation:
+      feedback_loop_risk: >
+        In entrambi i casi si instaura rapidamente un feedback loop
+        auto-alimentante: JPY forte → più carry unwind → più vendite equity
+        → più VIX → più JPY forte. La velocità di propagazione è di ore,
+        non giorni. Il LLM deve segnalare l'intensità del feedback
+        se il pattern persiste oltre 6-12 ore.

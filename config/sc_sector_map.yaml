@@ -1,0 +1,680 @@
+# =============================================================================
+# SUPPLY CHAIN SECTOR MAP — Ontological Layer
+# =============================================================================
+#
+# Mappa esplicita: indicatore macro → settori supply chain impattati.
+#
+# Struttura per ogni indicatore:
+#   impacts: lista di settori con:
+#     - sector: ID settore (corrisponde a active_sc_sectors nel DB)
+#     - direction: +1 (indicatore sale → settore sotto pressione) o
+#                  -1 (indicatore scende → settore sotto pressione)
+#                  Convenzione: direction indica quando il SEGNALE SI ATTIVA.
+#                  Es. NICKEL direction: +1 su automotive_ev significa
+#                  "nickel sale → costi batterie salgono → pressione su EV"
+#     - mechanism: meccanismo causale specifico (non generico)
+#     - lag: orizzonte temporale prima che l'impatto si materializzi
+#     - confidence: "high" | "medium" | "low" — robustezza della relazione
+#     - monitor_sources: fonti OSINT prioritarie per conferma
+#
+# Convenzione lag:
+#   immediate   = giorni (prezzi spot, futures prossima scadenza)
+#   short       = 2-8 settimane (contratti spot, inventory draw)
+#   medium      = 2-6 mesi (contratti trimestrali, capex decisions)
+#   structural  = 6-18 mesi (investimenti, reshoring, policy response)
+#
+# Caricato dall'OntologyManager al boot insieme all'asset_theory_library.
+# Usato dalla funzione build_sc_signals_context() prima della LLM call #1.
+# =============================================================================
+
+sc_sector_map:
+
+  # =========================================================================
+  # ENERGY
+  # =========================================================================
+
+  BRENT_OIL:
+    impacts:
+      - sector: shipping_logistics
+        direction: +1
+        mechanism: >
+          Bunker fuel è 40-60% dei costi operativi dello shipping marittimo.
+          Brent alto → costi di trasporto salgono → freight rates salgono →
+          margini compressi per importatori, inflazione da trasporto.
+        lag: immediate
+        confidence: high
+        monitor_sources: [supply_chain, energy]
+
+      - sector: petrochemicals_plastics
+        direction: +1
+        mechanism: >
+          Oil è feedstock primario per petrolchimico (etilene, propilene).
+          Brent alto → costi materie prime plastiche salgono →
+          pressione su packaging, automotive, consumer goods.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy]
+
+      - sector: food_agriculture
+        direction: +1
+        mechanism: >
+          Oil guida i costi di macchinari agricoli (diesel) e trasporto
+          prodotti agricoli. Impatto indiretto ma strutturale sui prezzi
+          finali dei beni alimentari.
+        lag: short
+        confidence: medium
+        monitor_sources: [supply_chain, energy]
+
+      - sector: airlines_aviation
+        direction: +1
+        mechanism: >
+          Jet fuel = 20-30% dei costi operativi delle compagnie aeree.
+          Brent alto → hedging costi fuel → pressione su margini →
+          potenziale riduzione rotte o aumento tariffe cargo aereo.
+        lag: immediate
+        confidence: high
+        monitor_sources: [supply_chain, defense]
+
+      - sector: defense_industrial
+        direction: -1
+        mechanism: >
+          Paesi produttori (Russia, OPEC) con oil alto hanno più revenue
+          per spesa militare e procurement. Impatto indiretto sul
+          mercato globale della difesa e sulle forniture dual-use.
+        lag: medium
+        confidence: low
+        monitor_sources: [defense, energy, russia]
+
+  WTI_OIL:
+    impacts:
+      - sector: shipping_logistics
+        direction: +1
+        mechanism: >
+          Diesel USA derivato da WTI → costi trucking domestico USA.
+          WTI alto → costi logistica last-mile salgono →
+          impatto diretto su supply chain retail e manifatturiero USA.
+        lag: immediate
+        confidence: high
+        monitor_sources: [supply_chain]
+
+      - sector: petrochemicals_plastics
+        direction: +1
+        mechanism: >
+          Stesso meccanismo Brent ma con focus su raffinerie USA
+          (Cushing hub). Differenziale WTI-Brent segnala stress
+          specifico sulla capacità di raffinazione americana.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy]
+
+  NATURAL_GAS:
+    impacts:
+      - sector: fertilizers_agriculture
+        direction: +1
+        mechanism: >
+          Gas naturale è il feedstock principale per ammoniaca
+          (processo Haber-Bosch) → fertilizzanti azotati (urea, DAP).
+          Gas alto → costi fertilizzanti salgono → costi produzione
+          agricola aumentano → pressione su prezzi alimentari globali.
+          Trasmissione in 4-8 settimane per i raccolti stagionali.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy]
+
+      - sector: steel_metals
+        direction: +1
+        mechanism: >
+          Gas è combustibile nei forni per acciaio (DRI — Direct Reduced Iron).
+          Gas alto → costi produzione acciaio salgono in Europa e MENA →
+          spostamento della produzione verso regioni con gas più economico
+          (Asia, Middle East).
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy, middle_east]
+
+      - sector: aluminum_smelting
+        direction: +1
+        mechanism: >
+          Alluminio primario richiede ~15 MWh/ton. In Europa molti smelter
+          usano gas per generazione elettrica. Gas alto → costi electricity
+          salgono → smelter europei riducono produzione o chiudono →
+          supply shortage alluminio europeo.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy, european_affairs]
+
+      - sector: chemicals_specialty
+        direction: +1
+        mechanism: >
+          Gas è feedstock per produzione di numerosi specialty chemicals
+          (metanolo, acetilene, resine). Alto gas → costi input chimici →
+          impatto a cascata su farmaceutico, semiconduttori, automotive.
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain, semiconductors]
+
+  # =========================================================================
+  # METALS — INDUSTRIAL
+  # =========================================================================
+
+  COPPER:
+    impacts:
+      - sector: semiconductors_electronics
+        direction: +1
+        mechanism: >
+          Rame è il conduttore primario in PCB, chip packaging, connettori.
+          Copper alto → costi componentistica elettronica salgono →
+          pressione su BOM (Bill of Materials) per consumer electronics
+          e data center hardware. Lead time: 1-2 trimestri su contratti.
+        lag: medium
+        confidence: high
+        monitor_sources: [semiconductors, supply_chain]
+
+      - sector: ev_automotive
+        direction: +1
+        mechanism: >
+          Un EV usa 4-6x più rame di un ICE vehicle (motore, cablaggio,
+          batteria, charging infrastructure). Copper alto → costi
+          produzione EV salgono → pressione su OEM e fornitori Tier 1.
+        lag: medium
+        confidence: high
+        monitor_sources: [supply_chain, asian_affairs]
+
+      - sector: power_grid_infrastructure
+        direction: +1
+        mechanism: >
+          Reti di trasmissione elettrica e rinnovabili sono copper-intensive.
+          Copper alto → costi capex infrastruttura energetica salgono →
+          possibile rallentamento deployment rinnovabili in paesi price-sensitive.
+        lag: structural
+        confidence: medium
+        monitor_sources: [energy, supply_chain, european_affairs]
+
+      - sector: construction_real_estate
+        direction: +1
+        mechanism: >
+          Impianti elettrici ed idraulici usano rame. Copper alto →
+          costi costruzione salgono → margini developer compressi →
+          possibile rallentamento permessi in mercati già in stress.
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain]
+
+  NICKEL:
+    impacts:
+      - sector: ev_automotive
+        direction: +1
+        mechanism: >
+          Nickel è componente chiave delle batterie NMC (60-80% del costo
+          della cella è materiali attivi, nickel è il più costoso).
+          Nickel alto → costo pack batteria sale → EV meno competitivi
+          vs ICE senza sussidi → pressione su adozione e margini OEM.
+        lag: medium
+        confidence: high
+        monitor_sources: [supply_chain, asian_affairs, semiconductors]
+
+      - sector: steel_metals
+        direction: +1
+        mechanism: >
+          Nickel è alloying element nell'acciaio inox (serie 300).
+          Nickel alto → acciaio inox più costoso → pressione su
+          food processing, pharma, chemical equipment, architettura.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, energy]
+
+      - sector: defense_industrial
+        direction: +1
+        mechanism: >
+          Superleghe nickel-based usate in motori a reazione e sistemi
+          missilistici. Nickel alto → costi procurement militare salgono →
+          pressione su budget difesa e tempi di consegna.
+        lag: structural
+        confidence: medium
+        monitor_sources: [defense, supply_chain]
+
+  ALUMINUM:
+    # frequenza: DAILY futures (yfinance ALI=F) — NON mensile FRED
+    impacts:
+      - sector: aerospace_defense
+        direction: +1
+        mechanism: >
+          Alluminio è il materiale strutturale primario in fusoliere
+          e componenti aeronautici. Aluminum alto → costi produzione
+          aerospace salgono → pressione su Boeing, Airbus, supply chain
+          Tier 1-2 (Spirit, Safran, etc.).
+        lag: medium
+        confidence: high
+        monitor_sources: [defense, supply_chain]
+
+      - sector: ev_automotive
+        direction: +1
+        mechanism: >
+          Alluminio usato per alleggerimento strutturale EV (sostituzione
+          acciaio). Aluminum alto → BOM EV sale ulteriormente oltre
+          al già elevato costo batteria.
+        lag: medium
+        confidence: high
+        monitor_sources: [supply_chain, asian_affairs]
+
+      - sector: packaging_consumer
+        direction: +1
+        mechanism: >
+          Lattine, packaging alimentare, imballaggi farmaceutici.
+          Aluminum alto → costi packaging salgono → impatto su
+          food & beverage e consumer goods (trasmissione rapida).
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain]
+
+      - sector: construction_real_estate
+        direction: +1
+        mechanism: >
+          Alluminio usato in finestre, facciate, strutture.
+          Aluminum alto → costi costruzione salgono.
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain]
+
+  SILVER:
+    impacts:
+      - sector: solar_energy
+        direction: +1
+        mechanism: >
+          Argento è usato nei contatti dei pannelli solari fotovoltaici
+          (circa 20g per pannello). Silver alto → costi produzione
+          pannelli salgono → pressione sui margini dei manufacturer
+          e potenziale rallentamento nel deployment solare.
+        lag: medium
+        confidence: high
+        monitor_sources: [energy, supply_chain, asian_affairs]
+
+      - sector: semiconductors_electronics
+        direction: +1
+        mechanism: >
+          Argento usato in die bonding, connettori RF, e componenti
+          ad alta frequenza. Silver alto → costi componentistica
+          elettronica di alta gamma salgono.
+        lag: medium
+        confidence: medium
+        monitor_sources: [semiconductors, supply_chain]
+
+  # =========================================================================
+  # METALS — STRATEGIC / CRITICAL
+  # =========================================================================
+
+  WHEAT:
+    # frequenza: DAILY futures (yfinance ZW=F) — fonte in verifica
+    # FRED PWHEAMTUSD rimosso (restituiva empty)
+    impacts:
+      - sector: food_agriculture
+        direction: +1
+        mechanism: >
+          Grano è input diretto per pane, pasta, mangimi animali.
+          Wheat alto → inflazione alimentare → pressione su paesi
+          importatori netti (MENA, Sub-Saharan Africa, Pakistan) →
+          rischio di instabilità sociale e interruzione supply chain
+          alimentare regionale.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, middle_east, intelligence]
+
+      - sector: animal_feed_livestock
+        direction: +1
+        mechanism: >
+          Grano è componente del mangime per polli, suini, bovini.
+          Wheat alto → costi di allevamento salgono → pressione
+          su prezzi carne e latticini con lag di 1-2 trimestri.
+        lag: medium
+        confidence: high
+        monitor_sources: [supply_chain]
+
+  # =========================================================================
+  # FX — IMPATTO SC
+  # =========================================================================
+
+  USD_CNY:
+    impacts:
+      - sector: electronics_manufacturing
+        direction: +1
+        mechanism: >
+          La maggior parte dell'assemblaggio elettronico globale è in Cina.
+          Yuan debole (USD_CNY sale) → costi di produzione cinesi
+          scendono in USD terms → prodotti cinesi più competitivi →
+          ma anche: importazioni di componenti più costose per i produttori
+          cinesi che comprano in USD (semiconduttori, substrati).
+          Effetto netto: vantaggio competitivo export cinese nel breve.
+        lag: short
+        confidence: medium
+        monitor_sources: [supply_chain, china, semiconductors]
+
+      - sector: shipping_logistics
+        direction: +1
+        mechanism: >
+          Yuan debole segnala rallentamento economia cinese →
+          calo domanda import cinese → possibile riduzione
+          volumi container trans-Pacific → freight rates scendono.
+          Segnale leading per i freight rates di 4-6 settimane.
+        lag: short
+        confidence: medium
+        monitor_sources: [supply_chain, asian_affairs]
+
+  USD_CNH:
+    # reliability: RESTRICTED — ⚠️ spread CNH-CNY < 0.02% in condizioni normali
+    # Usare solo per tracciare effectiveness dei capital controls PBoC
+    # Spread ampio = segnale di capital flight risk
+    # Mai come trigger standalone — solo come corroborazione
+    impacts:
+      - sector: electronics_manufacturing
+        direction: +1
+        mechanism: >
+          CNH reagisce prima del CNY (mercato libero). CNH debole
+          anticipa stress cinese non ancora nei dati ufficiali →
+          early warning per supply chain con esposizione manifatturiera
+          cinese. Segnale da monitorare 1-2 settimane prima del CNY.
+        lag: immediate
+        confidence: medium
+        monitor_sources: [supply_chain, china, asian_affairs]
+  # USD_RUB: RIMOSSO dal sistema (mercato bimodale post-sanzioni, dato non affidabile)
+  US_10Y_YIELD:
+    impacts:
+      - sector: shipping_logistics
+        direction: +1
+        mechanism: >
+          Le compagnie di shipping e logistica sono capital-intensive
+          e spesso altamente indebitate. Yield alto → costo del debito
+          sale → stress finanziario per operatori leveraged →
+          possibile consolidamento o riduzione flotte.
+        lag: structural
+        confidence: low
+        monitor_sources: [supply_chain]
+
+      - sector: construction_real_estate
+        direction: +1
+        mechanism: >
+          Tassi ipotecari agganciati al 10Y. Yield alto → mercato
+          immobiliare rallenta → meno cantieri → meno domanda
+          di materiali da costruzione (acciaio, cemento, rame).
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain]
+
+  REAL_RATE_10Y:
+    impacts:
+      - sector: mining_extraction
+        direction: +1
+        mechanism: >
+          I progetti minerari hanno payback period di 10-20 anni e
+          sono finanziati con debito a lungo termine. Real rate alto →
+          hurdle rate dei progetti minerari sale → meno capex in
+          nuove miniere → supply shortage di metalli critici nel medio termine.
+          Questo è il principale driver strutturale della scarsità di rame,
+          nickel, litio nei prossimi 5-10 anni.
+        lag: structural
+        confidence: high
+        monitor_sources: [supply_chain, energy, asian_affairs]
+
+  # =========================================================================
+  # VOLATILITY / UNCERTAINTY
+  # =========================================================================
+
+  VIX:
+    impacts:
+      - sector: shipping_logistics
+        direction: +1
+        mechanism: >
+          VIX alto → risk-off → importatori riducono ordini per
+          incertezza sulla domanda futura → effetto bullwhip sulla
+          supply chain (oscillazioni amplificate degli ordini).
+          VIX spike è un early warning di disruption degli ordini
+          manifatturieri nelle settimane successive.
+        lag: short
+        confidence: medium
+        monitor_sources: [supply_chain]
+
+      - sector: semiconductors_electronics
+        direction: +1
+        mechanism: >
+          L'industria dei semiconduttori è ciclica e inventory-sensitive.
+          VIX alto → OEM riducono ordini di chip per paura di recessione →
+          inventory accumulation → potenziale price collapse dei
+          commodity chips (DRAM, NAND). Lead time: 1-2 trimestri.
+        lag: medium
+        confidence: medium
+        monitor_sources: [semiconductors, supply_chain, asian_affairs]
+
+  # EPU_GLOBAL: RIMOSSO dal sistema (lag 4-6 settimane, non azionabile giornalmente)
+
+  # =========================================================================
+  # URANIUM — ENERGY TRANSITION
+  # =========================================================================
+
+  URANIUM:
+    impacts:
+      - sector: nuclear_energy
+        direction: +1
+        mechanism: >
+          URA (ETF) alto segnala crescente interesse per il nucleare.
+          Ma il mercato fisico U3O8 è illiquido e dominato da contratti
+          a lungo termine — il segnale è narrativo/strategico più che
+          immediato sulla supply chain. Relevant per: utility che devono
+          rinnovare contratti di fornitura, e per paesi che stanno
+          decidendo se riattivare o costruire reattori.
+        lag: structural
+        confidence: medium
+        monitor_sources: [energy, intelligence, asian_affairs]
+
+  # =========================================================================
+  # FX — DAILY (aggiunti)
+  # Nota frequenza: EUR_USD e USD_JPY sono daily e molto liquidi —
+  # i movimenti sono significativi già oltre 0.5% (FX materiality threshold).
+  # =========================================================================
+
+  EUR_USD:
+    # frequenza: daily
+    # nota: EUR forte = USD debole. Direction +1 = EUR/USD sale = EUR si rafforza.
+    impacts:
+      - sector: european_manufacturing_export
+        direction: -1
+        mechanism: >
+          EUR forte riduce la competitività delle esportazioni europee
+          prezzate in EUR verso mercati USD e Asia.
+          Impatto diretto su automotive (Germania), macchinari,
+          aerospazio (Airbus). EUR/USD sopra 1.10-1.12 inizia a
+          comprimere i margini degli esportatori in modo visibile
+          nei risultati trimestrali.
+        lag: medium
+        confidence: high
+        monitor_sources: [european_affairs, supply_chain]
+
+      - sector: petrochemicals_plastics
+        direction: +1
+        mechanism: >
+          Oil e gas sono prezzati in USD. EUR debole (EUR/USD scende)
+          → importazioni energetiche più costose in EUR per l'industria
+          europea → costi produzione petrolchimico e plastiche in Europa
+          salgono → pressione su packaging e manifatturiero europeo.
+        lag: short
+        confidence: high
+        monitor_sources: [energy, supply_chain, european_affairs]
+
+      - sector: pharmaceuticals
+        direction: -1
+        mechanism: >
+          Molte Big Pharma europee (Roche, Novartis, Bayer, Sanofi)
+          fatturano in USD ma hanno costi in EUR. EUR forte comprime
+          i margini sulle vendite USA — principale mercato farmaceutico
+          mondiale. Impatto su capex R&D e pricing dei farmaci.
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain, european_affairs]
+
+  USD_JPY:
+    # frequenza: daily
+    # nota: USD_JPY sale = yen si indebolisce.
+    # Direction +1 = USD/JPY sale = JPY debole.
+    impacts:
+      - sector: automotive_japan
+        direction: -1
+        mechanism: >
+          JPY debole (USD/JPY alto) aumenta i profitti in JPY delle
+          case automobilistiche giapponesi (Toyota, Honda, Nissan)
+          che producono in Giappone ed esportano in USD/EUR.
+          Ma aumenta anche i costi di importazione di materie prime
+          e componenti. Netto: vantaggioso per i grandi esportatori
+          nipponici, penalizzante per le PMI manifatturiere che importano.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, asian_affairs]
+
+      - sector: semiconductors_electronics
+        direction: -1
+        mechanism: >
+          Molti fab di semiconduttori (Renesas, Rohm, Murata) e
+          componentistica elettronica passiva sono in Giappone.
+          JPY debole → costi di produzione giapponesi più bassi in
+          USD terms → produttori giapponesi più competitivi sul prezzo
+          globale. Ma: equipaggiamento fab (ASML, Applied Materials)
+          è prezzato in USD/EUR → capex più costoso per i fab giapponesi.
+        lag: medium
+        confidence: medium
+        monitor_sources: [semiconductors, asian_affairs, supply_chain]
+
+      - sector: shipping_logistics
+        direction: -1
+        mechanism: >
+          Le grandi shipping companies giapponesi (NYK, MOL, K Line —
+          insieme formano ONE) hanno costi operativi in JPY.
+          JPY debole → struttura di costo più bassa in USD terms →
+          vantaggio competitivo vs armatori coreani e greci.
+          Rilevante per freight rate negotiations su rotte trans-Pacific.
+        lag: medium
+        confidence: low
+        monitor_sources: [supply_chain, asian_affairs]
+
+  # =========================================================================
+  # DOLLAR INDEX — DAILY
+  # DXY è un aggregatore: impatti SC sono più strutturali che tattici.
+  # Utile principalmente quando il movimento è significativo (>1%).
+  # =========================================================================
+
+  DOLLAR_INDEX:
+    # frequenza: daily
+    # nota: DXY sale = dollaro si rafforza vs basket EUR/JPY/GBP/CAD/SEK/CHF.
+    # Direction +1 = DXY sale = dollaro forte.
+    impacts:
+      - sector: emerging_market_manufacturing
+        direction: +1
+        mechanism: >
+          La maggior parte del debito corporate EM è denominato in USD.
+          Dollaro forte → servizio del debito in valuta locale più costoso
+          → stress finanziario per produttori EM (Vietnam, Bangladesh,
+          Messico, Indonesia) → possibile riduzione capex e produzione.
+          Particolarmente rilevante per textile, electronics assembly, footwear.
+        lag: medium
+        confidence: high
+        monitor_sources: [supply_chain, asian_affairs, americas]
+
+      - sector: food_agriculture
+        direction: +1
+        mechanism: >
+          Tutti i commodity agricoli sono prezzati in USD.
+          Dollaro forte → commodity più costosi per paesi importatori
+          con valute deboli → riduzione del potere d'acquisto per
+          importazioni alimentari nei paesi EM → rischio food security
+          in MENA e Sub-Saharan Africa.
+        lag: short
+        confidence: high
+        monitor_sources: [supply_chain, middle_east, intelligence]
+
+      - sector: mining_extraction
+        direction: +1
+        mechanism: >
+          I produttori di commodity (miniere in Cile, Peru, Australia,
+          Congo) hanno costi in valuta locale ma vendono in USD.
+          Dollaro forte → margini delle miniere migliorano in termini
+          reali → incentivo a mantenere la produzione, non ridurla.
+          Effetto opposto rispetto all'impatto sui consumatori EM.
+        lag: short
+        confidence: medium
+        monitor_sources: [supply_chain, energy]
+
+  # =========================================================================
+  # YIELD CURVE — DAILY (ma segnale strutturale, non tattico)
+  # Nota importante: la yield curve non genera segnali SC immediati.
+  # I suoi impatti SC hanno lag di mesi. Va usata come contesto strutturale
+  # nel prompt LLM, non come trigger di segnali short-term.
+  # La confidence è deliberatamente bassa per i lag brevi.
+  # =========================================================================
+
+  YIELD_CURVE_10Y_2Y:
+    # frequenza: daily (calcolata da DGS10 - DGS2)
+    # nota: spread negativo = curva invertita = segnale recessione.
+    # Direction -1 = spread scende/si inverte = segnale di stress.
+    impacts:
+      - sector: shipping_logistics
+        direction: -1
+        mechanism: >
+          Curva invertita → aspettative di recessione → anticipazione
+          calo domanda → gli importatori riducono ordini e scorte →
+          effetto bullwhip: i volumi di freight calano 3-6 mesi prima
+          che la recessione sia confermata dai dati PIL.
+          È uno dei leading indicators più affidabili per i freight volumes.
+        lag: medium
+        confidence: medium
+        monitor_sources: [supply_chain]
+
+      - sector: construction_real_estate
+        direction: -1
+        mechanism: >
+          Curva invertita comprima i margini bancari → le banche riducono
+          l'erogazione di mutui e prestiti costruzione → meno cantieri
+          avviati → calo domanda materiali da costruzione (acciaio, rame,
+          cemento, alluminio) con lag di 6-12 mesi.
+        lag: structural
+        confidence: medium
+        monitor_sources: [supply_chain, european_affairs]
+
+      - sector: mining_extraction
+        direction: -1
+        mechanism: >
+          Curva invertita → costo del capitale a lungo termine sale
+          relativamente (real rate alto) → i progetti minerari con
+          payback >10 anni diventano meno attrattivi economicamente →
+          riduzione capex in nuove miniere → supply shortage strutturale
+          di metalli critici nel medio-lungo termine.
+          Questo è il meccanismo che spiega la scarsità strutturale
+          di rame e litio attesa per il decennio 2025-2035.
+        lag: structural
+        confidence: high
+        monitor_sources: [supply_chain, energy, asian_affairs]
+
+  # =========================================================================
+  # CASS FREIGHT INDEX — SETTIMANALE
+  # Caso speciale: non è un input ma un INDICATORE DI CONFERMA SC.
+  # Non genera segnali SC — li valida.
+  # Viene usato nel prompt LLM con ruolo diverso dagli altri indicatori:
+  # se CASS scende mentre altri segnali SC sono attivi, la conferma
+  # è molto più robusta. Se CASS è flat/positivo, i segnali vanno
+  # downgradati perché la logistica reale non li vede ancora.
+  # =========================================================================
+
+  CASS_FREIGHT_INDEX:
+    # frequenza: mensile (report Cass Information Systems)
+    # nota: il valore rimane invariato per ~30 giorni.
+    # NON usare come trigger giornaliero — usare come confirmation layer.
+    role: confirmation_only   # flag speciale: questo indicatore non genera segnali
+    confirmation_logic:
+      direction_bearish: -1   # Cass scende = attività logistica in calo
+      direction_bullish: +1   # Cass sale = attività logistica in espansione
+      use_in_prompt: >
+        CASS FREIGHT INDEX (ultimo valore disponibile: {value}, Δ vs mese precedente: {delta_mom}%).
+        Questo è un indicatore di CONFERMA della supply chain fisica — si aggiorna mensilmente.
+        Se oggi è disponibile un nuovo dato:
+          Cass in calo → conferma segnali di rallentamento SC (aumenta confidence dei segnali bearish).
+          Cass in crescita → contraddice segnali di stress SC (riduci confidence, segnala divergenza).
+        Se il dato è stale (stesso valore del mese scorso):
+          usalo come contesto di sfondo, non come segnale attivo.
+      corroborates_sectors:
+        [shipping_logistics, emerging_market_manufacturing,
+         food_agriculture, steel_metals, construction_real_estate]

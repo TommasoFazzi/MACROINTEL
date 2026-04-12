@@ -20,6 +20,8 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Output metadata includes `narrative_context` (storylines used, edges count)
   - **Citation linkification** (Phase 2): Converts `[Article N]` references in report to Markdown links `[Article N](url)` using article URLs from `recent_articles` list. Applied post-generation before header prepend.
   - **LLM title generation** (`_generate_report_title()`, `_extract_bluf_from_text()`): After report text is produced, calls `gemini-2.0-flash` with date + focus_areas + BLUF to generate a headline (max 80 chars). Stored in `metadata['title']`. Non-critical — falls back to `""` on failure.
+  - **Phase 3 — Convergence + SC (log-only)**: After `build_jit_context()`, calls `match_convergences()` and `build_sc_signals_context()` from `src/macro/`. Results logged only — prompt not yet modified. Validates the Phase 3 pipeline independently before Phase 4 prompt integration.
+  - **`_get_macro_metadata()`**: Reads `macro_indicator_metadata` from DB, returns `{key: {staleness_days, expected_frequency, is_stale, reliability, last_updated}}`. Used by Phase 3 for staleness-aware convergence scoring.
 
 - `query_analyzer.py` - Pre-search filter extraction
   - `QueryAnalyzer` class - Extracts structured filters from natural language

@@ -1031,6 +1031,38 @@ Respond with JSON analysis following the full schema above:"""
             logger.warning(f"Failed to fetch macro indicators for screening: {e}")
             return []
 
+    def _get_macro_metadata(self) -> Dict[str, Dict]:
+        """
+        Fetch macro_indicator_metadata rows for all indicators.
+
+        Returns dict keyed by indicator key:
+          {key: {staleness_days, expected_frequency, is_stale, reliability, ...}}
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT key, expected_frequency, staleness_days,
+                               is_stale, reliability, last_updated
+                        FROM macro_indicator_metadata
+                    """)
+                    rows = cur.fetchall()
+                    conn.rollback()
+
+            return {
+                row[0]: {
+                    'expected_frequency': row[1],
+                    'staleness_days': row[2],
+                    'is_stale': row[3],
+                    'reliability': row[4],
+                    'last_updated': row[5],
+                }
+                for row in rows
+            }
+        except Exception as e:
+            logger.warning(f"Failed to fetch macro_indicator_metadata: {e}")
+            return {}
+
     # ========================================================================
     # MACRO DASHBOARD GENERATION (Two-Step Pipeline)
     # ========================================================================
@@ -1064,6 +1096,8 @@ Respond with JSON analysis following the full schema above:"""
 
         # ── JIT Ontological Context (Phase 1: Screener + Phase 2: Context) ──
         jit_context_block = ""
+        _indicators_cache = []       # shared with Phase 3 block
+        _prev_indicators_cache = []  # shared with Phase 3 block
         try:
             from src.knowledge.ontology_manager import OntologyManager
             ontology_mgr = OntologyManager()
@@ -1074,11 +1108,13 @@ Respond with JSON analysis following the full schema above:"""
 
             indicators = self._get_macro_indicators_for_screening(target_date)
             prev_indicators = self._get_macro_indicators_for_screening(yesterday)
+            _indicators_cache = indicators
+            _prev_indicators_cache = prev_indicators
 
             if indicators:
-                # Phase 1: Screen anomalies (data-driven, no LLM)
+                # Phase 1: Screen anomalies (materiality-normalized, USD_CNH excluded)
                 top_movers = ontology_mgr.screen_anomalies(
-                    indicators, prev_indicators, top_n=4
+                    indicators, prev_indicators, top_n=6
                 )
 
                 if top_movers:
@@ -1095,6 +1131,95 @@ Respond with JSON analysis following the full schema above:"""
         except Exception as e:
             logger.warning(f"  JIT ontological context failed (non-blocking): {e}")
             jit_context_block = ""
+
+        # ── Phase 3: Convergence Detection + SC Signals (log-only, non-blocking) ──
+        try:
+            from src.macro.match_convergences import match_convergences
+            from src.macro.build_sc_signals_context import build_sc_signals_context
+
+            # Re-fetch if JIT block failed and cache is empty
+            if not _indicators_cache:
+                from datetime import timedelta
+                _indicators_cache = self._get_macro_indicators_for_screening(target_date)
+                _prev_indicators_cache = self._get_macro_indicators_for_screening(
+                    target_date - timedelta(days=1)
+                )
+
+            if not _indicators_cache:
+                raise ValueError("No indicator data for Phase 3")
+
+            # Build {key: delta_pct} dict from today's indicator data
+            indicators_delta: Dict[str, float] = {}
+            indicator_values: Dict[str, float] = {}
+            for ind in _indicators_cache:
+                key = ind.get('indicator_key', '')
+                if not key:
+                    continue
+                try:
+                    value = float(ind.get('value', 0))
+                    indicator_values[key] = value
+                    prev_val = None
+                    for p in _prev_indicators_cache:
+                        if p.get('indicator_key') == key and p.get('value') is not None:
+                            prev_val = float(p['value'])
+                            break
+                    if prev_val is None and ind.get('previous_value') is not None:
+                        prev_val = float(ind['previous_value'])
+                    if prev_val and prev_val != 0:
+                        indicators_delta[key] = ((value - prev_val) / abs(prev_val)) * 100
+                except (ValueError, TypeError):
+                    continue
+
+            # Load metadata for staleness-aware convergence scoring
+            metadata = self._get_macro_metadata()
+
+            # Convergence detection
+            convergence_results = match_convergences(indicators_delta, metadata, ontology_mgr)
+            active_convergences = [m for m in convergence_results if m.active]
+
+            if active_convergences:
+                logger.info(
+                    f"[Phase3] Convergenze attive ({len(active_convergences)}): "
+                    + ", ".join(
+                        f"{m.convergence_id}(conf={m.confidence:.2f},"
+                        f" triggers={m.triggers_aligned}/{m.triggers_total})"
+                        for m in active_convergences
+                    )
+                )
+            else:
+                logger.info("[Phase3] Nessuna convergenza attiva oggi")
+
+            # SC signals — materiality map from indicator deltas
+            indicator_materiality: Dict[str, str] = {}
+            for ind in _indicators_cache:
+                key = ind.get('indicator_key', '')
+                delta = indicators_delta.get(key)
+                if delta is None:
+                    continue
+                from src.macro.match_convergences import _get_category, _materiality_level
+                cat = _get_category(key)
+                indicator_materiality[key] = _materiality_level(abs(delta), cat)
+
+            sc_signals, sc_prompt_block = build_sc_signals_context(
+                indicators_delta,
+                indicator_materiality,
+                indicator_values,
+            )
+
+            if sc_signals:
+                logger.info(
+                    f"[Phase3] SC signals ({len(sc_signals)} settori): "
+                    + ", ".join(
+                        f"{s.sector}(conf={s.pre_confidence}, indicators={s.contributing_indicators})"
+                        for s in sc_signals[:5]
+                    )
+                )
+                logger.debug(f"[Phase3] SC prompt block:\n{sc_prompt_block[:500]}...")
+            else:
+                logger.info("[Phase3] Nessun segnale SC sopra soglia oggi")
+
+        except Exception as e:
+            logger.warning(f"  Phase 3 convergence/SC detection failed (non-blocking): {e}")
 
         # Construct prompt for macro interpretation
         macro_analysis_prompt = f"""You are a macro strategist interpreting today's market indicators.

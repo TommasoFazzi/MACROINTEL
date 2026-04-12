@@ -28,6 +28,26 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Soglie di materialità per categoria — allineate a src/macro/match_convergences.py
+# Usate in screen_anomalies() per normalizzare i delta e produrre un ranking
+# indipendente dalla scala dell'indicatore (VIX vs %, bps, ecc.)
+_MATERIALITY_SIGNIFICANT: Dict[str, float] = {
+    "RATES":       0.10,
+    "VOLATILITY":  3.0,
+    "COMMODITIES": 2.0,
+    "FX":          1.0,
+    "INDICES":     1.5,
+    "CREDIT_RISK": 0.15,
+    "INFLATION":   0.08,
+    "ECONOMY":     0.3,
+    "SHIPPING":    1.5,
+    "CRYPTO":      5.0,
+}
+_MATERIALITY_SIGNIFICANT_DEFAULT = 1.5
+
+# Indicatori esclusi dai top movers (reliability='restricted' o segnale ambiguo)
+_EXCLUDED_FROM_TOP_MOVERS = {"USD_CNH"}
+
 
 class OntologyManager:
     """
@@ -40,6 +60,8 @@ class OntologyManager:
     _instance: Optional['OntologyManager'] = None
     _loaded: bool = False
     _indicators: Dict[str, Dict[str, Any]] = {}
+    _convergences: Dict[str, Any] = {}   # macro_convergences.yaml
+    _sc_map: Dict[str, Any] = {}         # sc_sector_map.yaml
 
     def __new__(cls, config_path: Optional[str] = None):
         if cls._instance is None:
@@ -50,16 +72,17 @@ class OntologyManager:
         if OntologyManager._loaded:
             return
 
+        project_root = Path(__file__).parent.parent.parent
         if config_path is None:
-            # Default: project_root/config/asset_theory_library.yaml
-            project_root = Path(__file__).parent.parent.parent
             config_path = str(project_root / "config" / "asset_theory_library.yaml")
 
         self._load(config_path)
+        self._load_convergences(str(project_root / "config" / "macro_convergences.yaml"))
+        self._load_sc_map(str(project_root / "config" / "sc_sector_map.yaml"))
         OntologyManager._loaded = True
 
     def _load(self, config_path: str):
-        """Load YAML file into memory."""
+        """Load asset_theory_library.yaml into memory."""
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = yaml.safe_load(f)
@@ -75,6 +98,38 @@ class OntologyManager:
         except Exception as e:
             logger.error(f"[OntologyManager] Failed to load config: {e}")
             OntologyManager._indicators = {}
+
+    def _load_convergences(self, config_path: str):
+        """Load macro_convergences.yaml into memory."""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+            OntologyManager._convergences = data.get('convergences', {})
+            logger.info(
+                f"[OntologyManager] Loaded {len(OntologyManager._convergences)} convergence patterns"
+            )
+        except FileNotFoundError:
+            logger.warning(f"[OntologyManager] macro_convergences.yaml not found: {config_path}")
+            OntologyManager._convergences = {}
+        except Exception as e:
+            logger.error(f"[OntologyManager] Failed to load macro_convergences.yaml: {e}")
+            OntologyManager._convergences = {}
+
+    def _load_sc_map(self, config_path: str):
+        """Load sc_sector_map.yaml into memory."""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+            OntologyManager._sc_map = data.get('sc_sector_map', {})
+            logger.info(
+                f"[OntologyManager] Loaded {len(OntologyManager._sc_map)} SC sector mappings"
+            )
+        except FileNotFoundError:
+            logger.warning(f"[OntologyManager] sc_sector_map.yaml not found: {config_path}")
+            OntologyManager._sc_map = {}
+        except Exception as e:
+            logger.error(f"[OntologyManager] Failed to load sc_sector_map.yaml: {e}")
+            OntologyManager._sc_map = {}
 
     # ── Accessors ───────────────────────────────────────────────────────────
 
@@ -118,40 +173,57 @@ class OntologyManager:
         self,
         indicators: List[Dict[str, Any]],
         prev_indicators: Optional[List[Dict[str, Any]]] = None,
-        top_n: int = 4,
+        top_n: int = 6,
         z_score_threshold: float = 1.5,
+        metadata: Optional[Dict[str, Dict]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Data-driven anomaly screener: identifies the top movers from daily macro data.
 
         Phase 1 of the "Intelligence-Driven" funnel.
-        Calculates delta % (day-over-day) and selects the top_n most anomalous.
+        Scores each indicator as: abs(delta_pct) / materiality_significant[category]
+        so that a 3-point VIX move is not swamped by a 1% oil move in raw % terms.
+
+        USD_CNH is excluded from top movers (reliability='restricted' — PBoC fixing
+        distorts the signal; included in context text separately with a warning).
 
         Args:
             indicators: List of dicts from macro_indicators table
-                        (must have 'indicator_key', 'value', 'previous_value')
+                        (must have 'indicator_key', 'value', 'previous_value', 'category')
             prev_indicators: Optional list of previous-day indicators for delta calculation.
                              If provided, used for delta; otherwise falls back to 'previous_value' field.
-            top_n: Number of top movers to return (default: 4)
-            z_score_threshold: Z-score threshold for anomaly detection (future use)
+            top_n: Number of top movers to return (default: 6)
+            z_score_threshold: Z-score threshold (reserved for future use)
+            metadata: Optional {key: {staleness_days, expected_frequency, ...}}
+                      from macro_indicator_metadata. Not used for filtering here
+                      (filtering is done in match_convergences); included for
+                      future downstream consumers that may need freshness info.
 
         Returns:
-            List of dicts with keys: 'key', 'value', 'prev_value', 'delta_pct', 'abs_delta'
-            sorted by absolute delta descending.
+            List of dicts with keys: 'key', 'value', 'prev_value', 'delta_pct',
+            'abs_delta', 'anomaly_score' sorted by anomaly_score descending.
         """
-        prev_map = {}
+        prev_map: Dict[str, float] = {}
         if prev_indicators:
-            prev_map = {i['indicator_key']: float(i['value']) for i in prev_indicators if i.get('value')}
+            prev_map = {
+                i['indicator_key']: float(i['value'])
+                for i in prev_indicators
+                if i.get('value') is not None
+            }
 
         scored = []
         for ind in indicators:
             key = ind.get('indicator_key', '')
+
+            # Exclude unreliable indicators from top-mover ranking
+            if key in _EXCLUDED_FROM_TOP_MOVERS:
+                continue
+
             try:
                 value = float(ind.get('value', 0))
             except (ValueError, TypeError):
                 continue
 
-            # Get previous value from explicit prev_indicators or inline field
             prev_value = prev_map.get(key) or ind.get('previous_value')
             if prev_value is None:
                 continue
@@ -166,22 +238,31 @@ class OntologyManager:
 
             delta_pct = ((value - prev_value) / abs(prev_value)) * 100
 
+            # Materiality-normalized anomaly score
+            category = ind.get('category', 'COMMODITIES')
+            mat_sig = _MATERIALITY_SIGNIFICANT.get(category, _MATERIALITY_SIGNIFICANT_DEFAULT)
+            anomaly_score = abs(delta_pct) / mat_sig
+
             scored.append({
                 'key': key,
                 'value': value,
                 'prev_value': prev_value,
                 'delta_pct': round(delta_pct, 2),
                 'abs_delta': abs(delta_pct),
+                'anomaly_score': round(anomaly_score, 3),
+                'category': category,
             })
 
-        # Sort by absolute delta descending, take top_n
-        scored.sort(key=lambda x: x['abs_delta'], reverse=True)
+        scored.sort(key=lambda x: x['anomaly_score'], reverse=True)
         top_movers = scored[:top_n]
 
         if top_movers:
             logger.info(
                 f"[OntologyManager] Top {len(top_movers)} movers: "
-                + ", ".join(f"{m['key']} ({m['delta_pct']:+.1f}%)" for m in top_movers)
+                + ", ".join(
+                    f"{m['key']} ({m['delta_pct']:+.1f}%, score={m['anomaly_score']:.2f})"
+                    for m in top_movers
+                )
             )
 
         return top_movers
@@ -274,3 +355,15 @@ class OntologyManager:
                 lines.append(f"**{key}**: {ontology}")
 
         return "\n\n".join(lines)
+
+    # ── Convergence + SC Map Accessors ──────────────────────────────────────
+
+    @property
+    def convergences(self) -> Dict[str, Any]:
+        """Raw convergence dict loaded from macro_convergences.yaml."""
+        return OntologyManager._convergences
+
+    @property
+    def sc_map(self) -> Dict[str, Any]:
+        """Raw SC sector map loaded from sc_sector_map.yaml."""
+        return OntologyManager._sc_map
