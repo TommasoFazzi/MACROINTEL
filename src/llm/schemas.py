@@ -448,6 +448,62 @@ class MacroAnalysisResult(BaseModel):
         }
 
 
+# ── MacroAnalysisResultV2 — Phase 4 output schema ─────────────────────────────
+
+class RiskRegimeV2(BaseModel):
+    label: Literal[
+        "risk_off_systemic", "risk_off_moderate", "neutral",
+        "risk_on_moderate", "risk_on_expansion", "crisis_acute", "stagflationary"
+    ]
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    drivers: List[str] = Field(default_factory=list)
+
+
+class ActiveConvergenceItemV2(BaseModel):
+    id: str
+    label: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    narrative: str
+    disambiguation_applied: Optional[str] = None
+
+
+class KeyDivergenceItemV2(BaseModel):
+    description: str
+    severity: Literal["notable", "significant", "critical"]
+
+
+class SCSignalItemV2(BaseModel):
+    sector: str
+    signal: str
+    confidence: Literal["low", "medium", "high"]
+    monitor_sources: List[str] = Field(default_factory=list)
+
+
+class DashboardItemV2(BaseModel):
+    key: str
+    value: float
+    delta_pct: float
+    materiality: Literal["noise", "notable", "significant"]
+    label: str
+    note: Optional[str] = None
+
+
+class MacroAnalysisResultV2(BaseModel):
+    """
+    Output schema for LLM call #1 (macro_analysis_prompt).
+    Phase 4: validated via Pydantic in shadow mode before cutover.
+    7 regime labels (Literal-constrained) prevent LLM label drift.
+    """
+    risk_regime: RiskRegimeV2
+    active_convergences: List[ActiveConvergenceItemV2] = Field(default_factory=list)
+    macro_narrative: str = Field(..., min_length=50, max_length=600)
+    key_divergences: List[KeyDivergenceItemV2] = Field(default_factory=list)
+    supply_chain_signals: List[SCSignalItemV2] = Field(default_factory=list)
+    dashboard_items: List[DashboardItemV2] = Field(default_factory=list)
+    freshness_note: Optional[str] = None
+    data_date: str  # ISO YYYY-MM-DD
+
+
 # ─── Oracle 2.0 Schemas ───────────────────────────────────────────────────────
 
 class QueryIntent(str, Enum):

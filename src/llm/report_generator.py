@@ -1132,6 +1132,19 @@ Respond with JSON analysis following the full schema above:"""
             logger.warning(f"  JIT ontological context failed (non-blocking): {e}")
             jit_context_block = ""
 
+        # Phase 3 outputs — encapsulated in a simple namespace, populated in try block below.
+        # Using SimpleNamespace avoids scattering 6 prefixed variables while keeping
+        # the code readable without requiring a separate module-level dataclass.
+        from types import SimpleNamespace
+        p3 = SimpleNamespace(
+            active_convergences=[],
+            sc_signals=[],
+            sc_prompt_block="",
+            indicators_delta={},
+            indicator_values={},
+            metadata={},
+        )
+
         # ── Phase 3: Convergence Detection + SC Signals (log-only, non-blocking) ──
         try:
             from src.macro.match_convergences import match_convergences
@@ -1149,15 +1162,13 @@ Respond with JSON analysis following the full schema above:"""
                 raise ValueError("No indicator data for Phase 3")
 
             # Build {key: delta_pct} dict from today's indicator data
-            indicators_delta: Dict[str, float] = {}
-            indicator_values: Dict[str, float] = {}
             for ind in _indicators_cache:
                 key = ind.get('indicator_key', '')
                 if not key:
                     continue
                 try:
                     value = float(ind.get('value', 0))
-                    indicator_values[key] = value
+                    p3.indicator_values[key] = value
                     prev_val = None
                     for p in _prev_indicators_cache:
                         if p.get('indicator_key') == key and p.get('value') is not None:
@@ -1166,24 +1177,24 @@ Respond with JSON analysis following the full schema above:"""
                     if prev_val is None and ind.get('previous_value') is not None:
                         prev_val = float(ind['previous_value'])
                     if prev_val and prev_val != 0:
-                        indicators_delta[key] = ((value - prev_val) / abs(prev_val)) * 100
+                        p3.indicators_delta[key] = ((value - prev_val) / abs(prev_val)) * 100
                 except (ValueError, TypeError):
                     continue
 
             # Load metadata for staleness-aware convergence scoring
-            metadata = self._get_macro_metadata()
+            p3.metadata = self._get_macro_metadata()
 
             # Convergence detection
-            convergence_results = match_convergences(indicators_delta, metadata, ontology_mgr)
-            active_convergences = [m for m in convergence_results if m.active]
+            convergence_results = match_convergences(p3.indicators_delta, p3.metadata, ontology_mgr)
+            p3.active_convergences = [m for m in convergence_results if m.active]
 
-            if active_convergences:
+            if p3.active_convergences:
                 logger.info(
-                    f"[Phase3] Convergenze attive ({len(active_convergences)}): "
+                    f"[Phase3] Convergenze attive ({len(p3.active_convergences)}): "
                     + ", ".join(
                         f"{m.convergence_id}(conf={m.confidence:.2f},"
                         f" triggers={m.triggers_aligned}/{m.triggers_total})"
-                        for m in active_convergences
+                        for m in p3.active_convergences
                     )
                 )
             else:
@@ -1193,28 +1204,28 @@ Respond with JSON analysis following the full schema above:"""
             indicator_materiality: Dict[str, str] = {}
             for ind in _indicators_cache:
                 key = ind.get('indicator_key', '')
-                delta = indicators_delta.get(key)
+                delta = p3.indicators_delta.get(key)
                 if delta is None:
                     continue
                 from src.macro.match_convergences import _get_category, _materiality_level
                 cat = _get_category(key)
                 indicator_materiality[key] = _materiality_level(abs(delta), cat)
 
-            sc_signals, sc_prompt_block = build_sc_signals_context(
-                indicators_delta,
+            p3.sc_signals, p3.sc_prompt_block = build_sc_signals_context(
+                p3.indicators_delta,
                 indicator_materiality,
-                indicator_values,
+                p3.indicator_values,
             )
 
-            if sc_signals:
+            if p3.sc_signals:
                 logger.info(
-                    f"[Phase3] SC signals ({len(sc_signals)} settori): "
+                    f"[Phase3] SC signals ({len(p3.sc_signals)} settori): "
                     + ", ".join(
                         f"{s.sector}(conf={s.pre_confidence}, indicators={s.contributing_indicators})"
-                        for s in sc_signals[:5]
+                        for s in p3.sc_signals[:5]
                     )
                 )
-                logger.debug(f"[Phase3] SC prompt block:\n{sc_prompt_block[:500]}...")
+                logger.debug(f"[Phase3] SC prompt block:\n{p3.sc_prompt_block[:500]}...")
             else:
                 logger.info("[Phase3] Nessun segnale SC sopra soglia oggi")
 
@@ -1302,6 +1313,17 @@ Respond with JSON only:"""
             raw_output = response.text
             logger.debug(f"Macro analysis raw output: {raw_output[:300]}...")
 
+            # Assemble Phase 3 payload once — shared across all return paths below
+            p3_payload = {
+                'active_convergences': p3.active_convergences,
+                'sc_signals': p3.sc_signals,
+                'sc_prompt_block': p3.sc_prompt_block,
+                'indicators_delta': p3.indicators_delta,
+                'indicator_values': p3.indicator_values,
+                'metadata': p3.metadata,
+                'jit_context_block': jit_context_block,
+            }
+
             # Validate with Pydantic
             try:
                 validated_analysis = MacroAnalysisResult.model_validate_json(raw_output)
@@ -1310,7 +1332,8 @@ Respond with JSON only:"""
                 return {
                     'success': True,
                     'result': validated_analysis.model_dump(),
-                    'raw_llm_output': raw_output
+                    'raw_llm_output': raw_output,
+                    '_phase3': p3_payload,
                 }
 
             except ValidationError as e:
@@ -1322,14 +1345,16 @@ Respond with JSON only:"""
                         'success': False,
                         'result': raw_json,  # Partial result
                         'validation_errors': [str(err) for err in e.errors()],
-                        'raw_llm_output': raw_output
+                        'raw_llm_output': raw_output,
+                        '_phase3': p3_payload,
                     }
                 except json.JSONDecodeError:
                     return {
                         'success': False,
                         'error': 'Invalid JSON output',
                         'validation_errors': [str(err) for err in e.errors()],
-                        'raw_llm_output': raw_output
+                        'raw_llm_output': raw_output,
+                        '_phase3': p3_payload,
                     }
 
         except Exception as e:
@@ -1337,8 +1362,110 @@ Respond with JSON only:"""
             return {
                 'success': False,
                 'error': str(e),
-                'raw_llm_output': None
+                'raw_llm_output': None,
+                '_phase3': {},
             }
+
+    def _generate_macro_analysis_v2(
+        self,
+        macro_context_raw: str,
+        jit_context_block: str,
+        active_convergences: list,
+        sc_signals: list,
+        sc_prompt_block: str,
+        metadata: dict,
+        target_date,
+    ) -> Dict[str, Any]:
+        """
+        LLM call #1: structured JSON regime analysis.
+        Phase 4: runs in shadow mode alongside v1 — no effect on report output.
+
+        Calls Gemini 2.5 Flash (reasoning-critical — regime label propagates through
+        all downstream analysis), validates with MacroAnalysisResultV2 (Pydantic),
+        and persists to macro_regime_history for Oracle/Narrative Engine queries.
+        """
+        from src.macro.macro_analysis_schema import MACRO_ANALYSIS_SYSTEM_PROMPT
+        from src.macro.macro_regime_persistence import get_macro_regime_persistence_singleton
+        from .schemas import MacroAnalysisResultV2
+
+        date_str = (target_date.strftime('%Y-%m-%d')
+                    if hasattr(target_date, 'strftime') else str(target_date))
+
+        # Format active convergences for prompt
+        if active_convergences:
+            conv_lines = ["=== ACTIVE CONVERGENCE PATTERNS (pre-computed, confidence >= 0.55) ==="]
+            for m in active_convergences:
+                conv_lines.append(
+                    f"\n### {m.convergence_id} — \"{m.label}\""
+                    f"\n  Confidence: {m.confidence:.2f}"
+                    f" (triggers: {m.triggers_aligned}/{m.triggers_total} aligned,"
+                    f" {m.triggers_significant} significant)"
+                    f"\n  Causal chain: {m.causal_chain}"
+                )
+                if m.llm_disambiguation:
+                    conv_lines.append(f"  Disambiguation rules: {m.llm_disambiguation}")
+                if m.primary_trigger_note:
+                    conv_lines.append(f"  Primary trigger note: {m.primary_trigger_note}")
+            conv_block = "\n".join(conv_lines)
+        else:
+            conv_block = "=== ACTIVE CONVERGENCE PATTERNS ===\nNessuna convergenza attiva oggi."
+
+        prompt = (
+            f"{MACRO_ANALYSIS_SYSTEM_PROMPT}\n\n"
+            f"=== TODAY'S MACRO DATA ({date_str}) ===\n"
+            f"{macro_context_raw}\n\n"
+            f"{jit_context_block}\n\n"
+            f"{conv_block}\n\n"
+            f"{sc_prompt_block}\n\n"
+            f"=== OUTPUT INSTRUCTIONS ===\n"
+            f"Return ONLY a valid JSON object matching this exact schema.\n"
+            f"No markdown, no preamble, no explanation outside the JSON.\n"
+            f'data_date must be "{date_str}".\n'
+        )
+
+        try:
+            import google.generativeai as genai
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                ),
+            )
+            response = model.generate_content(
+                prompt,
+                request_options={"timeout": 90},
+            )
+            response_text = response.text.strip()
+
+            # Parse + Pydantic validation
+            raw_json = json.loads(response_text)
+            validated = MacroAnalysisResultV2.model_validate(raw_json)
+
+            # Persist to macro_regime_history (non-blocking)
+            weekday = target_date.weekday() if hasattr(target_date, 'weekday') else 0
+            freshness_gap = 3 if weekday == 0 else 0
+            try:
+                persistence = get_macro_regime_persistence_singleton()
+                saved = persistence.save(target_date, validated.model_dump(), freshness_gap)
+                if saved:
+                    logger.info(
+                        f"[v2] macro_regime_history saved:"
+                        f" regime={validated.risk_regime.label}"
+                        f" confidence={validated.risk_regime.confidence:.2f}"
+                        f" convergences={[c.id for c in validated.active_convergences]}"
+                    )
+            except Exception as save_err:
+                logger.warning(f"[v2] regime_history save failed (non-blocking): {save_err}")
+
+            return {'success': True, 'result': validated.model_dump()}
+
+        except ValidationError as ve:
+            logger.warning(f"[v2] Pydantic validation failed: {ve}")
+            return {'success': False, 'error': str(ve)}
+        except Exception as e:
+            logger.warning(f"[v2] _generate_macro_analysis_v2 failed: {e}")
+            return {'success': False, 'error': str(e)}
 
     def _format_macro_dashboard(
         self,
@@ -1691,6 +1818,31 @@ Respond with JSON only:"""
                         logger.info(f"✓ Macro dashboard generated ({len(macro_dashboard_text)} chars)")
                     else:
                         logger.warning("  Macro analysis generation failed, using raw context")
+
+                    # ── Phase 4 shadow: v2 regime analysis (non-blocking, log only) ──
+                    phase3_data = macro_analysis_result.get('_phase3', {}) if macro_analysis_result else {}
+                    if phase3_data.get('indicators_delta') and macro_context_text:
+                        try:
+                            macro_v2_result = self._generate_macro_analysis_v2(
+                                macro_context_raw=macro_context_text,
+                                jit_context_block=phase3_data.get('jit_context_block', ''),
+                                active_convergences=phase3_data.get('active_convergences', []),
+                                sc_signals=phase3_data.get('sc_signals', []),
+                                sc_prompt_block=phase3_data.get('sc_prompt_block', ''),
+                                metadata=phase3_data.get('metadata', {}),
+                                target_date=today,
+                            )
+                            if macro_v2_result.get('success'):
+                                regime = macro_v2_result['result']['risk_regime']
+                                logger.info(
+                                    f"[v2 shadow] regime={regime['label']}"
+                                    f" confidence={regime['confidence']:.2f}"
+                                    f" narrative_len={len(macro_v2_result['result'].get('macro_narrative', ''))}"
+                                )
+                            else:
+                                logger.warning(f"[v2 shadow] failed: {macro_v2_result.get('error')}")
+                        except Exception as v2_err:
+                            logger.warning(f"[v2 shadow] exception (non-blocking): {v2_err}")
                 else:
                     logger.info("  No macro data available for today")
             except Exception as e:

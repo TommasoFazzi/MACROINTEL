@@ -27,11 +27,32 @@ Strato intermedio tra `src/integrations/openbb_service.py` (fetch dei dati macro
   - Corroboration boost: 2+ segnali medium → high, solo se almeno un indicatore è daily
   - Restituisce `(List[AggregatedSCSignal], str)` — segnali aggregati + prompt block XML `<sc_pre_signals>`
 
-### Fasi Future (Phase 4+)
-- `macro_regime_persistence.py` — `MacroRegimePersistence` singleton + `get_macro_regime_persistence_singleton()`
-- `macro_analysis_schema.py` — `MacroAnalysisResultV2` Pydantic schema + `MACRO_ANALYSIS_SYSTEM_PROMPT`
-- `strategic_intelligence_prompt.py` — `build_strategic_intelligence_prompt()` per LLM call #2
-- `ew_tracker.py` — Phase 6: Early Warning signal tracking + accuracy feedback loop
+### Phase 4 (completata — shadow mode)
+
+- `macro_regime_persistence.py` — Persistence layer per `macro_regime_history` + singleton
+  - `MacroRegimePersistence(db)` — salva e legge storia regime 60gg
+  - `save(analysis_date, analysis_json, freshness_gap_days)` — INSERT ON CONFLICT (idempotente)
+  - `get_regime_context(target_date)` → `RegimeContext` — usato dal Narrative Engine
+  - `get_regime_streak(as_of)` → `RegimeStreak` — streak giorni consecutivi stesso regime
+  - `get_sc_signal_streaks(as_of, min_days=2)` → `List[SCSignalStreak]` — settori SC persistenti
+  - `get_regime_history_summary(days=30)` → `List[dict]` — per Oracle e Strategic Layer
+  - `get_scenario_context(as_of)` → `dict` — contesto strutturato per Scenario Analysis
+  - `compute_regime_momentum_boost(topics, regime_context, sc_streaks)` → `float` — boost 1.0-1.3
+  - `get_macro_regime_persistence_singleton()` — thread-safe singleton (double-checked locking)
+
+- `macro_analysis_schema.py` — Prompt + schema per LLM call #1
+  - `MACRO_ANALYSIS_SYSTEM_PROMPT` — regole di classificazione regime, convergenza, divergenze, SC signals
+  - **7 regime labels (Literal-constrained)**: `risk_off_systemic`, `risk_off_moderate`, `neutral`, `risk_on_moderate`, `risk_on_expansion`, `crisis_acute`, `stagflationary`
+  - `CROSS_VALIDATION_BLOCK` — regole cross-validation macro-news per LLM call #2 (Phase 5)
+
+- `strategic_intelligence_prompt.py` — Prompt assembler per LLM call #2 (Phase 5)
+  - `STRATEGIC_INTELLIGENCE_SYSTEM_PROMPT` — system prompt per report strategico 3 orizzonti
+  - `CROSS_VALIDATION_BLOCK` — cross-validation rules
+  - `build_output_instructions(target_date)` — 7 sezioni output: Executive Summary, Key Developments, Macro Dashboard, Early Warning (1-4w), Strategic Positioning (1-6m), Scenario Analysis (3-12m), Supply Chain Monitor, Strategic Storyline Tracker
+  - `build_strategic_intelligence_prompt(macro_analysis_json, macro_regime_context_xml, storylines_xml, articles, target_date, data_quality_flags)` → `(system_prompt, user_prompt)`
+
+### Phase 6 (futura)
+- `ew_tracker.py` — Early Warning signal tracking + accuracy feedback loop
 
 ## Config Files
 - `config/macro_convergences.yaml` — 8 pattern di convergenza (risk_off_systemic, industrial_cycle_expansion, banking_liquidity_stress, real_rate_shock, recession_signal_leading, recession_in_progress, inflationary_spiral, china_stress_global_slowdown, carry_trade_unwind_jpy)

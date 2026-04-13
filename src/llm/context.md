@@ -20,8 +20,9 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Output metadata includes `narrative_context` (storylines used, edges count)
   - **Citation linkification** (Phase 2): Converts `[Article N]` references in report to Markdown links `[Article N](url)` using article URLs from `recent_articles` list. Applied post-generation before header prepend.
   - **LLM title generation** (`_generate_report_title()`, `_extract_bluf_from_text()`): After report text is produced, calls `gemini-2.0-flash` with date + focus_areas + BLUF to generate a headline (max 80 chars). Stored in `metadata['title']`. Non-critical — falls back to `""` on failure.
-  - **Phase 3 — Convergence + SC (log-only)**: After `build_jit_context()`, calls `match_convergences()` and `build_sc_signals_context()` from `src/macro/`. Results logged only — prompt not yet modified. Validates the Phase 3 pipeline independently before Phase 4 prompt integration.
+  - **Phase 3 — Convergence + SC (log-only)**: After `build_jit_context()`, calls `match_convergences()` and `build_sc_signals_context()` from `src/macro/`. Results stored in `_p3_*` outer vars and returned via `_phase3` key in result dict. Logs only — prompt not yet modified.
   - **`_get_macro_metadata()`**: Reads `macro_indicator_metadata` from DB, returns `{key: {staleness_days, expected_frequency, is_stale, reliability, last_updated}}`. Used by Phase 3 for staleness-aware convergence scoring.
+  - **Phase 4 — Shadow mode**: `_generate_macro_analysis_v2(macro_context_raw, jit_context_block, active_convergences, sc_signals, sc_prompt_block, metadata, target_date)` — LLM call #1 with `gemini-2.5-flash`, validates output against `MacroAnalysisResultV2` (7 Literal-constrained regime labels), persists to `macro_regime_history` via `get_macro_regime_persistence_singleton()`. Called in `generate_report()` shadow block (non-blocking, log-only) using `_phase3` data from v1 result. Go/No-Go for Phase 5: Pydantic failure rate < 5% on 3 consecutive days.
 
 - `query_analyzer.py` - Pre-search filter extraction
   - `QueryAnalyzer` class - Extracts structured filters from natural language
@@ -77,6 +78,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
 - `schemas.py` - Pydantic schemas for structured LLM output
   - `IntelligenceReportMVP`, `IntelligenceReport`, `TradeSignal`, `ImpactScore`
   - `MacroCondensedContext`, `MacroDashboardItem`, `ExtractedFilters`
+  - **Phase 4 schemas**: `MacroAnalysisResultV2` + nested (`RiskRegimeV2`, `ActiveConvergenceItemV2`, `KeyDivergenceItemV2`, `SCSignalItemV2`, `DashboardItemV2`). `RiskRegimeV2.label` is `Literal`-constrained to 7 values — prevents LLM label drift.
   - **Oracle 2.0 schemas**: `QueryIntent` (enum, used for logging), `QueryComplexity`, `ExecutionStep`, `QueryPlan` (retained for Oracle 1.0 compat and logging)
 
 ## Dependencies
