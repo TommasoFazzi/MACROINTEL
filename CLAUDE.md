@@ -80,6 +80,35 @@ npm run build     # Production build
 npm run lint      # ESLint
 ```
 
+## Architecture Diagrams
+
+Visual documentation lives in [`docs/architecture/`](docs/architecture/) — all diagrams are Mermaid and render natively on GitHub:
+
+| File | Content |
+|------|---------|
+| [00_overview.md](docs/architecture/00_overview.md) | C4 L1 System Context + L2 Container Diagram |
+| [01_pipeline.md](docs/architecture/01_pipeline.md) | Daily 10-step pipeline data flow + report generation |
+| [02_narrative_engine.md](docs/architecture/02_narrative_engine.md) | Narrative Engine 6-stage internal flow + state machine |
+| [03_oracle.md](docs/architecture/03_oracle.md) | Oracle 2.0 agentic loop + tool routing + session management |
+| [04_database.md](docs/architecture/04_database.md) | ER diagrams: core tables, narrative, macro, knowledge base |
+| [05_frontend.md](docs/architecture/05_frontend.md) | Next.js route map + component tree + SWR data flow |
+| [06_api.md](docs/architecture/06_api.md) | API endpoint map per router + rate limits + response shapes |
+| [07_module_deps.md](docs/architecture/07_module_deps.md) | Python inter-module dependency graph + singletons |
+
+### Generate visual dependency graphs (requires pydeps + graphviz)
+```bash
+bash scripts/visualize_deps.sh
+# → SVGs in docs/generated/  (open with browser)
+```
+
+### Generate database ERD (requires Docker + running PostgreSQL)
+```bash
+bash scripts/generate_schema_spy.sh
+# → Interactive HTML ERD at docs/generated/schema/index.html
+```
+
+---
+
 ## Architecture
 
 ### Data Pipeline Flow

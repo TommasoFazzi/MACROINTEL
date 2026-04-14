@@ -75,3 +75,15 @@ scripts/com.intelligence-ita.daily-pipeline.plist
 
 # Archive
 docs/archive/
+
+# Claude Code internal files (project memory, plans, skills)
+.claude/
+
+# Planning archives
+planning/
+
+# Generated visualization artifacts (binary/large, regenerate with scripts)
+docs/generated/schema/
+docs/generated/*.svg
+docs/generated/*.txt
+docs/generated/*.json
