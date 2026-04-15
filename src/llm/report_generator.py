@@ -2104,7 +2104,6 @@ Use them to:
 
         # Phase 5 branch: variables shared by both v1 and v2 paths
         report_date = datetime.now().strftime('%Y-%m-%d')
-        article_links = {i: article.get('link', '') for i, article in enumerate(recent_articles, 1)}
         use_strategic_v2 = bool(macro_v2_result and macro_v2_result.get('success'))
 
         # ── Phase 5: v2 strategic report (LLM call #2) ──────────────────────
@@ -2120,7 +2119,6 @@ Use them to:
             )
             if strategic_result.get('success'):
                 report_text = strategic_result['report_text']
-                report_text = _linkify_citations(report_text, article_links)
                 report_text = f"# Intelligence Briefing — {report_date}\n\n" + report_text
                 logger.info(f"✓ Strategic report (v2) generated ({len(report_text)} chars)")
             else:
@@ -2270,9 +2268,6 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                 )
                 report_text = response.text
                 logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
-
-                report_text = _linkify_citations(report_text, article_links)
-                logger.debug("✓ Article citations linkified")
 
                 # Prepend pre-built title + macro dashboard programmatically
                 # This guarantees consistent ticker format regardless of LLM variability.
