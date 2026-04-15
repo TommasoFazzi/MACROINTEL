@@ -1,0 +1,116 @@
+name: Update Architecture Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'web-platform/app/**'
+      - 'web-platform/components/**'
+      - 'web-platform/hooks/**'
+      - 'web-platform/lib/**'
+      - 'migrations/**'
+
+jobs:
+  update-imports:
+    name: Python import graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate import graph
+        run: |
+          mkdir -p docs/generated
+          python scripts/analyze_imports.py
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'docs(auto): update Python import graph [skip ci]'
+          file_pattern: docs/generated/imports.md
+
+  update-frontend-deps:
+    name: Frontend dependency graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-platform/package-lock.json
+
+      - name: Install deps
+        run: cd web-platform && npm ci
+
+      - name: Install graphviz
+        run: sudo apt-get install -y graphviz
+
+      - name: Generate frontend dep graph
+        run: |
+          mkdir -p docs/generated
+          cd web-platform
+          npx depcruise app components hooks lib \
+            --no-config \
+            --output-type dot \
+            | dot -T svg > ../docs/generated/frontend_deps.svg
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'docs(auto): update frontend dependency graph [skip ci]'
+          file_pattern: docs/generated/frontend_deps.svg
+
+  update-schema:
+    name: Database ERD (tbls via SSH)
+    runs-on: ubuntu-latest
+    # Only runs when migrations change
+    if: |
+      contains(join(github.event.commits.*.modified, ' '), 'migrations/')
+      || contains(join(github.event.commits.*.added, ' '), 'migrations/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tbls on server and pull output
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            cd /opt/intelligence-ita/repo
+            PGPASS=$(grep "^POSTGRES_PASSWORD=" .env.production | cut -d'=' -f2 | tr -d '"')
+            mkdir -p docs/generated/schema
+            docker run --rm \
+              --network app_internal \
+              -v "$PWD/docs/generated/schema:/output" \
+              ghcr.io/k1low/tbls:latest doc \
+              "postgres://intelligence_user:${PGPASS}@postgres:5432/intelligence_ita?sslmode=disable" \
+              /output --force
+
+      - name: Pull generated schema from server
+        uses: nicklasfrahm/scp-action@main
+        with:
+          direction: download
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          source: /opt/intelligence-ita/repo/docs/generated/schema
+          target: docs/generated/schema
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'docs(auto): update database schema ERD [skip ci]'
+          file_pattern: docs/generated/schema/**
