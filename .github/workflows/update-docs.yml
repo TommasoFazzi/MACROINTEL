@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir -p docs/generated
           cd web-platform
-          npx depcruise app components hooks lib \
+          npx --yes dependency-cruiser app components hooks lib \
             --no-config \
             --output-type dot \
             | dot -T svg > ../docs/generated/frontend_deps.svg
