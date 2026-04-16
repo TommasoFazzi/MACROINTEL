@@ -8,193 +8,98 @@ This project uses both Python (backend/pipelines) and TypeScript (web-platform).
 
 INTELLIGENCE_ITA is an end-to-end geopolitical intelligence news analysis platform. It ingests 33+ RSS feeds, processes articles with NLP (spaCy + sentence-transformers), stores them in PostgreSQL with pgvector for semantic search, generates intelligence reports via Google Gemini LLM with RAG, and provides a human-in-the-loop review dashboard. A **Narrative Engine** tracks storylines across articles using HDBSCAN clustering, LLM-driven summary evolution, and a graph of inter-storyline relationships. A Next.js web platform serves as the public-facing frontend with a force-directed graph visualization of the narrative network.
 
-## Common Commands
+## Module Index
 
-### Python Backend
+| Module | Size | Detail |
+|--------|------|--------|
+| `src/llm/report_generator.py` | ~3385 lines | [src/llm/context.md](src/llm/context.md) |
+| `src/storage/database.py` | ~2708 lines | [src/storage/context.md](src/storage/context.md) |
+| `src/nlp/narrative_processor.py` | ~1517 lines | [src/nlp/context.md](src/nlp/context.md) |
+| `src/integrations/openbb_service.py` | ~1026 lines | [src/integrations/context.md](src/integrations/context.md) |
+| `src/llm/oracle_orchestrator.py` | ~566 lines | [src/llm/context.md](src/llm/context.md) |
+| `src/nlp/processing.py` | ~603 lines | [src/nlp/context.md](src/nlp/context.md) |
+| `src/api/` | routers + main | [src/api/context.md](src/api/context.md) |
+| `scripts/` | pipeline + tooling | [scripts/context.md](scripts/context.md) |
+| `web-platform/` | Next.js frontend | [web-platform/context.md](web-platform/context.md) |
+| `migrations/` | 42 SQL files | [migrations/context.md](migrations/context.md) |
+
+## Architecture Diagrams
+
+Visual documentation in [`docs/architecture/`](docs/architecture/) — Mermaid, renders on GitHub:
+
+| File | Content |
+|------|---------|
+| [00_overview.md](docs/architecture/00_overview.md) | C4 L1 System Context + L2 Container Diagram |
+| [01_pipeline.md](docs/architecture/01_pipeline.md) | Daily pipeline data flow + report generation |
+| [02_narrative_engine.md](docs/architecture/02_narrative_engine.md) | Narrative Engine 6-stage flow + state machine |
+| [03_oracle.md](docs/architecture/03_oracle.md) | Oracle 2.0 agentic loop + tool routing |
+| [04_database.md](docs/architecture/04_database.md) | ER diagrams: core, narrative, macro, knowledge base |
+| [05_frontend.md](docs/architecture/05_frontend.md) | Next.js route map + component tree + SWR flow |
+| [06_api.md](docs/architecture/06_api.md) | API endpoint map + rate limits + response shapes |
+| [07_module_deps.md](docs/architecture/07_module_deps.md) | Python inter-module dependency graph + singletons |
+
+## Key Commands
 
 ```bash
-# All commands run from the inner INTELLIGENCE_ITA/ directory (where src/, scripts/, requirements.txt live)
-
-# Run all tests
-pytest tests/ -v
-
-# Run specific test category
-pytest tests/test_ingestion/ -v
-pytest tests/test_nlp/ -v
-pytest tests/test_storage/ -v
-pytest tests/test_llm/ -v
-
-# Run a single test file
-pytest tests/test_llm/test_report_generator.py -v
-
-# Run a single test function
-pytest tests/test_llm/test_report_generator.py::test_function_name -v
-
-# Run by marker
-pytest -m unit
-pytest -m "not slow"
-
-# Coverage
-pytest tests/ --cov=src --cov-report=html
-
-# Linting (tools are in requirements-dev.txt, some commented out)
-black src/ scripts/
-flake8 src/ scripts/ --max-line-length=120
-ruff check src/
-
-# Run pipeline steps individually
+# Pipeline — 7 steps in order (run from repo root)
 python -m src.ingestion.pipeline              # 1. Ingest RSS feeds
-python scripts/fetch_daily_market_data.py     # 2. Fetch market data (optional, continue_on_failure)
+python scripts/fetch_daily_market_data.py     # 2. Fetch market data
 python scripts/process_nlp.py                 # 3. NLP processing
 python scripts/load_to_database.py            # 4. Load to database
-python scripts/process_narratives.py          # 5. Narrative processing (storylines + graph)
+python scripts/process_narratives.py          # 5. Narrative processing
 python scripts/generate_report.py             # 6. Generate LLM report
-python scripts/refresh_map_data.py            # 7. Refresh map cache + recompute intelligence scores (post-pipeline)
+python scripts/refresh_map_data.py            # 7. Refresh map + intelligence scores
 
 # Full automated pipeline
 python scripts/daily_pipeline.py
 
-# Report generation with options
+# Report generation flags (non-derivable)
 python scripts/generate_report.py --days 3 --macro-first --skip-article-signals
 
-# HITL Dashboard (Streamlit)
+# HITL Dashboard
 streamlit run Home.py
 
 # FastAPI backend
 uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
-# System health check
-python scripts/check_setup.py
-
-# Daily status check
-python scripts/pipeline_status_check.py
+# Eval markers (CI-specific — not standard pytest)
+pytest tests/evals/ -m eval_fast   # mocked model, runs on every PR
+pytest tests/evals/ -m eval_slow   # real Gemini model, nightly only
 ```
 
-### Next.js Frontend (web-platform/)
+## Configuration Files
 
-```bash
-cd web-platform
-npm install
-npm run dev       # Dev server at http://localhost:3000
-npm run build     # Production build
-npm run lint      # ESLint
-```
-
-## Architecture Diagrams
-
-Visual documentation lives in [`docs/architecture/`](docs/architecture/) — all diagrams are Mermaid and render natively on GitHub:
-
-| File | Content |
+| File | Purpose |
 |------|---------|
-| [00_overview.md](docs/architecture/00_overview.md) | C4 L1 System Context + L2 Container Diagram |
-| [01_pipeline.md](docs/architecture/01_pipeline.md) | Daily 10-step pipeline data flow + report generation |
-| [02_narrative_engine.md](docs/architecture/02_narrative_engine.md) | Narrative Engine 6-stage internal flow + state machine |
-| [03_oracle.md](docs/architecture/03_oracle.md) | Oracle 2.0 agentic loop + tool routing + session management |
-| [04_database.md](docs/architecture/04_database.md) | ER diagrams: core tables, narrative, macro, knowledge base |
-| [05_frontend.md](docs/architecture/05_frontend.md) | Next.js route map + component tree + SWR data flow |
-| [06_api.md](docs/architecture/06_api.md) | API endpoint map per router + rate limits + response shapes |
-| [07_module_deps.md](docs/architecture/07_module_deps.md) | Python inter-module dependency graph + singletons |
+| `config/feeds.yaml` | 33 RSS feed definitions with categories |
+| `config/top_50_tickers.yaml` | Geopolitical market movers with NER aliases |
+| `config/entity_blocklist.yaml` | Noise filtering for extracted entities |
+| `config/asset_theory_library.yaml` | 35 indicator ontologies + causal correlation maps |
+| `config/macro_convergences.yaml` | Convergence pattern definitions for Strategic Intelligence Layer |
+| `config/sc_sector_map.yaml` | Supply chain sector mappings |
+| `config/iran_static_data.json` | Static Iran geopolitical reference data |
+| `config/pdf_sources.yaml` | PDF intelligence sources auto-detected via pymupdf4llm |
+| `.env` / `.env.example` | Runtime secrets and settings |
 
-### Generate visual dependency graphs (requires pydeps + graphviz)
-```bash
-bash scripts/visualize_deps.sh
-# → SVGs in docs/generated/  (open with browser)
-```
+## Testing
 
-### Generate database ERD (requires Docker + running PostgreSQL)
-```bash
-bash scripts/generate_schema_spy.sh
-# → Interactive HTML ERD at docs/generated/schema/index.html
-```
+Pytest markers defined in `pytest.ini`: `unit`, `integration`, `e2e`, `slow`, `eval_fast`, `eval_slow`.
 
----
+| Marker | When | Model | Fail threshold |
+|--------|------|-------|---------------|
+| `eval_fast` | Every PR (`evals_fast.yml`) | Mocked — no API calls | Hard fail on logic errors |
+| `eval_slow` | Nightly (`evals_nightly.yml`) | Real Gemini model | Configurable pass rate |
 
-## Architecture
+Tests mirror `src/` structure under `tests/`. Mock HTTP with `responses`, mock datetime with `freezegun`. Async methods use `AsyncMock` + `pytest-asyncio`.
 
-### Data Pipeline Flow
+## Environment Requirements
 
-```
-RSS Feeds (33) → Ingestion → NLP Processing → PostgreSQL+pgvector → Narrative Engine → RAG+LLM → HITL Review
-                                                                          ↓
-                                                                   Storyline Graph → API → Frontend Visualization
-```
-
-**Seven phases:**
-1. **Ingestion** (`src/ingestion/`): Async RSS parsing via aiohttp, full-text extraction (Trafilatura primary → Scrapling/StealthyFetcher → Newspaper3k fallback), 2-phase deduplication, keyword blocklist filter, PDF auto-detection via pymupdf4llm. Incorporates structured ingestion from OpenSanctions, UCDP, World Bank, and IMF.
-2. **NLP** (`src/nlp/`): spaCy multilingual NER, semantic chunking, embeddings (384-dim), LLM relevance classification.
-3. **Storage** (`src/storage/database.py`): PostgreSQL + pgvector + PostGIS, connection pooling.
-4. **Narrative Engine** (`src/nlp/narrative_processor.py`): HDBSCAN micro-clustering, embedding matching, LLM summary evolution, TF-IDF weighted Jaccard graph edges, momentum scoring with decay.
-5. **Report Generation & Oracle 2.0** (`src/llm/`): 2-stage RAG (vector → cross-encoder reranking). Uses **Chain-of-Verification (CoVe)** to prevent hallucinations between structured data (macros, sanctions) and unstructured text.
-6. **Web Platform & Visuals** (`web-platform/`): Next.js dashboard, Mapbox GL + PostGIS geospatial mapping, Force-graph narrative nodes.
-7. **Automation & Observability** (`scripts/daily_pipeline.py`): 10 core steps (ingestion → market_data → nlp_processing → load_to_database → narrative_processing → community_detection → entity_extraction → geocoding → refresh_map_data → generate_report) + conditional weekly/monthly reports. Deployed via Docker Compose on Hetzner, monitored via Grafana, Loki, and Promtail.
-
-### Key Modules by Size/Complexity
-
-- `src/llm/report_generator.py` (~2700 lines) — Core LLM integration, RAG pipeline, trade signals, narrative storyline context
-- `src/storage/database.py` (~2445 lines) — All PostgreSQL/pgvector operations
-- `src/nlp/narrative_processor.py` (~1498 lines) — **Narrative Engine**: HDBSCAN clustering, storyline matching, LLM evolution, TF-IDF weighted Jaccard graph edges (threshold 0.05), entity sanitization (`_is_garbage_entity`, `_clean_entity`), momentum decay, post-clustering validation. Graph candidate query includes `stabilized` storylines.
-- `src/nlp/story_manager.py` — **DELETED** (legacy storyline clustering, fully replaced by narrative_processor)
-- `src/nlp/processing.py` (~603 lines) — NLP pipeline: cleaning, chunking, NER, embeddings
-- `src/nlp/relevance_filter.py` — LLM-based article relevance classification (Gemini 2.0 Flash)
-- `scripts/compute_communities.py` (~198 lines) — Louvain community detection for storyline graph (python-louvain + networkx); saves community_id to storylines table. Defaults: `min_weight=0.05`, `resolution=0.2`. After detection calls Gemini to generate descriptive `community_name`.
-- `scripts/geocode_geonames.py` — **Primary geocoder**: 4-step GeoNames + Gemini + Photon hybrid pipeline. Requires `geo_gazetteer` table (migration 023, populated by `load_geonames.py`).
-- `scripts/load_geonames.py` — Loads GeoNames allCountries.txt + alternateNames.txt into `geo_gazetteer` (~2-3M rows, one-time ~15 min).
-- `src/integrations/openbb_service.py` (~1026 lines) — OpenBB financial data integration (36 MACRO_INDICATORS incl. USD_CNH)
-- `src/knowledge/ontology_manager.py` — **OntologyManager** singleton: loads `config/asset_theory_library.yaml` (35 indicator ontologies + causal correlation maps) + `config/macro_convergences.yaml` + `config/sc_sector_map.yaml` at boot. `screen_anomalies()` uses materiality-normalized scoring (`abs(delta_pct) / MATERIALITY_SIGNIFICANT[category]`), excludes USD_CNH, default `top_n=6`. `build_jit_context()` assembles focused theory for LLM injection into `_generate_macro_analysis()`
-- `src/macro/` — **Strategic Intelligence Layer (Phase 3+)**: new package for convergence detection, SC signals, and (Phase 4+) regime persistence. `match_convergences.py` scores all indicators against `macro_convergences.yaml` with staleness-aware weighting. `build_sc_signals_context.py` produces deterministic SC signals from `sc_sector_map.yaml`. Results log-only in Phase 3 — will be injected into LLM prompt in Phase 4.
-- `src/llm/oracle_engine.py` (~566 lines) — Oracle 1.0 RAG chat engine (backward-compat, used by Streamlit HITL)
-- `src/llm/oracle_orchestrator.py` — **Oracle 2.0 main coordinator**: ToolRegistry + QueryRouter + ConversationMemory + caching + LLM synthesis + anti-hallucination; `get_oracle_orchestrator_singleton()` for FastAPI
-- `src/llm/query_router.py` — Intent classification (Gemini 2.5 Flash) + QueryPlan generation; double-layer SQL injection defense
-- `src/llm/tools/` — Tool package: RAGTool (multi-query expansion + time-weighted decay), SQLTool (5-layer safety), AggregationTool, GraphTool, MarketTool, TickerThemesTool, ReportCompareTool, ReferenceTool, SpatialTool
-- `src/api/main.py` + `src/api/auth.py` + `src/api/routers/` — FastAPI backend: X-API-Key auth (`secrets.compare_digest`), CORS (GET+POST), slowapi rate limiting, routers for dashboard/reports/stories/map/**oracle**
-
-### Web Platform (Next.js)
-
-Located in `web-platform/`. Uses Next.js 16 App Router, React 19, Tailwind CSS 4, Shadcn/ui (Radix), Mapbox GL for intelligence map, **react-force-graph-2d** for narrative graph visualization, SWR for data fetching, Framer Motion for animations.
-
-**Routes:** `/` (landing), `/insights` (public briefings), `/dashboard` (reports list), `/dashboard/report/[id]` (detail), `/map` (geospatial intelligence map + Tier 3 layers), **`/stories` (narrative storyline graph)**, **`/oracle` (Oracle 2.0 chat)**. `/access` redirects to `/dashboard` (legacy).
-
-**Auth:** Platform is fully public — `middleware.ts` is a no-op passthrough with empty matcher. No JWT, no access codes. Oracle BYOK still enforced when `ORACLE_REQUIRE_GEMINI_KEY=true`.
-
-**API communication:** Frontend → FastAPI backend (`src/api/main.py`) with `X-API-Key` header authentication (server-side proxy at `/api/proxy/[...path]`).
-
-### API Endpoints
-
-| Prefix | Router | Description |
-|--------|--------|-------------|
-| `/api/v1/dashboard/` | `routers/dashboard.py` | Stats, KPIs |
-| `/api/v1/reports/` | `routers/reports.py` | Report list, detail, **`GET /compare?ids=A,B` — LLM delta analysis** |
-| `/api/v1/stories/` | `routers/stories.py` | Storyline list, detail, **graph network**, **community listing**, **ego network** |
-| `/api/v1/map/` | `routers/map.py` | GeoJSON entities, arcs, stats, cache invalidate |
-| `/api/v1/oracle/` | `routers/oracle.py` | Oracle 2.0 chat (`POST /chat` rate limit 3/min, `GET /health`) |
-| `/api/v1/insights/` | `routers/insights.py` | Public briefings list + detail by slug (no auth required) |
-| `/api/v1/waitlist/` | `routers/waitlist.py` | Waitlist registration |
-
-### Narrative Engine (3-Layer Filtering)
-
-Off-topic content is filtered at 3 pipeline stages:
-1. **Filtro 1** (`src/ingestion/pipeline.py`): Keyword blocklist at ingestion — rejects articles matching sports/entertainment/food keywords
-2. **Filtro 2** (`src/nlp/relevance_filter.py`): LLM relevance classification — Gemini classifies articles as RELEVANT/NOT_RELEVANT to geopolitical scope
-3. **Filtro 4** (`src/nlp/narrative_processor.py`): Post-clustering validation — archives storylines with no scope keywords AND matching off-topic patterns
-
-### Database Schema (Narrative)
-
-| Table | Purpose |
-|-------|---------|
-| `storylines` | Narrative threads: title, summary, embeddings, momentum_score, narrative_status, **community_id** |
-| `storyline_edges` | Graph edges: source/target storyline, TF-IDF weighted Jaccard weight, relation_type |
-| `article_storylines` | Junction: article_id ↔ storyline_id, relevance_score |
-| `v_active_storylines` | View: `emerging`, `active`, **`stabilized`** storylines ordered by momentum DESC, includes community_id (migration 017) |
-| `v_storyline_graph` | View: edges between `emerging`, `active`, **`stabilized`** storylines with titles (migration 017) |
-| `entity_idf` | Materialized view: TF-IDF inverse document frequency for entity graph weighting |
-
-## Configuration
-
-- `config/feeds.yaml` — 33 RSS feed definitions with categories (breaking_news, intelligence, tech_economy, etc.)
-- `config/top_50_tickers.yaml` — Geopolitical market movers with aliases for NER matching
-- `config/entity_blocklist.yaml` — Noise filtering for extracted entities
-- `.env` — Database URL, API keys (Gemini, FRED), app settings (see `.env.example`)
-- `migrations/` — 19+ incremental SQL migration files, applied manually via `psql` or through `load_to_database.py --init-only` (includes narrative engine schema: storylines, storyline_edges, views, entity_idf materialized view, community_id column, graph cleanup, migration 017 adds `stabilized` to views, 018 orphan_events, 019 mv_entity_storyline_bridge + intelligence_score on entities)
+- **Python 3.12** (3.9+ minimum)
+- **PostgreSQL 14+** with `pgvector` and `PostGIS` extensions
+- **Node.js 16+** for `web-platform/`
+- **spaCy model**: `python -m spacy download xx_ent_wiki_sm`
+- **Docker Compose services**: `postgres`, `backend`, `frontend`, `nginx`, `photon` (optional, `--profile photon`)
+- **Required env vars**: `DATABASE_URL`, `GEMINI_API_KEY`, `INTELLIGENCE_API_KEY`, `FRED_API_KEY`
 
 ## Key Technical Patterns
 
@@ -208,18 +113,7 @@ Off-topic content is filtered at 3 pipeline stages:
 - **Chain-of-Verification CoVe (Oracle 2.0 synthesis):** When structured data (country_profiles, macro_forecasts, macro_indicators) and RAG context disagree on the same quantitative KPI, Oracle annotates both values: "Dato strutturato [fonte]: X | Contesto narrativo [fonte]: Y — possibile lag temporale". Structured data takes priority for official KPIs; RAG for sentiment and recent events (<30d). Configured in `oracle_orchestrator.py` `_synthesize()` prompt.
 - **Few-Shot SQL Store (Oracle 2.0 QueryRouter):** `_SQL_EXAMPLES` dict in `query_router.py` injects 2-3 canonical query patterns per table for PostGIS (`conflict_events`), vintage subqueries (`macro_forecasts`), GIN array search (`v_sanctions_public`), etc. Activated when keywords in the user query match a table. Evidence: +30% schema adherence vs zero-shot (Spider/BIRD benchmarks).
 - **v_sanctions_public — PII-sanitized view (migration 034):** All Oracle 2.0 tools use `v_sanctions_public`, not raw `sanctions_registry`. The view strips `birthDate`, `birthPlace`, `address`, `idNumber`, `taxNumber`, `passportNumber`, `nationalId`, `registrationNumber`, `phone`, `email` from the `properties` JSONB field. `SQLTool.ALLOWED_TABLES` and `ReferenceTool.SAFE_QUERIES` reference the view. The base table is writable by data loaders only.
-
-## Testing
-
-Pytest markers defined in `pytest.ini`: `unit`, `integration`, `e2e`, `slow`. Tests mirror `src/` structure under `tests/`. Mock HTTP with `responses` library, mock datetime with `freezegun`. Async methods tested with `AsyncMock`; use `pytest-asyncio` for async test support.
-
-## Environment Requirements
-
-- Python 3.9+ (developed on 3.12.3)
-- PostgreSQL 14+ with pgvector extension
-- Node.js 16+ (for web-platform)
-- spaCy model: `python -m spacy download xx_ent_wiki_sm`
-- Required env vars: `DATABASE_URL`, `GEMINI_API_KEY`
+- **Photon geocoder (self-hosted):** `scripts/geocode_geonames.py` runs a 4-step hybrid pipeline: GeoNames gazetteer → Gemini disambiguation → Photon reverse geocoding. Start with `docker compose --profile photon up -d photon`. Falls back to `https://photon.komoot.io/api` when `PHOTON_URL` is unset.
 
 ## Documentation
 
@@ -236,31 +130,46 @@ When updating documentation, always check for and update context.md files in sub
 
 ## Critical Pitfalls
 
+### LLM Integration
 - **f-string escaping in report_generator.py:** The LLM prompt uses f-strings. Variables like `{narrative_section}` must NOT be double-braced `{{}}` or they become literal text. Pre-compute variables before the f-string.
-- **spaCy model required:** `xx_ent_wiki_sm` must be installed (`python -m spacy download xx_ent_wiki_sm`). To test report_generator methods in isolation, bypass full constructor with `object.__new__(ReportGenerator)`.
-- **DB views:** `v_active_storylines` and `v_storyline_graph` are the primary data sources for API and report narrative context.
-- **UTF-8 surrogate bytes:** Web scraping can produce invalid UTF-8 bytes (e.g. truncated multibyte sequences) that PostgreSQL rejects. `database.py` has `_sanitize_text()` applied in `save_article()`. `narrative_processor.py` `_evolve_narrative_summary()` has a fallback query without `LEFT(full_text, 200)` snippet on encoding error.
 - **generate_content() hang:** With `transport='rest'`, calling `generate_content()` without `request_options={"timeout": N}` causes ~900s hang on network issues. Always specify timeout (30s for 2.0-flash, 60s for 2.5-flash).
 - **Gemini model split:** NLP layer (`narrative_processor.py`, `relevance_filter.py`) → `gemini-2.0-flash` (speed-critical, structured tasks); LLM layer (`report_generator.py`, `query_analyzer.py`, `oracle_engine.py`, `oracle_orchestrator.py`, `query_router.py`) → `gemini-2.5-flash` (deep reasoning).
 - **Oracle 2.0 singleton:** `get_oracle_orchestrator_singleton()` in `oracle_orchestrator.py` is thread-safe (double-checked locking). The singleton holds 400MB embedding model and LLM connection — never re-initialize per request.
-- **SQLTool safety layers:** sqlparse token-level detection → forbidden keywords → max 3 JOINs → LIMIT enforcement → EXPLAIN cost check (≤10000) → 5s `statement_timeout`. SQLTool's `_execute` wraps all in BaseTool.execute() which catches all exceptions.
+- **Oracle 6 intents (not 5):** `query_router.py` classifies into FACTUAL / ANALYTICAL / NARRATIVE / MARKET / COMPARATIVE / **OVERVIEW**. OVERVIEW uses very low time-decay (k=0.005) for panoramic queries that should return broad recent context. Using vector-only search (no FTS) to avoid AND-matching issues.
+- **src/macro/ Phase 3 is log-only:** `match_convergences()` and `build_sc_signals_context()` are called inside `_generate_macro_analysis()` but their output is only logged — NOT injected into the prompt. This is intentional for independent validation before Phase 4 cutover.
+
+### Data Encoding
+- **spaCy model required:** `xx_ent_wiki_sm` must be installed (`python -m spacy download xx_ent_wiki_sm`). To test report_generator methods in isolation, bypass full constructor with `object.__new__(ReportGenerator)`.
+- **UTF-8 surrogate bytes:** Web scraping can produce invalid UTF-8 bytes (e.g. truncated multibyte sequences) that PostgreSQL rejects. `database.py` has `_sanitize_text()` applied in `save_article()`. `narrative_processor.py` `_evolve_narrative_summary()` has a fallback query without `LEFT(full_text, 200)` snippet on encoding error.
+
+### Database / Schema
+- **DB views:** `v_active_storylines` and `v_storyline_graph` are the primary data sources for API and report narrative context.
 - **`sanctions_registry` NOT in ALLOWED_TABLES:** Raw table is excluded from SQLTool and ReferenceTool. Use `v_sanctions_public` (migration 034 — PII-sanitized view). If you add a new tool or query that needs sanctions data, always reference the view.
 - **oracle_query_log table:** Migration `013_oracle_query_log.sql`. If table doesn't exist, `log_oracle_query()` in `database.py` silently no-ops (non-critical).
 - **Migrations are manual:** SQL files in `migrations/` applied via `psql` or `load_to_database.py --init-only`.
-- **NICKEL/monthly date bug (fixed in Phase 1):** Before the fix, FRED monthly data was saved with `target_date` (today) instead of the real FRED data date — causing false deltas. Fixed by `_fetch_indicator_openbb_fixed()` which extracts `data_date` from the FRED result. The new `macro_indicator_metadata` table (migration 035) tracks the real data date per indicator.
 - **`macro_indicator_metadata` must exist before Phase 1 fetch runs:** Migration 035 creates the table. `_upsert_indicator_metadata()` will log an error and no-op if the table is missing — not a crash, but metadata won't accumulate. Apply migration 035 before the first Phase 1 pipeline run.
+
+### Macro / Financial
+- **NICKEL/monthly date bug (fixed in Phase 1):** Before the fix, FRED monthly data was saved with `target_date` (today) instead of the real FRED data date — causing false deltas. Fixed by `_fetch_indicator_openbb_fixed()` which extracts `data_date` from the FRED result. The new `macro_indicator_metadata` table (migration 035) tracks the real data date per indicator.
 - **TED_SPREAD, EPU_GLOBAL, USD_RUB removed (Phase 1):** These three indicators are no longer fetched, stored, or referenced. Removed from `MACRO_INDICATORS`, `asset_theory_library.yaml`, and all cross-reference maps. Do not re-add without updating all three locations.
 - **ALUMINUM/WHEAT source change (Phase 1):** Both switched from FRED monthly to daily CME futures (ALI=F / ZW=F via yfinance). USD_GBP and USD_CNY also switched from FRED daily to yfinance. If these tickers stop working, update `MACRO_INDICATORS` symbol and `fetch_category`, not `fred_series`.
-- **CI test config:** GitHub Actions test step needs `GEMINI_API_KEY: "ci-fake-key-for-unit-tests"` env var + `--ignore=tests/test_sprint2_full.py` (e2e test requiring real DB).
-- **Ingestion article extraction timeout & per-domain concurrency (2026-04-09):** Each article extraction is wrapped in `asyncio.wait_for(..., timeout=PER_ARTICLE_TIMEOUT)` with `PER_ARTICLE_TIMEOUT=30s`. This prevents indefinite hangs on Cloudflare challenges or unresponsive servers. Additionally, per-domain concurrency is limited to max 2 concurrent requests per domain (`DOMAIN_MAX_CONCURRENT=2`) to reduce anti-bot triggering. These fixes escape the fatal timeout issue when Times of Israel hits Cloudflare blocking.
-- **Scrapling StealthyFetcher concurrency:** Uses Chromium headlessly — max 2 concurrent instances (`scrapling_stealth_semaphore = asyncio.Semaphore(2)`) to avoid OOM on GitHub Actions. Tier 2 domains: `rusi.org`. Tier 1 (curl_cffi, no browser): `understandingwar.org`, `chathamhouse.org`, `timesofisrael.com` (added 2026-04-09 for Cloudflare anti-bot bypass).
-- **GeoNames geocoder requires `geo_gazetteer` table:** `scripts/geocode_geonames.py` needs migration 023 applied AND `scripts/load_geonames.py` run first (one-time, ~15 min). Without it, geocoding silently returns no results.
-- **JWT middleware removed:** `middleware.ts` is now a no-op passthrough (empty matcher). All routes are public. `JWT_SECRET` and `ACCESS_CODES` env vars are no longer used by the frontend.
-- **Oracle 6 intents (not 5):** `query_router.py` classifies into FACTUAL / ANALYTICAL / NARRATIVE / MARKET / COMPARATIVE / **OVERVIEW**. OVERVIEW uses very low time-decay (k=0.005) for panoramic queries that should return broad recent context. Using vector-only search (no FTS) to avoid AND-matching issues.
-- **community_name populated by compute_communities.py:** The `community_name` field (migration 022) is populated by Gemini inside `compute_communities.py`, not by `narrative_processor.py`. Must re-run `compute_communities.py` after large storyline changes to refresh names.
 - **Phase 3 convergence staleness weight (match_convergences.py):** Staleness weight logic is mandatory — without it, NICKEL (67d stale, monthly) contributes to `china_stress_global_slowdown` with full weight. Thresholds: `staleness > max_stale * 3` → weight=0.0 (ignored), `staleness > max_stale` → weight=0.5. But the ignored trigger still counts in the denominator (total_weight), keeping confidence honest.
 - **OntologyManager singleton loads 3 YAMLs at boot (Phase 3):** `asset_theory_library.yaml` + `macro_convergences.yaml` + `sc_sector_map.yaml`. If any YAML is missing, the singleton logs a warning and continues with empty dict — no crash. The convergences and sc_map properties return `{}` silently.
-- **src/macro/ Phase 3 is log-only:** `match_convergences()` and `build_sc_signals_context()` are called inside `_generate_macro_analysis()` but their output is only logged — NOT injected into the prompt. This is intentional for independent validation before Phase 4 cutover.
+
+### Geocoding
+- **GeoNames geocoder requires `geo_gazetteer` table:** `scripts/geocode_geonames.py` needs migration 023 applied AND `scripts/load_geonames.py` run first (one-time, ~15 min). Without it, geocoding silently returns no results.
+
+### Auth / Access
+- **JWT middleware removed:** `middleware.ts` is now a no-op passthrough (empty matcher). All routes are public. `JWT_SECRET` and `ACCESS_CODES` env vars are no longer used by the frontend.
+
+### Oracle
+- **SQLTool safety layers:** sqlparse token-level detection → forbidden keywords → max 3 JOINs → LIMIT enforcement → EXPLAIN cost check (≤10000) → 5s `statement_timeout`. SQLTool's `_execute` wraps all in BaseTool.execute() which catches all exceptions.
+- **community_name populated by compute_communities.py:** The `community_name` field (migration 022) is populated by Gemini inside `compute_communities.py`, not by `narrative_processor.py`. Must re-run `compute_communities.py` after large storyline changes to refresh names.
+
+### Ingestion
+- **Ingestion article extraction timeout & per-domain concurrency (2026-04-09):** Each article extraction is wrapped in `asyncio.wait_for(..., timeout=PER_ARTICLE_TIMEOUT)` with `PER_ARTICLE_TIMEOUT=30s`. This prevents indefinite hangs on Cloudflare challenges or unresponsive servers. Additionally, per-domain concurrency is limited to max 2 concurrent requests per domain (`DOMAIN_MAX_CONCURRENT=2`) to reduce anti-bot triggering. These fixes escape the fatal timeout issue when Times of Israel hits Cloudflare blocking.
+- **Scrapling StealthyFetcher concurrency:** Uses Chromium headlessly — max 2 concurrent instances (`scrapling_stealth_semaphore = asyncio.Semaphore(2)`) to avoid OOM on GitHub Actions. Tier 2 domains: `rusi.org`. Tier 1 (curl_cffi, no browser): `understandingwar.org`, `chathamhouse.org`, `timesofisrael.com` (added 2026-04-09 for Cloudflare anti-bot bypass).
+- **CI test config:** GitHub Actions test step needs `GEMINI_API_KEY: "ci-fake-key-for-unit-tests"` env var + `--ignore=tests/test_sprint2_full.py` (e2e test requiring real DB).
 
 ## Debugging
 
@@ -274,150 +183,10 @@ When investigating dates, pipeline runs, or report IDs, always verify the curren
 
 When the user asks about scores, intelligence scores, or scoring — they mean the scored output stored in the database (oracle_engine output, scored articles/reports in DB tables), NOT report files on disk. Check the database tables first, not the filesystem.
 
-## Infrastructure & Server Commands
+## Infrastructure Reference
 
-### Production Environment
-- **Server**: Hetzner CAX31 (8 GB ARM64, Ubuntu 22.04)
-- **Deploy path**: `/opt/intelligence-ita/repo`
-- **Env file (source of truth)**: `/opt/intelligence-ita/repo/.env.production` — ALWAYS use this with `--env-file`. Do NOT use `/opt/intelligence-ita/.env.production` (outside repo, has old pre-hack passwords).
-- **Docker Compose project name**: `app` — always pass `-p app`
-- **PostgreSQL user**: `intelligence_user`
+**Server**: Hetzner CAX31 · 8 GB ARM64 · Deploy path: `/opt/intelligence-ita/repo` · Env: `.env.production`
 
-### Docker — Key Commands
+Full ops reference (Docker Compose, SSH, DB, Nginx, GitHub Actions): **[docs/runbooks/production.md](docs/runbooks/production.md)**
 
-```bash
-# All docker compose commands on server need:
-docker compose -p app --env-file /opt/intelligence-ita/repo/.env.production <command>
-
-# Status check
-docker compose -p app ps
-
-# View logs
-docker compose -p app logs backend --tail 50 --follow
-docker compose -p app logs frontend --tail 30
-
-# Restart a specific service
-docker compose -p app restart backend
-docker compose -p app restart frontend
-
-# Esegui pipeline completa
-docker compose -p app exec backend python scripts/daily_pipeline.py
-
-# Access Grafana Dashboard (Logs & Metrics)
-# http://<HETZNER_HOST>:3000 (admin / macrointel2026)
-docker compose -p app up -d --build backend
-docker compose -p app up -d --build frontend
-
-# Full redeploy (pulls + rebuilds all)
-docker compose -p app --env-file /opt/intelligence-ita/repo/.env.production up -d --build
-
-# Execute commands inside a container
-docker compose -p app exec backend python scripts/check_setup.py
-docker compose -p app exec backend python scripts/process_narratives.py --days 1
-docker compose -p app exec backend psql $DATABASE_URL -c "SELECT count(*) FROM articles;"
-
-# Database backup
-bash /opt/intelligence-ita/repo/deploy/backup-db.sh
-
-# View running pipeline
-docker compose -p app exec backend ps aux | grep python
-```
-
-### GitHub Actions
-
-Workflows in `.github/workflows/`:
-
-| Workflow | File | Trigger | What it does |
-|----------|------|---------|-------------|
-| **Deploy** | `deploy.yml` | Push to `main` | SSH to Hetzner → git pull → docker compose up --build |
-| **Pipeline** | `pipeline.yml` | Daily 08:00 UTC + manual | Runs `daily_pipeline.py` inside backend container |
-| **Migrate** | `migrate.yml` | Manual dispatch | Applies SQL migrations to production DB |
-
-```bash
-# Trigger pipeline manually (from local machine with gh CLI)
-gh workflow run pipeline.yml
-
-# Check pipeline run status
-gh run list --workflow=pipeline.yml --limit 5
-gh run view <run-id> --log
-
-# Check deploy status
-gh run list --workflow=deploy.yml --limit 3
-```
-
-Required GitHub Secrets (set in repo Settings → Secrets):
-
-| Secret | Used by |
-|--------|---------|
-| `HETZNER_HOST` | deploy.yml — SSH target |
-| `HETZNER_USER` | deploy.yml — SSH user |
-| `HETZNER_SSH_KEY` | deploy.yml — private key |
-| `GEMINI_API_KEY` | pipeline.yml — set to `ci-fake-key-for-unit-tests` for test step |
-| `DEPLOY_ENV_FILE` | deploy.yml — contents of .env.production |
-
-### Environment Files
-
-```bash
-# View current production env (on server)
-cat /opt/intelligence-ita/repo/.env.production
-
-# Edit production env
-nano /opt/intelligence-ita/repo/.env.production
-# Then restart backend to pick up changes:
-docker compose -p app restart backend
-
-# Key env vars to know:
-# DATABASE_URL=postgresql://intelligence_user:...@postgres:5432/intelligence_ita
-# GEMINI_API_KEY=...
-# INTELLIGENCE_API_KEY=...  (API shared secret)
-# JWT_SECRET=...            (frontend access tokens)
-# ACCESS_CODES=...          (comma-separated valid access codes)
-# ORACLE_REQUIRE_GEMINI_KEY=true
-# POSTGRES_USER=intelligence_user
-# ALLOWED_ORIGINS=https://macrointel.net,...
-```
-
-### Database — Direct Access
-
-```bash
-# Connect to production DB via Docker
-docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita
-
-# From outside container (on server)
-psql postgresql://intelligence_user:<password>@localhost:5432/intelligence_ita
-
-# Apply a migration
-docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita \
-  -f /opt/intelligence-ita/repo/migrations/025_chunks_source_id.sql
-
-# Useful quick queries
-SELECT count(*) FROM articles;
-SELECT count(*) FROM storylines WHERE narrative_status != 'archived';
-SELECT id, report_date, status FROM reports ORDER BY id DESC LIMIT 5;
-REFRESH MATERIALIZED VIEW entity_idf;
-REFRESH MATERIALIZED VIEW mv_entity_storyline_bridge;
-```
-
-### Nginx (Reverse Proxy)
-
-```bash
-# Reload nginx config (after deploy)
-docker compose -p app exec nginx nginx -s reload
-
-# Test nginx config
-docker compose -p app exec nginx nginx -t
-
-# View nginx logs
-docker compose -p app logs nginx --tail 30
-```
-
-### SSH to Server
-
-```bash
-ssh <user>@<HETZNER_HOST>
-cd /opt/intelligence-ita/repo
-
-# Quick health check
-docker compose -p app ps
-docker compose -p app logs backend --tail 20
-```
+**GitHub Actions workflows**: `deploy.yml` · `pipeline.yml` · `migrate.yml` · `evals_fast.yml` · `evals_nightly.yml` · `update-docs.yml`
