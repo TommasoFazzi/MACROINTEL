@@ -79,10 +79,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Only runs when migrations change
-    if: |
-      contains(join(github.event.commits.*.modified, ' '), 'migrations/')
-      || contains(join(github.event.commits.*.added, ' '), 'migrations/')
     steps:
       - uses: actions/checkout@v4
         with:

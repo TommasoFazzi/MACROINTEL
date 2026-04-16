@@ -91,3 +91,6 @@ docs/generated/*.json
 # Operations runbooks — contain infrastructure details (deploy paths, service names)
 # Keep local-only; do not publish to GitHub
 docs/runbooks/
+
+# OpenSpec planning files (local-only, not for VCS)
+openspec/
