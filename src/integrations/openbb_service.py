@@ -1323,16 +1323,22 @@ class OpenBBMarketService:
         unit: str,
         category: str
     ) -> bool:
-        """Save macro indicator with upsert."""
+        """Save macro indicator with upsert, populating previous_value inline."""
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO macro_indicators (date, indicator_key, value, unit, category)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO macro_indicators (date, indicator_key, value, unit, category, previous_value)
+                        VALUES (%s, %s, %s, %s, %s,
+                            (SELECT value FROM macro_indicators
+                             WHERE indicator_key = %s AND date < %s
+                             ORDER BY date DESC LIMIT 1))
                         ON CONFLICT (date, indicator_key)
-                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-                    """, (target_date, key, value, unit, category))
+                        DO UPDATE SET
+                            value = EXCLUDED.value,
+                            previous_value = EXCLUDED.previous_value,
+                            updated_at = NOW()
+                    """, (target_date, key, value, unit, category, key, target_date))
                     return True
         except Exception as e:
             logger.error(f"Error saving macro indicator: {e}")

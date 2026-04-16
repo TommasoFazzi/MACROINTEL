@@ -91,6 +91,10 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   1. `macro_indicator_metadata` — per-indicator data quality tracking: real data date (`last_updated`), `is_stale`, `staleness_days`, `expected_frequency`, `reliability`. Populated by `_upsert_indicator_metadata()` after every fetch. Fixes the NICKEL/monthly mislabeling bug (monthly FRED data was saved with fetch date, not real data date). Indexed: `(is_stale, expected_frequency)`, `(reliability)`.
   2. `macro_regime_history` — 60-day rolling macro regime history. Populated by `MacroRegimePersistence` singleton in Phase 4. Columns: `risk_regime`, `regime_confidence`, `active_convergence_ids[]`, `active_sc_sectors[]`, `macro_narrative`, `analysis_json` (full JSONB), `data_quality_snapshot`, `data_freshness_gap_days`. GIN indexes on arrays for Oracle 2.0 queries.
 
+### Strategic Intelligence Layer — Phase 3 fix (2026-04-16)
+
+- `036_add_previous_value_macro_indicators.sql` — Adds `previous_value NUMERIC(20,6)` column to `macro_indicators` + one-time backfill via correlated UPDATE. The Phase 3 screening function (`_get_macro_indicators_for_screening`) and `market_tool.py` both SELECT this column; it was never added to the schema, causing the entire v2 analysis path to bypass on every pipeline run since the merge. `_save_macro_indicator()` in `openbb_service.py` now populates this column at insert time via inline scalar subquery. Rollback: `ALTER TABLE macro_indicators DROP COLUMN IF EXISTS previous_value`.
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -98,7 +102,8 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 020 through 025: Applied (confirmed via memory: 018, 019, 024)
 - 026 through 033: **Applied** (2026-03-31) — PostGIS 3.6 confirmed; all reference data loaded
 - 034: **Not yet applied** — apply with: `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita < migrations/034_sanctions_view.sql`
-- 035: **Not yet applied** — apply after Phase 1 deploy: `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita -f migrations/035_macro_intelligence_layer.sql`
+- 035: **Applied** (2026-04-14)
+- 036: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/036_add_previous_value_macro_indicators.sql`
 
 ## Execution Order
 
@@ -113,6 +118,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 032 → 033 (no spatial dependency)
   → 034 (view only — no spatial dependency, requires 030 applied first)
   → 035 (Strategic Intelligence Layer — no external dependencies)
+  → 036 (Strategic Intelligence Layer Phase 3 fix — no external dependencies)
 ```
 
 Run a single migration:

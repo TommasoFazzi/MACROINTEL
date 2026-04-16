@@ -45,6 +45,8 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - `_fred_series_to_key(fred_series)` — reverse lookup FRED series → MACRO_INDICATORS key
   - **New methods (Phase 2)**:
     - `_last_date_with_fresh_data(key, before)` → `Optional[date]` — queries `macro_indicator_metadata` for most recent non-stale date
+  - **Phase 3 fix (migration 036)**:
+    - `_save_macro_indicator()` updated to populate `previous_value` column inline via scalar subquery — no extra round-trip. ON CONFLICT also updates `previous_value`. Prerequisite for Phase 3 indicator delta calculation (`_get_macro_indicators_for_screening`).
   - **Class-level constants**:
     - `FRED_SERIES_FREQUENCY` — maps FRED series ID to frequency (daily/weekly/monthly)
     - `MAX_STALENESS_BY_FREQUENCY` — max acceptable gap per frequency
