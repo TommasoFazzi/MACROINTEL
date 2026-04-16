@@ -160,7 +160,7 @@ requests-file==3.0.1
 requests-toolbelt==1.0.0
 rpds-py==0.30.0
 rsa==4.9.1
-ruff==0.13.3
+ruff==0.15.10
 safetensors==0.7.0
 sqlparse>=0.4.4
 scrapling>=0.4.0
