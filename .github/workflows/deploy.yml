@@ -51,4 +51,6 @@ jobs:
             sudo docker compose -p app --env-file .env.production build backend frontend
             sudo docker compose -p app --env-file .env.production up -d --no-deps backend frontend
             sudo docker compose -p app --env-file .env.production exec -T nginx nginx -s reload
+            # Rimuove container fermati (orfani da docker compose run manuali)
+            sudo docker container prune -f
             echo "Deploy completed at $(date)"
