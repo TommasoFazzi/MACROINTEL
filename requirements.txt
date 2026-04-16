@@ -88,7 +88,7 @@ openbb-bls==1.2.1
 openbb-cftc==1.2.1
 openbb-commodity==1.4.2
 openbb-congress-gov==1.1.1
-openbb-core==1.6.5
+openbb-core==1.6.7
 openbb-crypto==1.5.1
 openbb-currency==1.5.1
 openbb-derivatives==1.5.1
@@ -143,7 +143,7 @@ pytest==9.0.3
 pytest-asyncio==1.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
-python-multipart==0.0.26
+python-multipart==0.0.22  # pinned: openbb-core<=1.6.x requires <0.0.23 (CVE-2026-40347 accepted: DoS Moderate, mitigated by API auth+rate limiting)
 pytz==2025.2
 pymupdf4llm==0.0.17
 pymupdf==1.25.3
