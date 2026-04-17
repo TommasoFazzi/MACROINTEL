@@ -63,7 +63,6 @@ export interface OracleChatFilters {
   end_date?: string;
   categories?: string[];
   gpe_filter?: string[];
-  gemini_api_key?: string | null;
 }
 
 export interface OracleActiveFilters {

@@ -1,16 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Eye, EyeOff } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { OracleActiveFilters } from '../../types/oracle';
-
-const GEMINI_KEY_RE = /^AIza[0-9A-Za-z\-_]{30,50}$/;
 
 interface OracleSettingsPanelProps {
   open: boolean;
   onClose: () => void;
-  geminiApiKey: string;
-  setGeminiApiKey: (k: string) => void;
   activeFilters: OracleActiveFilters;
   setActiveFilters: (f: OracleActiveFilters) => void;
   onClearSession: () => void;
@@ -19,22 +15,12 @@ interface OracleSettingsPanelProps {
 export function OracleSettingsPanel({
   open,
   onClose,
-  geminiApiKey,
-  setGeminiApiKey,
   activeFilters,
   setActiveFilters,
   onClearSession,
 }: OracleSettingsPanelProps) {
-  const [draftKey, setDraftKey] = useState(geminiApiKey);
-  const [showKey, setShowKey] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Sync draft when key changes externally
-  useEffect(() => {
-    setDraftKey(geminiApiKey);
-  }, [geminiApiKey]);
-
-  // Close on ESC
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -44,18 +30,9 @@ export function OracleSettingsPanel({
     return () => window.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
-  // Reset confirm state when panel closes
   useEffect(() => {
     if (!open) setConfirmClear(false);
   }, [open]);
-
-  const isKeyValid = draftKey === '' || GEMINI_KEY_RE.test(draftKey);
-  const isKeyActive = GEMINI_KEY_RE.test(geminiApiKey);
-
-  const handleSaveKey = () => {
-    if (!isKeyValid) return;
-    setGeminiApiKey(draftKey);
-  };
 
   const handleClearSession = () => {
     if (!confirmClear) {
@@ -89,83 +66,6 @@ export function OracleSettingsPanel({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-7">
-
-          {/* Gemini API Key */}
-          <section>
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Gemini API Key
-              </h3>
-              {isKeyActive ? (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 border border-green-500/30">
-                  Active
-                </span>
-              ) : (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
-                  Required
-                </span>
-              )}
-            </div>
-            <p className="text-gray-600 text-xs mb-3 leading-relaxed">
-              Required to use Oracle. Free at{' '}
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#00A8E8] hover:underline"
-              >
-                aistudio.google.com
-              </a>
-              . Stored in localStorage only, never sent to our servers.
-            </p>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={draftKey}
-                  onChange={(e) => setDraftKey(e.target.value)}
-                  placeholder="AIza..."
-                  className={`w-full bg-[#1a2a4a] border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none pr-9 ${
-                    isKeyValid
-                      ? 'border-white/10 focus:border-[#FF6B35]/50'
-                      : 'border-red-500/50'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey((s) => !s)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
-                >
-                  {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={handleSaveKey}
-                disabled={!isKeyValid || draftKey === geminiApiKey}
-                className="px-3 py-2 rounded-lg bg-[#FF6B35]/80 text-white text-xs font-medium hover:bg-[#FF6B35] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-              >
-                Save
-              </button>
-            </div>
-            {!isKeyValid && draftKey && (
-              <p className="mt-1.5 text-xs text-red-400">
-                Invalid format — expected: AIza + 30–50 characters
-              </p>
-            )}
-            {geminiApiKey && (
-              <button
-                type="button"
-                onClick={() => {
-                  setDraftKey('');
-                  setGeminiApiKey('');
-                }}
-                className="mt-2 text-xs text-gray-600 hover:text-red-400 transition-colors"
-              >
-                Remove key
-              </button>
-            )}
-          </section>
 
           {/* Search mode */}
           <section>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type {
   OracleChatMessage,
   OracleActiveFilters,
@@ -23,40 +23,18 @@ export function useOracleChat() {
   const [messages, setMessages] = useState<OracleChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [byokError, setByokError] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<OracleActiveFilters>({
     mode: 'both',
     search_type: 'hybrid',
   });
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Gemini API key stored in localStorage — never sent to server logs
-  // Initialized to '' to match SSR, then hydrated from localStorage after mount
-  const [geminiApiKey, setGeminiApiKeyState] = useState<string>('');
-  useEffect(() => {
-    const stored = localStorage.getItem('oracle_gemini_key');
-    if (stored) setGeminiApiKeyState(stored);
-  }, []);
-
-  const setGeminiApiKey = useCallback((key: string) => {
-    setGeminiApiKeyState(key);
-    if (typeof window !== 'undefined') {
-      if (key) {
-        localStorage.setItem('oracle_gemini_key', key);
-      } else {
-        localStorage.removeItem('oracle_gemini_key');
-      }
-    }
-  }, []);
-
   const sendMessage = useCallback(
     async (query: string) => {
       if (!query.trim() || isLoading) return;
 
       setError(null);
-      setByokError(null);
 
-      // Optimistic user message
       const userMsg: OracleChatMessage = {
         id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
         role: 'user',
@@ -66,7 +44,6 @@ export function useOracleChat() {
       setMessages((prev) => [...prev, userMsg]);
       setIsLoading(true);
 
-      // Cancel any in-flight request
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -90,7 +67,6 @@ export function useOracleChat() {
             end_date: activeFilters.end_date ?? null,
             categories: null,
             gpe_filter: activeFilters.gpe_filter ?? null,
-            gemini_api_key: geminiApiKey || null,
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -99,12 +75,7 @@ export function useOracleChat() {
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          const detail = err.detail ?? `HTTP ${response.status}`;
-          if (response.status === 402 || response.status === 422) {
-            setByokError(detail);
-            return;
-          }
-          throw new Error(detail);
+          throw new Error(err.detail ?? `HTTP ${response.status}`);
         }
 
         const json = await response.json();
@@ -131,14 +102,12 @@ export function useOracleChat() {
         abortControllerRef.current = null;
       }
     },
-    [isLoading, geminiApiKey, activeFilters]
+    [isLoading, activeFilters]
   );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
-    setByokError(null);
-    // Rotate session ID so new conversation starts fresh
     _sessionId = null;
   }, []);
 
@@ -151,12 +120,9 @@ export function useOracleChat() {
     messages,
     isLoading,
     error,
-    byokError,
     sendMessage,
     clearMessages,
     lastAssistantMessage,
-    geminiApiKey,
-    setGeminiApiKey,
     activeFilters,
     setActiveFilters,
   };

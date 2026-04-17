@@ -8,7 +8,6 @@ interface OracleHeaderProps {
   onNewSession: () => void;
   onSources: () => void;
   hasMessages: boolean;
-  isKeyActive: boolean;
 }
 
 export function OracleHeader({
@@ -17,7 +16,6 @@ export function OracleHeader({
   onNewSession,
   onSources,
   hasMessages,
-  isKeyActive,
 }: OracleHeaderProps) {
   return (
     <header className="border-b border-white/10 px-5 py-3.5 flex items-center justify-between sticky top-0 z-10 bg-[#0A1628]/90 backdrop-blur-md flex-shrink-0">
@@ -25,16 +23,10 @@ export function OracleHeader({
       <div className="flex items-center gap-2.5">
         <span className="text-[#FF6B35] font-bold text-base leading-none">◆</span>
         <span className="text-white font-semibold text-base tracking-tight">Oracle</span>
-        {!isKeyActive && (
-          <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 animate-pulse">
-            key missing
-          </span>
-        )}
       </div>
 
       {/* Right: actions */}
       <div className="flex items-center gap-1">
-        {/* Mobile sources trigger — only shown when there are messages */}
         {hasMessages && (
           <button
             type="button"
