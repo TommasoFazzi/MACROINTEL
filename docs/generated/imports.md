@@ -45,8 +45,10 @@ flowchart LR
     llm --> storage
     llm --> utils
     macro --> storage
+    nlp --> llm
     nlp --> storage
     nlp --> utils
+    services --> llm
     services --> storage
     services --> utils
     storage --> utils
@@ -120,8 +122,8 @@ flowchart LR
 **src/knowledge** → `src/utils`
 **src/llm** → `src/finance`, `src/integrations`, `src/knowledge`, `src/macro`, `src/nlp`, `src/services`, `src/storage`, `src/utils`
 **src/macro** → `src/storage`
-**src/nlp** → `src/storage`, `src/utils`
-**src/services** → `src/storage`, `src/utils`
+**src/nlp** → `src/llm`, `src/storage`, `src/utils`
+**src/services** → `src/llm`, `src/storage`, `src/utils`
 **src/storage** → `src/utils`
 
 ## src/llm — file-level graph
@@ -129,7 +131,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     conversation_memory["conversation_memory.py"]
-    oracle_engine["oracle_engine.py"]
+    llm_factory["llm_factory.py"]
     oracle_orchestrator["oracle_orchestrator.py"]
     query_analyzer["query_analyzer.py"]
     query_router["query_router.py"]
@@ -151,8 +153,6 @@ flowchart TD
     EXT_sentence_transformers(("sentence_transformers"))
 
     conversation_memory --> utils
-    oracle_engine --> storage
-    oracle_engine --> utils
     oracle_orchestrator --> storage
     oracle_orchestrator --> utils
     query_analyzer --> utils
@@ -175,7 +175,7 @@ flowchart TD
     sql_tool --> utils
     ticker_themes_tool --> services
     ticker_themes_tool --> utils
-    oracle_engine --> EXT_sentence_transformers
+    llm_factory --> EXT_pydantic
     query_analyzer --> EXT_pydantic
     report_generator --> EXT_numpy
     report_generator --> EXT_psycopg2
@@ -201,10 +201,13 @@ flowchart TD
     EXT_sklearn(("sklearn"))
     EXT_spacy(("spacy"))
 
+    bullet_generator --> llm
     bullet_generator --> utils
+    narrative_processor --> llm
     narrative_processor --> storage
     narrative_processor --> utils
     processing --> utils
+    relevance_filter --> llm
     relevance_filter --> utils
     narrative_processor --> EXT_numpy
     narrative_processor --> EXT_psycopg2
