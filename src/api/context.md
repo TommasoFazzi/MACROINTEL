@@ -55,7 +55,7 @@ Key database objects consumed:
 | GET | `/api/v1/stories/{storyline_id}/network` | routers/stories.py | Ego network: returns the specified node plus all direct neighbors and connecting edges; min_weight=0.05 (lower than graph default to show weaker connections) | Yes |
 | GET | `/api/v1/stories` | routers/stories.py | Paginated storyline list; query params: `page`, `per_page`, `status`; default filter: emerging + active | Yes |
 | GET | `/api/v1/stories/{storyline_id}` | routers/stories.py | Storyline detail with related storylines (up to 10) and recent articles (up to 10) | Yes |
-| POST | `/api/v1/oracle/chat` | routers/oracle.py | Oracle 2.0 chat: NL query → QueryRouter intent classification → tool execution (RAG/SQL/Graph/Market/Aggregation) → LLM synthesis. Body: `query`, `session_id`, `start_date`, `end_date`, `categories`, `gpe_filter`, `mode`, `gemini_api_key` (BYOK). Rate limit: **3/minute per IP**. | Yes |
+| POST | `/api/v1/oracle/chat` | routers/oracle.py | Oracle 2.0 chat: NL query → agentic tool loop (RAG/SQL/Graph/Market/...) → Claude Sonnet 4.6 synthesis. Body: `query`, `session_id`, `start_date`, `end_date`, `categories`, `gpe_filter`, `mode`. **BREAKING (2026-04-17)**: `gemini_api_key` BYOK field removed — passing it returns HTTP 422. Rate limit: **3/minute per IP**. | Yes |
 | GET | `/api/v1/oracle/health` | routers/oracle.py | Oracle 2.0 service health check | No |
 
 ## Pydantic Schemas

@@ -1,30 +1,28 @@
 """
-OracleOrchestrator — Oracle Agentic Engine (v3).
+OracleOrchestrator — Oracle Agentic Engine (v4, Claude Sonnet 4.6).
 
-Architecture: Native Gemini Function Calling with an iterative agentic loop.
+Architecture: Anthropic Messages API with iterative tool use loop.
 
 Flow:
     User Query
-        → start_chat(history=session_history)
-        → [LLM decides which tool(s) to call based on SOPs]
-        → execute tool → return compressed result as FunctionResponse
+        → messages.create(system=SOPs, tools=..., messages=history+query)
+        → [Claude decides which tool(s) to call based on SOPs]
+        → execute tool → append tool_result blocks as user message
         → [repeat up to MAX_AGENTIC_ITERATIONS]
-        → LLM produces final text answer
+        → Claude produces final text answer (stop_reason=end_turn)
 
-Key improvements over Oracle 2.0 (static pipeline):
-- No pre-planned tool execution: LLM chooses tools dynamically based on query + results
-- Chain-of-Thought via mandatory `rationale` field in every tool call
-- Automatic fallback: if RAG returns empty, LLM can try sql_query without manual intervention
-- Native conversation history: session messages serialized as Gemini Content[]
-- UI filters injected into first message (not system prompt) → system prompt is static/cacheable
+Key differences from v3 (Gemini):
+- Tool definitions in Anthropic JSON schema format (not Gemini protobuf)
+- Multi-turn state managed via messages list (not ChatSession)
+- History serialized via to_messages_history() (not to_gemini_history())
+- BYOK removed — Oracle uses server-side ANTHROPIC_API_KEY exclusively
 
-Preserved from Oracle 2.0:
+Preserved from v3:
 - 5-layer SQL safety in SQLTool
 - Time-weighted decay config (passed via system prompt SOPs)
 - Source authority integration in RAGTool
 - Session management with TTL cleanup (2h)
-- Per-session caching (SQL result cache 5min)
-- BYOK support (serialized via _byok_lock)
+- Per-session SQL result caching (5min)
 - oracle_query_log logging
 - Anti-hallucination guard for all-empty results
 """
@@ -36,19 +34,12 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import google.generativeai as genai
-import google.api_core.exceptions
 from cachetools import TTLCache
 from dotenv import load_dotenv
 from pathlib import Path
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from .conversation_memory import ConversationContext
+from .llm_factory import LLMFactory, ClaudeClient
 from .schemas import QueryIntent
 from .tools import ToolRegistry
 from .tools.rag_tool import RAGTool
@@ -72,40 +63,43 @@ SESSION_TTL_SECONDS = 7200       # 2 hours
 SESSION_CLEANUP_INTERVAL = 600   # 10 minutes
 MAX_AGENTIC_ITERATIONS = 4       # Max tool-call rounds before forcing synthesis
 
-# Module-level lock for BYOK genai.configure() calls.
-# Phase 1 (single user): acceptable — serializes BYOK requests, latency is fine.
-# Phase 2 (multi-user): migrate to google-genai new SDK (google.genai.Client(api_key=key))
-# which supports per-client isolation without global state mutation. Remove lock at that point.
-_byok_lock = threading.Lock()
-
 
 class OracleOrchestrator:
     """
-    Oracle Agentic Engine — processes user queries using native Gemini Function Calling.
+    Oracle Agentic Engine — processes user queries using Anthropic native tool use.
 
     Usage:
         orchestrator = get_oracle_orchestrator_singleton()
         result = orchestrator.process_query(query="...", session_id="abc")
     """
 
-    def __init__(self, db: DatabaseManager, llm):
+    def __init__(self, db: DatabaseManager):
         self.db = db
-        self.llm = llm  # Kept for potential auxiliary LLM calls / backward compat
 
         # Tool registry
         self.tool_registry = ToolRegistry()
         self._register_tools()
 
-        # Build function declarations once from registered tools (class-level, no db needed)
-        self._function_declarations = self.tool_registry.get_function_declarations()
-        logger.info(f"Built {len(self._function_declarations)} function declarations for Gemini")
+        # Build Anthropic tool definitions once from registered tools (class-level, no db needed)
+        self._anthropic_tools = self.tool_registry.get_anthropic_tools()
+        logger.info(f"Built {len(self._anthropic_tools)} Anthropic tool definitions")
 
         # Build static system prompt (no per-request state — UI filters go in first message)
         self._system_prompt = self._build_system_prompt()
 
-        # Build the agentic model with tools and system instruction
-        # Created once in __init__ — BYOK requests create a fresh instance inside _byok_lock
-        self.agentic_model = self._create_agentic_model(llm_key=None)
+        # Prompt caching: if ANTHROPIC_PROMPT_CACHING=true, wrap system prompt as a
+        # cache_control block so Anthropic caches the static ~3000-token prefix.
+        # Falls back gracefully to plain string if env var is absent or false.
+        if os.environ.get("ANTHROPIC_PROMPT_CACHING", "").lower() == "true":
+            self._system_for_api: str | list = [
+                {"type": "text", "text": self._system_prompt, "cache_control": {"type": "ephemeral"}}
+            ]
+            logger.info("Anthropic prompt caching enabled for Oracle system prompt")
+        else:
+            self._system_for_api = self._system_prompt
+
+        # Claude client (T2 — Claude Sonnet 4.6)
+        self._claude_client: ClaudeClient = LLMFactory.get("t2")
 
         # Session storage: {session_id: (ConversationContext, last_active_ts)}
         self._sessions: Dict[str, Tuple[ConversationContext, datetime]] = {}
@@ -120,7 +114,7 @@ class OracleOrchestrator:
         )
         self._cleanup_thread.start()
 
-        logger.info("OracleOrchestrator (agentic) initialized")
+        logger.info("OracleOrchestrator (Claude Sonnet 4.6) initialized")
 
     # ── Tool registration ──────────────────────────────────────────────────────
 
@@ -129,29 +123,8 @@ class OracleOrchestrator:
             RAGTool, SQLTool, AggregationTool, GraphTool, MarketTool,
             TickerThemesTool, ReportCompareTool, ReferenceTool, SpatialTool,
         ):
-            self.tool_registry.register(tool_class, db=self.db, llm=self.llm)
+            self.tool_registry.register(tool_class, db=self.db)
         logger.info(f"Registered tools: {self.tool_registry.registered_names()}")
-
-    # ── Agentic model factory ──────────────────────────────────────────────────
-
-    def _create_agentic_model(self, llm_key: Optional[str] = None):
-        """Create a GenerativeModel with tools and system instruction.
-
-        Args:
-            llm_key: If provided, this key is active via genai.configure() — used for BYOK.
-                     If None, uses the globally configured key (default).
-        """
-        _ = llm_key  # key is already active in genai global config when this is called
-        return genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            tools=[genai.protos.Tool(function_declarations=self._function_declarations)],
-            system_instruction=self._system_prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=8192,
-                temperature=0.4,
-                top_p=0.95,
-            ),
-        )
 
     # ── System prompt with SOPs ────────────────────────────────────────────────
 
@@ -287,134 +260,76 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
         ui_filters: Optional[Dict] = None,
         user_context: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Process a user query end-to-end using the agentic function-calling loop.
+        """Process a user query end-to-end using the agentic tool use loop.
 
-        If user_context contains a gemini_api_key, all LLM calls use that key (BYOK).
         Returns a dict with: answer, sources, query_plan, mode, metadata.
         """
-        user_gemini_key = getattr(user_context, "gemini_api_key", None)
         user_id = getattr(user_context, "user_id", None) or session_id
+        return self._process_agentic(query, session_id, ui_filters, user_id=user_id)
 
-        if user_gemini_key:
-            return self._process_with_byok_key(
-                query, session_id, ui_filters, user_gemini_key, user_id
-            )
-        return self._process_agentic(
-            query, session_id, ui_filters, model=self.agentic_model, user_id=user_id
-        )
-
-    def _process_with_byok_key(
-        self,
-        query: str,
-        session_id: str,
-        ui_filters: Optional[Dict],
-        user_key: str,
-        user_id: str,
-    ) -> Dict[str, Any]:
-        """Thread-safe BYOK: configure genai with user key, run agentic loop, restore key."""
-        with _byok_lock:
-            orig_key = os.getenv("GEMINI_API_KEY", "")
-            genai.configure(api_key=user_key, transport="rest")
-            try:
-                byok_model = self._create_agentic_model(llm_key=user_key)
-                return self._process_agentic(
-                    query, session_id, ui_filters, model=byok_model, user_id=user_id
-                )
-            finally:
-                genai.configure(api_key=orig_key, transport="rest")
-
-    # ── Agentic loop ───────────────────────────────────────────────────────────
+    # ── Agentic loop (Anthropic) ───────────────────────────────────────────────
 
     def _process_agentic(
         self,
         query: str,
         session_id: str,
         ui_filters: Optional[Dict],
-        model: Any,
         user_id: str,
     ) -> Dict[str, Any]:
-        """Core agentic processing: start_chat → tool loop → final answer."""
+        """Core agentic loop: Anthropic messages API with tool_use/tool_result blocks."""
         start_time = time.time()
         ctx = self._get_or_create_session(session_id)
 
-        # Serialize session history for Gemini
-        history = ctx.to_gemini_history()
-
-        # Start chat with conversation history
-        chat = model.start_chat(history=history)
-
-        # Build initial message (query + UI filter hints)
+        # Build messages list: history + initial user message
+        messages: List[Dict] = ctx.to_messages_history()
         initial_msg = self._build_initial_message(query, ui_filters)
+        messages.append({"role": "user", "content": initial_msg})
 
-        # ── Agentic loop ────────────────────────────────────────────────────
-        tool_results: List[Tuple[str, ToolResult]] = []
+        # State tracking
+        tool_results_log: List[Tuple[str, ToolResult]] = []
         sources: List[Dict] = []
         iterations_done = 0
 
-        # Initial send_message with retry on MALFORMED_FUNCTION_CALL.
-        # Gemini occasionally generates a malformed function call on first attempt;
-        # retrying with a fresh session (no history) resolves it in most cases.
-        _MAX_MALFORMED_RETRIES = 2
-        response = None
-        last_exc: Optional[Exception] = None
-        for _attempt in range(1 + _MAX_MALFORMED_RETRIES):
-            try:
-                if _attempt > 0:
-                    logger.warning(
-                        f"MALFORMED_FUNCTION_CALL on attempt {_attempt}, retrying with fresh session"
-                    )
-                    chat = model.start_chat(history=[])
-                response = chat.send_message(
-                    initial_msg,
-                    request_options={"timeout": 60},
-                )
-                break
-            except Exception as e:
-                last_exc = e
-                if "MALFORMED_FUNCTION_CALL" not in str(e):
-                    break  # Non-retryable error
-                # Log candidate details to diagnose which tool/args are malformed
-                candidate = getattr(e, "candidate", None)
-                if candidate:
-                    try:
-                        parts = candidate.content.parts
-                        for p in parts:
-                            fc = getattr(p, "function_call", None)
-                            if fc:
-                                logger.error(
-                                    f"[MALFORMED FC] tool={fc.name!r} args={dict(fc.args)}"
-                                )
-                    except Exception:
-                        logger.error(f"[MALFORMED FC] raw candidate: {candidate}")
+        # Initial API call
+        try:
+            response = self._claude_client.generate_with_tools(
+                messages=messages,
+                tools=self._anthropic_tools,
+                system=self._system_for_api,
+                temperature=0.4,
+                top_p=0.95,
+                max_tokens=8192,
+            )
+        except Exception as e:
+            logger.error(f"Initial Claude API call failed: {e}")
+            return self._error_response(query, session_id, user_id, start_time, str(e))
 
-        if response is None:
-            logger.error(f"Initial send_message failed after {_attempt + 1} attempt(s): {last_exc}")
-            return self._error_response(query, session_id, user_id, start_time, str(last_exc))
-
+        # ── Agentic loop ────────────────────────────────────────────────────
         for iteration in range(MAX_AGENTIC_ITERATIONS):
             iterations_done = iteration + 1
 
-            # Extract function calls from response
-            try:
-                parts = response.candidates[0].content.parts
-            except (IndexError, AttributeError) as e:
-                logger.warning(f"Could not extract parts from response: {e}")
-                break
-
-            function_calls = [
-                p.function_call for p in parts
-                if hasattr(p, "function_call") and p.function_call.name
+            # Extract tool_use blocks from response
+            tool_use_blocks = [
+                block for block in response.content
+                if getattr(block, "type", None) == "tool_use"
             ]
 
-            if not function_calls:
-                # No function calls — LLM produced a text answer
+            if not tool_use_blocks:
+                # No tool calls — Claude produced a final text answer
                 break
 
-            # Execute all function calls in this round
-            function_responses = []
-            for fc in function_calls:
-                tool_name = fc.name
-                tool_args = dict(fc.args) if fc.args else {}
+            # Append Claude's assistant response (with tool_use blocks) to messages
+            messages.append({
+                "role": "assistant",
+                "content": self._serialize_content(response.content),
+            })
+
+            # Execute tools and build tool_result content blocks
+            tool_result_blocks: List[Dict] = []
+            for block in tool_use_blocks:
+                tool_name = block.name
+                tool_args = dict(block.input) if block.input else {}
+                tool_use_id = block.id
 
                 # Extract and log rationale (CoT forcing — not passed to Python execution)
                 rationale = tool_args.pop("rationale", None)
@@ -436,12 +351,12 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
                     cache_key = hashlib.md5(tool_args["query"].encode()).hexdigest()
                     if cache_key in self._sql_result_cache:
                         logger.debug(f"SQL cache hit for key {cache_key[:8]}")
-                        result = self._sql_result_cache[cache_key]
-                        tool_results.append((tool_name, result))
+                        cached = self._sql_result_cache[cache_key]
+                        tool_results_log.append((tool_name, cached))
                         tool = self.tool_registry.get_tool(tool_name)
-                        function_responses.append(self._make_fn_response(
-                            tool_name, tool.format_for_history(result)
-                        ))
+                        tool_result_blocks.append(
+                            self._make_fn_response(tool_use_id, tool.format_for_history(cached))
+                        )
                         continue
 
                 # Execute tool
@@ -456,7 +371,7 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
                 if cache_key and result.success:
                     self._sql_result_cache[cache_key] = result
 
-                tool_results.append((tool_name, result))
+                tool_results_log.append((tool_name, result))
 
                 # Collect sources from RAG tool for API response
                 if tool_name == "rag_search" and result.success and result.data and not sources:
@@ -469,46 +384,53 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
                 # Format compressed result for chat history
                 tool = self.tool_registry.get_tool(tool_name)
                 compressed = tool.format_for_history(result)
-                function_responses.append(self._make_fn_response(tool_name, compressed))
+                tool_result_blocks.append(self._make_fn_response(tool_use_id, compressed))
 
-            # Send all function responses back to LLM in a single message
-            if function_responses:
-                try:
-                    msg_to_send = function_responses[0] if len(function_responses) == 1 else function_responses
-                    response = chat.send_message(
-                        msg_to_send,
-                        request_options={"timeout": 90},
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send function responses: {e}")
-                    break
+            # Append tool results as a user message
+            if tool_result_blocks:
+                messages.append({"role": "user", "content": tool_result_blocks})
+
+            # Next API call
+            try:
+                response = self._claude_client.generate_with_tools(
+                    messages=messages,
+                    tools=self._anthropic_tools,
+                    system=self._system_for_api,
+                    temperature=0.4,
+                    top_p=0.95,
+                    max_tokens=8192,
+                )
+            except Exception as e:
+                logger.error(f"Claude API call failed on iteration {iterations_done}: {e}")
+                break
 
         # ── Extract final text answer ─────────────────────────────────────
         answer = self._extract_text_from_response(response)
 
-        # If loop exhausted without text answer, force a synthesis
-        if not answer and tool_results:
+        # If loop exhausted without text answer, force a synthesis via generate()
+        if not answer and tool_results_log:
             logger.warning(f"Agentic loop hit max {MAX_AGENTIC_ITERATIONS} iterations, forcing synthesis")
             try:
-                forced_prompt = self._build_forced_synthesis_prompt(query, tool_results)
-                forced_response = chat.send_message(
-                    forced_prompt,
-                    request_options={"timeout": 90},
+                forced_prompt = self._build_forced_synthesis_prompt(query, tool_results_log)
+                answer = self._claude_client.generate(
+                    prompt=forced_prompt,
+                    system=self._system_for_api,
+                    temperature=0.4,
+                    max_tokens=8192,
                 )
-                answer = self._extract_text_from_response(forced_response)
             except Exception as e:
                 logger.error(f"Forced synthesis failed: {e}")
 
         # ── Anti-hallucination: all tools failed/empty — only if LLM produced no answer ──
         # Guard fires ONLY when answer is empty: if LLM already synthesized a "no data"
         # response (e.g. in <DOCUMENTO> format), we trust that over a canned message.
-        if not answer and tool_results and all(
+        if not answer and tool_results_log and all(
             not r.success or not r.data or (
                 isinstance(r.data, dict) and not any(
                     bool(v) for v in r.data.values() if isinstance(v, (list, dict))
                 )
             )
-            for _, r in tool_results
+            for _, r in tool_results_log
         ):
             answer = (
                 "Non ho trovato informazioni sufficienti nel database per rispondere a questa query.\n"
@@ -526,7 +448,7 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
         ctx.add_message("assistant", answer)
 
         # Track GPE entities mentioned across tool calls
-        for tool_name, result in tool_results:
+        for tool_name, result in tool_results_log:
             if result.success and result.data and isinstance(result.data, dict):
                 entities = result.data.get("gpe_filter") or []
                 if entities:
@@ -534,7 +456,7 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
 
         # ── Log to oracle_query_log ───────────────────────────────────────
         execution_time = time.time() - start_time
-        tools_used = [t for t, _ in tool_results]
+        tools_used = [t for t, _ in tool_results_log]
         self._log_query(
             session_id=session_id,
             query=query,
@@ -569,24 +491,42 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _make_fn_response(name: str, content: str) -> Any:
-        """Wrap a string result as a genai FunctionResponse Part."""
-        return genai.protos.Part(
-            function_response=genai.protos.FunctionResponse(
-                name=name,
-                response={"result": content},
-            )
-        )
+    def _make_fn_response(tool_use_id: str, content: str) -> Dict:
+        """Build an Anthropic tool_result content block dict."""
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+        }
 
     @staticmethod
     def _extract_text_from_response(response) -> str:
-        """Extract concatenated text from all text Parts in a response."""
+        """Extract concatenated text from all text blocks in an Anthropic response."""
         try:
-            parts = response.candidates[0].content.parts
-            texts = [p.text for p in parts if hasattr(p, "text") and p.text]
-            return "".join(texts).strip()
-        except (IndexError, AttributeError):
+            return "".join(
+                block.text
+                for block in response.content
+                if getattr(block, "type", None) == "text" and block.text
+            ).strip()
+        except (AttributeError, TypeError):
             return ""
+
+    @staticmethod
+    def _serialize_content(content_blocks) -> List[Dict]:
+        """Serialize Anthropic content blocks to plain dicts for messages history."""
+        result = []
+        for block in content_blocks:
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                result.append({"type": "text", "text": block.text})
+            elif block_type == "tool_use":
+                result.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": dict(block.input) if block.input else {},
+                })
+        return result
 
     @staticmethod
     def _build_initial_message(query: str, ui_filters: Optional[Dict]) -> str:
@@ -695,10 +635,5 @@ def get_oracle_orchestrator_singleton() -> OracleOrchestrator:
         with _orchestrator_lock:
             if _orchestrator is None:
                 db = DatabaseManager()
-                api_key = os.getenv("GEMINI_API_KEY", "").strip()
-                if not api_key:
-                    raise ValueError("GEMINI_API_KEY not found in environment")
-                genai.configure(api_key=api_key, transport="rest")
-                llm = genai.GenerativeModel("gemini-2.5-flash")
-                _orchestrator = OracleOrchestrator(db=db, llm=llm)
+                _orchestrator = OracleOrchestrator(db=db)
     return _orchestrator

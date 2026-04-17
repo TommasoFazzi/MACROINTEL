@@ -26,7 +26,7 @@ except ImportError:
     HDBSCAN_AVAILABLE = False
 
 try:
-    import google.generativeai as genai
+    from ..llm.llm_factory import GeminiClient
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
@@ -119,17 +119,16 @@ class NarrativeProcessor:
         # Lazy-loaded embedding model
         self._embedding_model = None
 
-        # Initialize Gemini
+        # Initialize LLM — narrative_processor stays on Gemini 2.5 Flash (not Flash-Lite)
+        # Exception to T5 tier: flash-lite quality not validated for structured narrative evolution
         self.gemini_available = False
         if not skip_llm and GEMINI_AVAILABLE:
-            api_key = (gemini_api_key or os.getenv('GEMINI_API_KEY', '')).strip()
-            if api_key:
-                genai.configure(api_key=api_key, transport='rest')
-                self.model = genai.GenerativeModel('gemini-2.0-flash')
+            try:
+                self.model = GeminiClient(model='gemini-2.5-flash', timeout=30)
                 self.gemini_available = True
-                logger.info("NarrativeProcessor: Gemini initialized for summary evolution")
-            else:
-                logger.warning("NarrativeProcessor: No GEMINI_API_KEY found, LLM features disabled")
+                logger.info("NarrativeProcessor: Gemini 2.5 Flash initialized for summary evolution")
+            except ValueError as e:
+                logger.warning(f"NarrativeProcessor: LLM disabled — {e}")
         elif skip_llm:
             logger.info("NarrativeProcessor: LLM features explicitly disabled (--skip-llm)")
 
@@ -1049,16 +1048,15 @@ EXECUTIVE SUMMARY:
 ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-separated. No generic words, no article titles, no HTML.]"""
 
         try:
-            response = self.model.generate_content(
+            raw_text = self.model.generate_content_raw(
                 prompt,
                 generation_config={
                     "max_output_tokens": 400,  # title(~15t) + 3 bullets(~150t) + entities(~60t) + margin
                     "temperature": 0.3,        # low variance for consistent structured output
                 },
-                request_options={"timeout": 30}  # 2.0-flash: <4s normal, 30s = 7× safety margin
             )
             # Strip markdown formatting that Gemini may emit despite instructions
-            text = _strip_llm_markdown(response.text)
+            text = _strip_llm_markdown(raw_text)
 
             # Parse response
             new_title = current_title

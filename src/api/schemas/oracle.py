@@ -17,12 +17,8 @@ class OracleChatRequest(BaseModel):
         "GEOPOLITICS", "DEFENSE", "ECONOMY", "CYBER", "ENERGY"
     ]]] = None
     gpe_filter: Optional[List[str]] = None
-    gemini_api_key: Optional[str] = Field(
-        default=None,
-        min_length=39,
-        max_length=45,
-        description="BYOK: user's Gemini API key. Never logged server-side.",
-    )
+    # BREAKING CHANGE (2026-04-17): gemini_api_key field removed.
+    # Oracle now uses server-side ANTHROPIC_API_KEY. Passing this field returns HTTP 422.
 
 
 class OracleSource(BaseModel):

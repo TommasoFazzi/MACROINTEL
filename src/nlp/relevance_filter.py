@@ -1,23 +1,17 @@
 """
 LLM-based relevance filter for intelligence articles.
 
-Uses Gemini Flash to classify articles as relevant or not relevant
-to the platform's scope: geopolitics, defense, cyber security, energy,
-finance/macro, space, supply chain (strategic), politics.
+Uses T5 (Gemini 2.5 Flash-Lite) via LLMFactory to classify articles as relevant
+or not relevant to the platform's scope: geopolitics, defense, cyber security,
+energy, finance/macro, space, supply chain (strategic), politics.
 
 Articles marked as not relevant are tagged but NOT deleted — they are
 excluded from further processing (clustering, storylines, reports).
 """
 
-import os
+import json
 import time
-from typing import List, Dict, Tuple
-
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
+from typing import Dict, List, Tuple
 
 from ..utils.logger import get_logger
 
@@ -43,34 +37,27 @@ CLASSIFICATION_PROMPT = (
     f"AMBITO DELLA PIATTAFORMA: {SCOPE_DESCRIPTION}\n\n"
     f"FUORI AMBITO: {OUT_OF_SCOPE}\n\n"
     "REGOLE:\n"
-    "- Se l'articolo è chiaramente dentro l'ambito → RELEVANT\n"
-    "- Se l'articolo è chiaramente fuori ambito → NOT_RELEVANT\n"
-    "- Se è borderline (es. sport usato come leva geopolitica, salute pubblica come arma strategica) → RELEVANT\n"
-    "- Se hai dubbi, preferisci RELEVANT (meglio un falso positivo che perdere intelligence)\n\n"
-    "Rispondi SOLO con una riga: RELEVANT oppure NOT_RELEVANT\n\n"
+    "- Se l'articolo è chiaramente dentro l'ambito → relevant: true\n"
+    "- Se l'articolo è chiaramente fuori ambito → relevant: false\n"
+    "- Se è borderline (es. sport usato come leva geopolitica, salute pubblica come arma strategica) → relevant: true\n"
+    "- Se hai dubbi, preferisci relevant: true (meglio un falso positivo che perdere intelligence)\n\n"
+    'Rispondi SOLO con JSON: {"relevant": true} oppure {"relevant": false}\n\n'
     "TITOLO: {title}\n"
     "FONTE: {source}\n"
     "TESTO (primi 300 caratteri): {snippet}"
 )
 
 # Rate limit between LLM calls (seconds)
-RATE_LIMIT_SECONDS = 0.15  # Gemini Flash is fast and has high quotas
+RATE_LIMIT_SECONDS = 0.15  # Flash-Lite is fast and has high quotas
 
 
 class RelevanceFilter:
-    """Classifies articles as relevant or not using Gemini Flash."""
+    """Classifies articles as relevant or not using T5 (Gemini 2.5 Flash-Lite)."""
 
-    def __init__(self, gemini_api_key: str = None):
-        if not GEMINI_AVAILABLE:
-            raise ImportError("google-generativeai is required. pip install google-generativeai")
-
-        api_key = (gemini_api_key or os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY', '')).strip()
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY must be set")
-
-        genai.configure(api_key=api_key, transport='rest')
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
-        logger.info("RelevanceFilter: Gemini Flash initialized")
+    def __init__(self):
+        from ..llm.llm_factory import LLMFactory
+        self._llm = LLMFactory.get("t5")
+        logger.info("RelevanceFilter: T5 (Gemini 2.5 Flash-Lite) initialized")
 
     def classify_article(self, article: Dict) -> bool:
         """
@@ -87,9 +74,14 @@ class RelevanceFilter:
         prompt = CLASSIFICATION_PROMPT.format(title=title, source=source, snippet=snippet)
 
         try:
-            response = self.model.generate_content(prompt)
-            answer = response.text.strip().upper()
-            return 'NOT_RELEVANT' not in answer
+            response = self._llm.generate(
+                prompt,
+                max_tokens=20,
+                temperature=0.1,
+                json_mode=True,
+            )
+            data = json.loads(response.strip())
+            return bool(data.get("relevant", True))
         except Exception as e:
             logger.warning(f"LLM classification failed for '{title[:50]}': {e}. Defaulting to RELEVANT.")
             return True  # On error, keep the article

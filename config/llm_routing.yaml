@@ -1,0 +1,32 @@
+tiers:
+  t1:
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    timeout: 120
+
+  t2:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    timeout: 60
+
+  t3:
+    provider: openai_compatible
+    model: deepseek-chat
+    base_url: https://api.deepseek.com
+    timeout: 45
+
+  t4a:
+    provider: gemini
+    model: gemini-2.5-flash-lite
+    timeout: 30
+
+  t4b:
+    provider: openai_compatible
+    model: codestral-latest
+    base_url: https://api.mistral.ai/v1
+    timeout: 30
+
+  t5:
+    provider: gemini
+    model: gemini-2.5-flash-lite
+    timeout: 15

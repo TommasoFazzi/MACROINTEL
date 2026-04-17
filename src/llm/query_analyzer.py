@@ -32,9 +32,9 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent.parent / '.env'
 load_dotenv(env_path)
 
-import google.generativeai as genai
 from pydantic import ValidationError
 
+from .llm_factory import LLMFactory
 from .schemas import ExtractedFilters
 from ..utils.logger import get_logger
 
@@ -43,9 +43,9 @@ logger = get_logger(__name__)
 
 class QueryAnalyzer:
     """
-    Extracts structured filters from natural language queries using Gemini LLM.
+    Extracts structured filters from natural language queries using T4a (Gemini 2.5 Flash-Lite).
 
-    Designed for low latency (<500ms) with Gemini Flash.
+    Designed for low latency (<500ms) with Flash-Lite.
     Includes fallback to return original query if extraction fails.
 
     Usage:
@@ -61,24 +61,12 @@ class QueryAnalyzer:
     def __init__(
         self,
         gemini_api_key: Optional[str] = None,
-        model_name: str = "gemini-2.5-flash"
+        model_name: str = None,  # kept for backward compat; tier is t4a
     ):
-        """
-        Initialize Query Analyzer.
-
-        Args:
-            gemini_api_key: Gemini API key (reads from env if None)
-            model_name: Gemini model to use (default: gemini-2.5-flash for speed)
-        """
-        api_key = (gemini_api_key or os.getenv('GEMINI_API_KEY', '')).strip()
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment or parameters")
-
-        genai.configure(api_key=api_key, transport='rest')
-        self.model = genai.GenerativeModel(model_name)
-        self.model_name = model_name
-
-        logger.info(f"QueryAnalyzer initialized with {model_name}")
+        """Initialize Query Analyzer using T4a (Gemini 2.5 Flash-Lite)."""
+        self.model = LLMFactory.get("t4a")
+        self.model_name = "t4a (gemini-2.5-flash-lite)"
+        logger.info(f"QueryAnalyzer initialized with {self.model_name}")
 
     def _build_prompt(self, query: str, current_date: str) -> str:
         """Build the extraction prompt with rules for date/category/GPE parsing."""
@@ -173,17 +161,12 @@ JSON OUTPUT:"""
             prompt = self._build_prompt(query, current_date)
 
             # Use JSON mode for structured output
-            response = self.model.generate_content(
-                contents=[prompt],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.1,
-                    "max_output_tokens": 2048,
-                },
-                request_options={"timeout": 30}
+            raw_output = self.model.generate(
+                prompt,
+                temperature=0.1,
+                max_tokens=2048,
+                json_mode=True,
             )
-
-            raw_output = response.text
             logger.debug(f"Raw LLM output: {raw_output}")
 
             # Validate with Pydantic

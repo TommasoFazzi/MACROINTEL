@@ -94,6 +94,25 @@ class ConversationContext:
             logger.warning(f"to_gemini_history failed, returning empty history: {e}")
             return []
 
+    def to_messages_history(self) -> List[Dict]:
+        """Serialize conversation messages as plain dicts compatible with Anthropic and OpenAI APIs.
+
+        Returns:
+            List of {"role": "user"|"assistant", "content": str} dicts.
+            Assistant messages are truncated to _HISTORY_ASSISTANT_MAX_CHARS.
+            Returns empty list if history is empty.
+        """
+        if not self.messages:
+            return []
+        history = []
+        for msg in self.messages:
+            role = "user" if msg["role"] == "user" else "assistant"
+            content = msg["content"]
+            if role == "assistant" and len(content) > _HISTORY_ASSISTANT_MAX_CHARS:
+                content = content[:_HISTORY_ASSISTANT_MAX_CHARS] + "..."
+            history.append({"role": role, "content": content})
+        return history
+
     def detect_follow_up(self, query: str) -> bool:
         """Heuristic: detect if query is a follow-up to previous exchange."""
         if not self.messages or self.message_count < 2:

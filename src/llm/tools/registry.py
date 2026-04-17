@@ -38,3 +38,10 @@ class ToolRegistry:
         Accesses class-level schema attrs — no db/llm needed for this step.
         """
         return [tool_class.to_function_declaration() for tool_class, _ in self._tools.values()]
+
+    def get_anthropic_tools(self) -> List[Dict]:
+        """Return Anthropic tool definitions for all registered tools.
+
+        Used by OracleOrchestrator (Claude) to pass tools to messages.create().
+        """
+        return [tool_class.to_anthropic_tool() for tool_class, _ in self._tools.values()]

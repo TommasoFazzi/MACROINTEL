@@ -46,7 +46,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
   - **Stage 3.5 — Orphan buffer retry:**
     - `_retry_orphan_pool()` — Attempts to re-match events stored in the `orphan_events` buffer pool against currently active storylines before HDBSCAN clustering; events that find a match are removed from the pool; events older than 14 days are expired; reduces noise in HDBSCAN by recovering events that were too sparse on their original run
   - **Stage 4 — LLM summary evolution:**
-    - `_evolve_narrative_summary(storyline_id)` — Calls Gemini 2.0 Flash (Italian prompt); new storylines get title+summary from scratch, existing ones integrate new facts while preserving historical context; also encodes `summary_vector` via sentence-transformers; max_output_tokens=400, temperature=0.3, timeout=30s
+    - `_evolve_narrative_summary(storyline_id)` — Calls `GeminiClient("gemini-2.5-flash", timeout=30).generate_content_raw()` (Italian prompt). **EXCEPTION**: stays on 2.5 Flash (not Flash-Lite) — structured narrative generation feeds HDBSCAN clustering; Flash-Lite quality eval pending. new storylines get title+summary from scratch, existing ones integrate new facts; also encodes `summary_vector` via sentence-transformers; max_output_tokens=400, temperature=0.3
     - LLM prompt includes `ENTITÀ:` field — Gemini extracts structured entities from article text, which are then filtered through `_is_garbage_entity()` before storage
   - **Stage 4b — Post-clustering validation (Filtro 4):**
     - `_validate_storyline_relevance(storyline_ids)` — Archives storylines with no scope keywords AND matching off-topic patterns; runs after LLM evolution (so title+summary are available); sets `narrative_status='archived'`, `status='ARCHIVED'`
@@ -68,9 +68,10 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
   - **Module-level constants:** `_SCOPE_KEYWORDS` (compiled regex with geopolitical terms), `_OFF_TOPIC_PATTERNS` (list of compiled regexes for sports/entertainment/celebrity/food/tourism)
 
 - `relevance_filter.py` - **LLM Relevance Classification** (Filtro 2) (~141 lines)
-  - `RelevanceFilter` class — initialized with `GEMINI_API_KEY`, uses `gemini-2.0-flash`
-  - `classify_article(article)` — Returns `True` (relevant) or `False` (not relevant); on LLM error defaults to `True` (conservative); **note: no explicit timeout on generate_content() — potential hang risk**
+  - `RelevanceFilter` class — uses `LLMFactory.get("t5")` (Gemini 2.5 Flash-Lite, timeout=15s)
+  - `classify_article(article)` — Returns `True` (relevant) or `False` (not relevant); parses `{"relevant": bool}` JSON response; on LLM error defaults to `True` (conservative)
   - `filter_batch(articles)` — Classifies a batch, returns `(relevant_articles, filtered_out_articles)` tuple; tags articles with `relevance_label` field; rate-limited at 0.15s between calls
+  - JSON mode enabled — eliminates fragile NOT_RELEVANT text parsing; timeout=15s prevents 900s hangs
   - `CLASSIFICATION_PROMPT` — Italian-language system prompt with scope definition
   - `SCOPE_DESCRIPTION` / `OUT_OF_SCOPE` — Platform scope boundaries
   - Conservative: borderline cases → RELEVANT (prefer false positives over missing intelligence)
@@ -99,7 +100,7 @@ If a storyline has no summary yet (LLM not yet run), it passes validation and is
   - `sentence-transformers` - Embeddings (384-dim) and `summary_vector` encoding
   - `sklearn.cluster.HDBSCAN` (scikit-learn >= 1.3) - Density-based clustering; gracefully degrades if unavailable
   - `numpy`, `scikit-learn` - Vector operations
-  - `google-generativeai` - Gemini 2.0 Flash for both LLM summary evolution and relevance classification
+  - `google-generativeai` — Gemini 2.5 Flash (narrative_processor exception, direct GeminiClient) + Flash-Lite via LLMFactory T5 (relevance_filter, bullet_generator)
 
 ## Data Flow
 

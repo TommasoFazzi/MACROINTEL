@@ -99,7 +99,7 @@ Tests mirror `src/` structure under `tests/`. Mock HTTP with `responses`, mock d
 - **Node.js 16+** for `web-platform/`
 - **spaCy model**: `python -m spacy download xx_ent_wiki_sm`
 - **Docker Compose services**: `postgres`, `backend`, `frontend`, `nginx`, `photon` (optional, `--profile photon`)
-- **Required env vars**: `DATABASE_URL`, `GEMINI_API_KEY`, `INTELLIGENCE_API_KEY`, `FRED_API_KEY`
+- **Required env vars**: `DATABASE_URL`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `INTELLIGENCE_API_KEY`, `FRED_API_KEY`
 
 ## Key Technical Patterns
 
@@ -132,8 +132,8 @@ When updating documentation, always check for and update context.md files in sub
 
 ### LLM Integration
 - **f-string escaping in report_generator.py:** The LLM prompt uses f-strings. Variables like `{narrative_section}` must NOT be double-braced `{{}}` or they become literal text. Pre-compute variables before the f-string.
-- **generate_content() hang:** With `transport='rest'`, calling `generate_content()` without `request_options={"timeout": N}` causes ~900s hang on network issues. Always specify timeout (30s for 2.0-flash, 60s for 2.5-flash).
-- **Gemini model split:** NLP layer (`narrative_processor.py`, `relevance_filter.py`) → `gemini-2.0-flash` (speed-critical, structured tasks); LLM layer (`report_generator.py`, `query_analyzer.py`, `oracle_engine.py`, `oracle_orchestrator.py`, `query_router.py`) → `gemini-2.5-flash` (deep reasoning).
+- **generate_content() hang:** With `transport='rest'`, calling `generate_content()` without `request_options={"timeout": N}` causes ~900s hang on network issues. Always specify timeout via factory config or `generate_content_raw()`. T5 timeout=15s, T1 timeout=120s.
+- **5-tier LLM routing:** Use `LLMFactory.get(tier)` — never hardcode model names. Tiers: T1=Gemini 3.1 Pro (reports), T2=Claude Sonnet 4.6 (Oracle), T3=DeepSeek V3.2 (extraction), T4a=Flash-Lite (query_analyzer), T4b=Mistral Codestral (sql), T5=Flash-Lite (NLP bulk). Exception: `narrative_processor.py` uses `GeminiClient("gemini-2.5-flash", timeout=30)` directly — do NOT downgrade to Flash-Lite until quality eval passes.
 - **Oracle 2.0 singleton:** `get_oracle_orchestrator_singleton()` in `oracle_orchestrator.py` is thread-safe (double-checked locking). The singleton holds 400MB embedding model and LLM connection — never re-initialize per request.
 - **Oracle 6 intents (not 5):** `query_router.py` classifies into FACTUAL / ANALYTICAL / NARRATIVE / MARKET / COMPARATIVE / **OVERVIEW**. OVERVIEW uses very low time-decay (k=0.005) for panoramic queries that should return broad recent context. Using vector-only search (no FTS) to avoid AND-matching issues.
 - **src/macro/ Phase 3 is log-only:** `match_convergences()` and `build_sc_signals_context()` are called inside `_generate_macro_analysis()` but their output is only logged — NOT injected into the prompt. This is intentional for independent validation before Phase 4 cutover.

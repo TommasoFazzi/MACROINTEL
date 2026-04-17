@@ -126,3 +126,16 @@ class BaseTool(ABC):
             description=cls.description,
             parameters=params_schema,
         )
+
+    @classmethod
+    def to_anthropic_tool(cls) -> Dict:
+        """Build an Anthropic tool definition dict from this tool's class-level schema.
+
+        Returns the format expected by Anthropic messages.create(tools=[...]):
+            {"name": ..., "description": ..., "input_schema": {JSON Schema dict}}
+        """
+        return {
+            "name": cls.name,
+            "description": cls.description,
+            "input_schema": cls.parameters,
+        }

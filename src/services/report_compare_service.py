@@ -9,15 +9,11 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Dict, List, Any
-from google.generativeai import GenerativeModel
 
+from ..llm.llm_factory import LLMFactory
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-# Use gemini-2.5-flash for report comparison (deep reasoning)
-MODEL_ID = "gemini-2.5-flash"
-REQUEST_TIMEOUT = 90  # seconds, for two 35k-char reports
 
 
 def _extract_delta_from_xml(xml_str: str) -> Dict[str, List[str]]:
@@ -123,14 +119,9 @@ Produci SOLO questo XML, senza altro testo:
 </analysis>"""
 
     try:
-        # Call Gemini with timeout
-        model = GenerativeModel(MODEL_ID)
-        response = model.generate_content(
-            prompt,
-            request_options={"timeout": REQUEST_TIMEOUT}
-        )
-
-        response_text = response.text
+        # T1 (Gemini 3.1 Pro) for deep-reasoning report comparison
+        model = LLMFactory.get("t1")
+        response_text = model.generate(prompt, max_tokens=2048, temperature=0.3)
         logger.info(f"LLM delta analysis generated ({len(response_text)} chars)")
 
         # Extract and parse XML

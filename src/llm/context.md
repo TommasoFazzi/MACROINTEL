@@ -1,7 +1,33 @@
 # LLM Context
 
 ## Purpose
-Large Language Model integration layer for intelligence report generation, RAG-based Q&A, and query analysis. Uses Google Gemini for text generation with structured output validation via Pydantic schemas. Reports are enriched with **narrative storyline context** from the Narrative Engine.
+Large Language Model integration layer for intelligence report generation, RAG-based Q&A, and query analysis. Uses a **5-tier native factory pattern** (`LLMFactory`) spanning Google Gemini, Anthropic Claude, and OpenAI-compatible providers (DeepSeek, Mistral). Reports are enriched with **narrative storyline context** from the Narrative Engine.
+
+## LLM Factory (llm_factory.py)
+
+`LLMFactory.get(tier)` reads `config/llm_routing.yaml` and returns a typed `BaseLLMClient`:
+
+| Tier | Model | Provider | Call Sites |
+|------|-------|----------|-----------|
+| T1 | Gemini 3.1 Pro (`gemini-3.1-pro-preview`) | google-generativeai | macro_analysis, strategic_report, report_compare |
+| T2 | Claude Sonnet 4.6 | anthropic | Oracle agentic loop + synthesis |
+| T3 | DeepSeek V3.2 | openai-compatible | structured_analysis, macro_signals, article_signals |
+| T4a | Gemini 2.5 Flash-Lite | google-generativeai | query_analyzer |
+| T4b | Mistral Codestral 2 | openai-compatible | sql_generation (query_router) |
+| T5 | Gemini 2.5 Flash-Lite | google-generativeai | relevance_filter, bullet_generator, report_title, communities |
+
+`GeminiClient.generate_content_raw(prompt, generation_config)` — compatibility shim for `report_generator.py` call sites that pass raw `generation_config` dicts. Remove once full migration to `generate()` is complete.
+
+**T3 JSON schema tradeoff**: DeepSeek V3.2 via OpenAI-compatible API has no `response_schema` enforcement. Mitigation: schema injected as JSON example in prompt + single Pydantic retry via `OpenAICompatibleClient.generate_with_schema_retry()`. Monitor `ValidationError` rate in logs (target < 5%).
+
+**T3 censorship risk — TODO: test and monitor**: DeepSeek V3.2 is trained by a Chinese company and may refuse, truncate, or produce politically filtered output on topics sensitive to the Chinese government (Taiwan sovereignty, Xinjiang/Tibet, Tiananmen, CCP leadership, Hong Kong protests, China-Russia cooperation, PLA military operations). This platform processes exactly this kind of geopolitical content. Observed behaviors to watch for:
+- Silent truncation: response ends abruptly without error, Pydantic validation passes but signal fields are empty
+- Soft refusal: model returns a generic "I cannot provide analysis on this topic" that passes JSON schema but has zero intelligence value
+- Selective omission: China-related signals systematically absent from `extract_article_signals_with_context()` and `generate_structured_analysis()` output
+
+**Required validation before relying on T3 for production**: Run a targeted eval on a batch of China/Taiwan/HK articles and compare structured signal output against a ground-truth baseline (manually annotated or Claude Sonnet output). If refusal rate or omission rate exceeds 5% on sensitive geopolitical topics, migrate T3 to an uncensored alternative (e.g., Mistral Large, Claude Haiku 4.5, or self-hosted Qwen). Log the comparison in `tests/evals/` as `eval_t3_censorship`.
+
+**Required env vars**: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`.
 
 ## Architecture Role
 Intelligence synthesis layer that consumes context from the vector database and narrative graph, then produces human-readable reports. Sits between `src/storage/` (RAG retrieval), `src/nlp/narrative_processor.py` (storyline context), and `src/hitl/` (human review).
@@ -30,23 +56,20 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Temporal constraints, entity filters, category filters
   - Uses Gemini Flash for low latency (<500ms)
 
-- `oracle_engine.py` - Oracle 1.0 hybrid RAG chat engine (backward-compatible)
-  - `OracleEngine` class - Interactive Q&A, used by Streamlit HITL dashboard
-  - Three search modes: `both`, `factual`, `strategic`
-  - XML-like context injection for anti-hallucination
-
-- `oracle_orchestrator.py` - **Oracle 2.0 agentic coordinator** (Agentic rewrite)
+- `oracle_orchestrator.py` - **Oracle 2.0 agentic coordinator** (v4 — Claude Sonnet 4.6)
   - `OracleOrchestrator` class — Entry point for all Oracle 2.0 queries
-  - **Architecture**: Native Gemini Function Calling agentic loop (max 4 iterations) replaces the static QueryRouter → Tool Plan → Synthesis pipeline
-  - `_create_agentic_model()` — creates `GenerativeModel` with all 9 tool `FunctionDeclaration` objects and system SOPs; called inside `_byok_lock` for BYOK users
-  - `_build_system_prompt()` — encodes 9 Standard Operating Procedures (PATH FACTUAL / ANALYTICAL / OVERVIEW / MARKET / REFERENCE / NARRATIVE / TICKER / SPATIAL / COMPARATIVE) with intent-based time decay K values (FACTUAL=0.03, ANALYTICAL=0.015, NARRATIVE=0.02, MARKET=0.04, COMPARATIVE=0.015, TICKER=0.03, OVERVIEW=0.005, REFERENCE=0.001, SPATIAL=0.005). Includes explicit fallback rules (try rag_search after sql returns 0) and PATH SPATIAL trigger keywords ("km", "raggio", "epicentro", "infrastrutture vicino a")
-  - `_process_agentic()` — runs `start_chat(history=serialized_session)` + iterative function call loop; each tool result compressed via `format_for_history()` before being added to history (RAGTool overrides to 50,000 chars); full data retained in `result.data` for source collection
-  - **Anti-hallucination guard**: fires ONLY when `answer` is empty AND all tools returned empty data — does NOT override an LLM-synthesized response (fix: was unconditionally overwriting `answer`)
+  - **Architecture**: Anthropic Messages API with iterative `tool_use`/`tool_result` loop (max 4 iterations). State managed via explicit messages list (not ChatSession). History via `ctx.to_messages_history()`.
+  - `_build_system_prompt()` — encodes 9 Standard Operating Procedures (PATH FACTUAL / ANALYTICAL / OVERVIEW / MARKET / REFERENCE / NARRATIVE / TICKER / SPATIAL / COMPARATIVE) with intent-based time decay K values
+  - `_process_agentic()` — builds messages list from history, calls `ClaudeClient.generate_with_tools()`, loops on `tool_use` blocks; appends `_serialize_content(response.content)` as assistant message; tool results as user message with `tool_result` blocks
+  - `_serialize_content()` — converts Anthropic `TextBlock`/`ToolUseBlock` objects to plain dicts for messages history
+  - `_make_fn_response(tool_use_id, content)` — returns `{"type": "tool_result", "tool_use_id": ..., "content": ...}` dict
+  - `_extract_text_from_response(response)` — extracts text from `response.content` blocks where `block.type == "text"`
+  - Forced synthesis on max-iterations: calls `ClaudeClient.generate()` directly (no tool_choice manipulation)
+  - **BYOK removed**: Oracle uses server-side `ANTHROPIC_API_KEY` exclusively (breaking change 2026-04-17)
   - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
-  - `TTLCache` for SQL results (5min) preserved; intent cache removed (routing handled by LLM)
-  - BYOK: `_byok_lock` preserved; `_create_agentic_model()` called inside lock to create fresh model with user's key
+  - `TTLCache` for SQL results (5min) preserved
   - Logs queries to `oracle_query_log` with `intent="agentic"`, `complexity="dynamic"`
-  - `get_oracle_orchestrator_singleton()` — lazy thread-safe singleton
+  - `get_oracle_orchestrator_singleton()` — lazy thread-safe singleton; no longer requires `GEMINI_API_KEY`
 
 - `query_router.py` - **Legacy config constants** (refactored — no longer used in production)
   - `QueryRouter` class removed; all routing logic migrated to SOPs in orchestrator system prompt
@@ -55,17 +78,20 @@ Intelligence synthesis layer that consumes context from the vector database and 
 
 - `conversation_memory.py` - **Oracle 2.0 conversation context**
   - `ConversationContext` class — deque buffer (maxlen=10), entity tracking, follow-up detection
-  - `to_gemini_history()` — serializes message deque to `genai.protos.Content[]` for `start_chat(history=[...])`. Assistant messages truncated to 2000 chars to prevent context overflow.
+  - `to_messages_history()` — serializes to `[{"role": "user"|"assistant", "content": str}]` plain dicts compatible with Anthropic and OpenAI APIs. Assistant messages truncated to 2000 chars.
+  - `to_gemini_history()` — legacy serializer to `genai.protos.Content[]` (kept for backward-compat until Oracle 1.0 fully removed)
   - In-memory only, TTL managed by OracleOrchestrator cleanup thread
 
 - `tools/` - **Oracle 2.0 tool registry**
   - `base.py` - `BaseTool` ABC + `ToolResult` Pydantic model
     - `format_for_history()` — compresses tool output to max `HISTORY_MAX_CHARS` chars for chat history (default 8000; overridden to 50000 in RAGTool)
-    - `_json_schema_to_genai_schema()` — recursive classmethod converts JSON Schema dict → `genai.protos.Schema`
-    - `to_function_declaration()` — classmethod generates `genai.protos.FunctionDeclaration` from class schema
+    - `to_anthropic_tool()` — classmethod returns `{"name": ..., "description": ..., "input_schema": cls.parameters}` dict for Anthropic `messages.create(tools=[...])`
+    - `to_function_declaration()` — legacy classmethod for Gemini `genai.protos.FunctionDeclaration` (kept for Oracle 1.0 backward-compat)
+    - `_json_schema_to_genai_schema()` — legacy Gemini schema converter (kept for Oracle 1.0)
     - All tools have mandatory `rationale` as first parameter (CoT forcing; empirical +20-35% SQL accuracy on Spider/BIRD)
   - `registry.py` - `ToolRegistry` with lazy instantiation
-    - `get_function_declarations()` — returns list of `genai.protos.FunctionDeclaration` for all registered tools
+    - `get_anthropic_tools()` — returns list of Anthropic tool dicts for all registered tools (used by OracleOrchestrator)
+    - `get_function_declarations()` — legacy: returns `genai.protos.FunctionDeclaration` list (Gemini format)
   - `rag_tool.py` - `RAGTool` - hybrid search with **time-weighted decay**: `score * exp(-k * days_old)` post-retrieval. Over-fetch 3x to avoid Top-K bias, K dinamico per intent (FACTUAL=0.03, MARKET=0.04, ANALYTICAL=0.015), time-shifting for historical queries (reference_date = end_date). `HISTORY_MAX_CHARS=50000` (overrides base class 8000 — Gemini 2.5 Flash handles 1M tokens). **Context assembly**: chunks (articles) formatted FIRST, reports after with `_extract_report_excerpt()` (Executive Summary + most query-relevant section, max 5,000 chars per report). **Reranking pipeline**: RRF (multi-query) → cross-encoder → time-decay on `rerank_score` when cross-encoder ran → authority rerank (alpha=0.15). MIN_DECAYED_SCORE is informational only (no hard filter) to avoid discarding high cross-encoder / low similarity chunks.
   - `sql_tool.py` - `SQLTool` - LLM-generated SQL with 5-layer safety (sqlparse, forbidden keywords, max 3 JOINs, LIMIT enforcement, EXPLAIN cost check ≤10000, 5s timeout). `ALLOWED_TABLES` includes knowledge base expansion tables; uses `v_sanctions_public` (not raw `sanctions_registry`).
   - `aggregation_tool.py` - `AggregationTool` - pre-parametrized stats (trend_over_time, top_n, distribution, statistics)
@@ -86,13 +112,14 @@ Intelligence synthesis layer that consumes context from the vector database and 
 
 - **Internal**: `src/storage/database`, `src/nlp/processing`, `src/utils/logger`, `src/finance/`
 - **External**:
-  - `google-generativeai` - Gemini API (gemini-2.5-flash)
-  - `pydantic` - Structured output validation
-  - `sentence-transformers` - Embeddings and Cross-Encoder reranking
-  - `numpy` - Vector operations
-  - `sqlparse` - Safe SQL parsing for SQLTool (token-level keyword detection)
-  - `tenacity` - LLM retry with exponential backoff (2 attempts, 2–10s wait)
-  - `cachetools` - TTLCache for intent/SQL/embedding caching
+  - `google-generativeai` — T1 (Gemini 3.1 Pro), T4a/T5 (Flash-Lite), narrative_processor exception (2.5 Flash)
+  - `anthropic>=0.40` — T2 (Claude Sonnet 4.6) — Oracle agentic loop
+  - `openai>=1.35` — T3 (DeepSeek V3.2, base_url=api.deepseek.com), T4b (Mistral Codestral 2, base_url=api.mistral.ai)
+  - `pydantic` — Structured output validation
+  - `sentence-transformers` — Embeddings and Cross-Encoder reranking
+  - `numpy` — Vector operations
+  - `sqlparse` — Safe SQL parsing for SQLTool (token-level keyword detection)
+  - `cachetools` — TTLCache for SQL/embedding caching
 
 ## Data Flow
 

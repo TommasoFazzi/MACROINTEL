@@ -46,6 +46,9 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: "ci-fake-key-for-unit-tests"
+          DEEPSEEK_API_KEY: "ci-fake-key-for-unit-tests"
+          MISTRAL_API_KEY: "ci-fake-key-for-unit-tests"
         run: |
           pytest tests/evals/ -m "eval_slow" -v --tb=short \
             --json-report --json-report-file=eval_results_raw.json

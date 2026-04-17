@@ -35,15 +35,10 @@ except ImportError:
     LOUVAIN_AVAILABLE = False
 
 try:
-    import google.generativeai as genai
-    _gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if _gemini_api_key:
-        genai.configure(api_key=_gemini_api_key, transport='rest')
-        _llm_model = genai.GenerativeModel('gemini-2.0-flash')
-        GEMINI_AVAILABLE = True
-    else:
-        GEMINI_AVAILABLE = False
-except ImportError:
+    from src.llm.llm_factory import LLMFactory
+    _llm_model = LLMFactory.get("t5")
+    GEMINI_AVAILABLE = True
+except Exception:
     GEMINI_AVAILABLE = False
 
 from psycopg2.extras import execute_values
@@ -85,13 +80,13 @@ def _name_community(cid: int, nodes_in_community: list, conn) -> str | None:
             "Rule 4: Return ONLY the short name, nothing else. No markdown, no quotes.\n\n"
             f"Headlines in this cluster:\n{headlines_text}"
         )
-        response = _llm_model.generate_content(
+        result = _llm_model.generate(
             prompt,
-            generation_config={"max_output_tokens": 20, "temperature": 0.2},
-            request_options={"timeout": 30},
+            max_tokens=20,
+            temperature=0.2,
         )
         # Strip stray markdown (quotes, asterisks, etc.)
-        name = re.sub(r'[*`"\'#]', '', response.text).strip()[:80]
+        name = re.sub(r'[*`"\'#]', '', result).strip()[:80]
         return name if name else None
 
     except Exception as e:

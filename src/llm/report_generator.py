@@ -188,6 +188,10 @@ class ReportGenerator:
         genai.configure(api_key=api_key, transport='rest')
         self.model = genai.GenerativeModel(model_name)
 
+        # T1 reasoning model (Gemini 3.1 Pro) for deep-reasoning call sites
+        from .llm_factory import LLMFactory
+        self._reasoning_model = LLMFactory.get("t1")
+
         # Load ticker whitelist for Trade Signal context
         self.ticker_whitelist = self._load_ticker_whitelist()
         if self.ticker_whitelist:
@@ -242,21 +246,22 @@ class ReportGenerator:
             return {}
 
     def _format_ticker_whitelist(self) -> str:
-        """
-        Format ticker whitelist for prompt context
+        """Format ticker whitelist for prompt context. Cached after first call for DeepSeek prefix caching."""
+        return self._cached_ticker_context
 
-        Returns:
-            Formatted string with tickers organized by category
-        """
-        if not self.ticker_whitelist:
-            return "No ticker whitelist loaded"
-
-        lines = []
-        for category, tickers in self.ticker_whitelist.items():
-            category_name = category.replace('_', ' ').title()
-            lines.append(f"- {category_name}: {', '.join(tickers)}")
-
-        return "\n".join(lines)
+    @property
+    def _cached_ticker_context(self) -> str:
+        """Ticker whitelist formatted once per instance — stable prefix for DeepSeek prompt caching."""
+        if not hasattr(self, '_ticker_context_cache'):
+            if not self.ticker_whitelist:
+                self._ticker_context_cache = "No ticker whitelist loaded"
+            else:
+                lines = []
+                for category, tickers in self.ticker_whitelist.items():
+                    category_name = category.replace('_', ' ').title()
+                    lines.append(f"- {category_name}: {', '.join(tickers)}")
+                self._ticker_context_cache = "\n".join(lines)
+        return self._ticker_context_cache
 
     def get_rag_context(
         self,
@@ -782,16 +787,16 @@ Now analyze the article below and respond with JSON only:"""
 Respond with JSON analysis following the schema above:"""
 
         try:
-            # Call Gemini with JSON mode
-            response = self.model.generate_content(
-                contents=[system_instruction, user_prompt],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.3,  # Lower temperature for more consistent JSON
-                }
+            # T3 (DeepSeek V3.2) with schema-in-prompt + single Pydantic retry
+            from .llm_factory import LLMFactory, OpenAICompatibleClient
+            t3_model = LLMFactory.get("t3")
+            raw_output = t3_model.generate(
+                prompt=user_prompt,
+                system=system_instruction,
+                temperature=0.3,
+                max_tokens=1024,
+                response_schema=IntelligenceReportMVP,
             )
-
-            raw_output = response.text
             logger.debug(f"Raw LLM output: {raw_output[:200]}...")
 
             # Validate with Pydantic
@@ -807,7 +812,30 @@ Respond with JSON analysis following the schema above:"""
                 }
 
             except ValidationError as e:
-                logger.warning(f"⚠️ Pydantic validation FAILED: {e}")
+                logger.warning(f"⚠️ Pydantic validation FAILED (T3 first attempt): {e} — retrying")
+                import json as _json
+                schema_json = _json.dumps(IntelligenceReportMVP.model_json_schema(), indent=2)
+                retry_prompt = (
+                    f"{user_prompt}\n\nIMPORTANT: Respond with JSON matching exactly:\n```json\n{schema_json}\n```"
+                )
+                raw_output = t3_model.generate(
+                    prompt=retry_prompt,
+                    system=system_instruction,
+                    temperature=0.3,
+                    max_tokens=1024,
+                    response_schema=IntelligenceReportMVP,
+                )
+                try:
+                    validated_report = IntelligenceReportMVP.model_validate_json(raw_output)
+                    logger.info("✅ Pydantic validation PASSED (retry)")
+                    return {
+                        'success': True,
+                        'structured': validated_report.model_dump(),
+                        'raw_llm_output': raw_output,
+                        'validation_errors': []
+                    }
+                except ValidationError as e2:
+                    logger.warning(f"⚠️ Pydantic validation FAILED after retry: {e2}")
                 # Fallback: Return raw parsed JSON with errors flagged
                 try:
                     raw_json = json.loads(raw_output)
@@ -1495,19 +1523,13 @@ Respond with JSON only:"""
         )
 
         try:
-            import google.generativeai as genai
-            model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                generation_config=genai.GenerationConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                ),
-            )
-            response = model.generate_content(
+            response_text = self._reasoning_model.generate_content_raw(
                 prompt,
-                request_options={"timeout": 90},
-            )
-            response_text = response.text.strip()
+                generation_config={
+                    "temperature": 0.3,
+                    "response_mime_type": "application/json",
+                },
+            ).strip()
 
             # Parse + Pydantic validation
             raw_json = json.loads(response_text)
@@ -1835,22 +1857,19 @@ Respond with JSON only:"""
         )
 
         try:
-            model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                system_instruction=system_prompt,
-                generation_config=genai.GenerationConfig(temperature=0.35),
-            )
-            response = model.generate_content(
+            report_text = self._reasoning_model.generate(
                 user_prompt,
-                request_options={"timeout": 120},
+                system=system_prompt,
+                temperature=0.35,
+                max_tokens=8192,
             )
-            return {'success': True, 'report_text': response.text}
+            return {'success': True, 'report_text': report_text}
         except Exception as e:
             logger.warning(f"[v2] _generate_strategic_report failed: {e}")
             return {'success': False, 'error': str(e)}
 
     def _generate_report_title(self, report_date: str, focus_areas: list, bluf: str) -> str:
-        """Generate a concise descriptive headline for the report using Gemini 2.0 Flash."""
+        """Generate a concise descriptive headline for the report using T5 (Gemini 2.5 Flash-Lite)."""
         if not bluf and not focus_areas:
             return ""
         prompt = (
@@ -1866,16 +1885,10 @@ Respond with JSON only:"""
             "Return ONLY the headline. No quotes, no trailing punctuation, no prefix."
         )
         try:
-            title_model = genai.GenerativeModel('gemini-2.0-flash')
-            resp = title_model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    max_output_tokens=80
-                ),
-                request_options={"timeout": 30}
-            )
-            raw = resp.text.strip().strip('"').strip("'")
+            from .llm_factory import LLMFactory
+            title_model = LLMFactory.get("t5")
+            raw = title_model.generate(prompt, max_tokens=80, temperature=0.3)
+            raw = raw.strip().strip('"').strip("'")
             # Strip any trailing period
             if raw.endswith('.'):
                 raw = raw[:-1]
@@ -2257,16 +2270,15 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
 **Now generate the intelligence report body. Start DIRECTLY from `## 1. Executive Summary` — do NOT include a title line, do NOT reproduce the macro dashboard (it is pre-built and will be prepended automatically):**
 """
 
-            # Step 5: Generate report with Gemini (temperature 0.35 for narrative quality)
-            logger.info(f"\n[STEP 4] Generating report with Gemini (temperature: 0.35)...")
+            # Step 5: Generate report with T1 (Gemini 3.1 Pro, temperature 0.35 for narrative quality)
+            logger.info(f"\n[STEP 4] Generating report with T1 reasoning model (temperature: 0.35)...")
             try:
-                response = self.model.generate_content(
+                report_text = self._reasoning_model.generate_content_raw(
                     prompt,
                     generation_config={
                         "temperature": 0.35,  # Slightly higher for narrative flow
                     }
                 )
-                report_text = response.text
                 logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
 
                 # Prepend pre-built title + macro dashboard programmatically
@@ -2734,15 +2746,15 @@ FULL REPORT:
 Respond with JSON array only:"""
 
         try:
-            response = self.model.generate_content(
-                contents=[prompt],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.3,
-                }
+            # T3 (DeepSeek V3.2) for macro signal extraction — ~5000 token input
+            from .llm_factory import LLMFactory
+            t3_model = LLMFactory.get("t3")
+            raw_output = t3_model.generate(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2048,
+                json_mode=True,
             )
-
-            raw_output = response.text
 
             # Parse and validate each signal
             from .schemas import ReportLevelSignal
@@ -2891,15 +2903,15 @@ ARTICLE TEXT:
 Respond with JSON only:"""
 
         try:
-            response = self.model.generate_content(
-                contents=[prompt],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.3,
-                }
+            # T3 (DeepSeek V3.2) for article signal extraction with schema-in-prompt
+            from .llm_factory import LLMFactory
+            t3_model = LLMFactory.get("t3")
+            raw_output = t3_model.generate(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=1024,
+                json_mode=True,
             )
-
-            raw_output = response.text
 
             from .schemas import ArticleLevelSignal
 

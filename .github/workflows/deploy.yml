@@ -29,6 +29,9 @@ jobs:
       - name: Run tests
         env:
           GEMINI_API_KEY: "ci-fake-key-for-unit-tests"
+          ANTHROPIC_API_KEY: "ci-fake-key-for-unit-tests"
+          DEEPSEEK_API_KEY: "ci-fake-key-for-unit-tests"
+          MISTRAL_API_KEY: "ci-fake-key-for-unit-tests"
         run: pytest tests/ -m "not slow" --ignore=tests/test_sprint2_full.py --tb=short -q
 
   deploy:

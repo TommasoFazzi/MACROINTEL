@@ -1,26 +1,18 @@
 """
 AI-powered bullet point generator for articles.
 
-Uses Gemini 2.0 Flash to generate 3 concise bullet points summarizing
-the key facts of an article, similar to Bloomberg Terminal's AI summaries.
+Uses T5 (Gemini 2.5 Flash-Lite) via LLMFactory to generate 3 concise bullet
+points summarizing the key facts of an article, similar to Bloomberg Terminal's
+AI summaries.
 """
 
-import os
+import json
 import time
-from typing import List, Dict, Optional
-
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
+from typing import Dict, List, Optional
 
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-# Timeout for Gemini calls (seconds)
-BULLET_GENERATION_TIMEOUT = 10
 
 BULLET_GENERATION_PROMPT = (
     "Sei un analista di intelligence. Genera 3 bullet points concisi in italiano "
@@ -42,19 +34,12 @@ RATE_LIMIT_SECONDS = 0.1
 
 
 class BulletGenerator:
-    """Generates 3 bullet point summaries for articles using Gemini Flash."""
+    """Generates 3 bullet point summaries for articles using T5 (Gemini 2.5 Flash-Lite)."""
 
-    def __init__(self, gemini_api_key: str = None):
-        if not GEMINI_AVAILABLE:
-            raise ImportError("google-generativeai is required. pip install google-generativeai")
-
-        api_key = (gemini_api_key or os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY', '')).strip()
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY must be set")
-
-        genai.configure(api_key=api_key, transport='rest')
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
-        logger.info("BulletGenerator: Gemini Flash initialized")
+    def __init__(self):
+        from ..llm.llm_factory import LLMFactory
+        self._llm = LLMFactory.get("t5")
+        logger.info("BulletGenerator: T5 (Gemini 2.5 Flash-Lite) initialized")
 
     def generate_bullets(self, article: Dict) -> Optional[List[str]]:
         """
@@ -89,38 +74,26 @@ class BulletGenerator:
         try:
             prompt = BULLET_GENERATION_PROMPT.format(title=title, snippet=snippet)
 
-            response = self.model.generate_content(
+            response = self._llm.generate(
                 prompt,
-                request_options={"timeout": BULLET_GENERATION_TIMEOUT}
+                max_tokens=300,
+                temperature=0.3,
+                json_mode=True,
             )
 
-            if not response or not response.text:
+            if not response:
                 logger.warning(f"Empty response for article '{title[:50]}...'")
                 return None
 
-            # Parse JSON response
-            import json
-            response_text = response.text.strip()
+            bullets = json.loads(response.strip())
 
-            # Try to extract JSON from response (in case model wraps it in markdown or extra text)
-            if '[' in response_text and ']' in response_text:
-                start_idx = response_text.find('[')
-                end_idx = response_text.rfind(']') + 1
-                json_str = response_text[start_idx:end_idx]
-            else:
-                json_str = response_text
-
-            bullets = json.loads(json_str)
-
-            # Validate format: should be list of 3 strings
+            # Validate format: should be list of strings
             if isinstance(bullets, list) and len(bullets) >= 1:
-                # Truncate to max 3 bullets
                 bullets = bullets[:3]
-                # Ensure all are strings
                 bullets = [str(b).strip() for b in bullets if b]
                 if bullets:
                     logger.debug(f"Generated {len(bullets)} bullet(s) for '{title[:50]}...'")
-                    return bullets if len(bullets) >= 1 else None
+                    return bullets
 
             logger.warning(f"Invalid JSON format from model for '{title[:50]}...'")
             return None
@@ -154,7 +127,6 @@ class BulletGenerator:
                 bullets = self.generate_bullets(article)
 
                 if bullets:
-                    # Add bullets to article's nlp_data
                     if 'nlp_data' not in article:
                         article['nlp_data'] = {}
                     article['nlp_data']['bullet_points'] = bullets

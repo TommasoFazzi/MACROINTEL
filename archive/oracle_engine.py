@@ -1,3 +1,4 @@
+# ARCHIVED — superseded by Oracle 2.0 (oracle_orchestrator.py)
 """
 The Oracle - RAG Chat Engine
 

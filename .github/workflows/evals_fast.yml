@@ -32,5 +32,8 @@ jobs:
       - name: Run fast evals (LLM mockato)
         env:
           GEMINI_API_KEY: "ci-fake-key-for-unit-tests"
+          ANTHROPIC_API_KEY: "ci-fake-key-for-unit-tests"
+          DEEPSEEK_API_KEY: "ci-fake-key-for-unit-tests"
+          MISTRAL_API_KEY: "ci-fake-key-for-unit-tests"
         run: |
           pytest tests/evals/ -m "eval_fast" -v --tb=short
