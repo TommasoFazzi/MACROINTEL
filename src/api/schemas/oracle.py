@@ -1,9 +1,16 @@
 """Pydantic schemas for Oracle 2.0 API endpoints."""
 
+import re
 from datetime import date
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Annotated, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Alphanumeric + hyphens/underscores only — prevents session ID injection
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+
+# Strip null bytes from query strings
+_NULL_BYTE_RE = re.compile(r"\x00")
 
 
 class OracleChatRequest(BaseModel):
@@ -16,9 +23,21 @@ class OracleChatRequest(BaseModel):
     categories: Optional[List[Literal[
         "GEOPOLITICS", "DEFENSE", "ECONOMY", "CYBER", "ENERGY"
     ]]] = None
-    gpe_filter: Optional[List[str]] = None
+    gpe_filter: Optional[List[Annotated[str, Field(max_length=100)]]] = Field(default=None, max_length=10)
     # BREAKING CHANGE (2026-04-17): gemini_api_key field removed.
     # Oracle now uses server-side ANTHROPIC_API_KEY. Passing this field returns HTTP 422.
+
+    @field_validator("query")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return _NULL_BYTE_RE.sub("", v).strip()
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, v: str) -> str:
+        if not _SESSION_ID_RE.match(v):
+            raise ValueError("session_id must be alphanumeric with hyphens/underscores only")
+        return v
 
 
 class OracleSource(BaseModel):

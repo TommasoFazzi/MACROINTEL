@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from datetime import datetime, time as dt_time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,13 +12,22 @@ from ..oracle_auth import UserContext, verify_oracle_user
 from ..schemas.oracle import OracleChatRequest, OracleChatResponse
 from ...llm.oracle_orchestrator import get_oracle_orchestrator_singleton
 
+_ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY")
+
+
+def _oracle_rate_limit(request: Request) -> str:
+    """Admin key bypasses the public rate limit."""
+    if _ORACLE_ADMIN_KEY and request.headers.get("X-API-Key") == _ORACLE_ADMIN_KEY:
+        return "10000/day"
+    return "5/day"
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/oracle", tags=["Oracle"])
 
 
 @router.post("/chat")
-@limiter.limit("3/minute")
+@limiter.limit(_oracle_rate_limit)
 async def oracle_chat(
     request: Request,
     body: OracleChatRequest,
@@ -32,7 +42,7 @@ async def oracle_chat(
     3. Response with sources and query_plan metadata
 
     Auth: API key whitelist (ORACLE_MODE=private).
-    Rate: 3 req/min per IP.
+    Rate: 5 req/day per IP.
     BREAKING CHANGE (2026-04-17): gemini_api_key BYOK removed.
     Oracle now uses server-side ANTHROPIC_API_KEY exclusively.
     """

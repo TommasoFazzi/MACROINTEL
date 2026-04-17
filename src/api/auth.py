@@ -12,6 +12,7 @@ API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 INTELLIGENCE_API_KEY = os.getenv("INTELLIGENCE_API_KEY")
+ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 if not INTELLIGENCE_API_KEY:
@@ -48,6 +49,10 @@ async def verify_api_key(request: Request, api_key: str = Security(api_key_heade
             status_code=401,
             detail="API key required. Provide X-API-Key header.",
         )
+
+    # Accept ORACLE_ADMIN_KEY as a valid alternative (admin bypass for Oracle rate limit)
+    if ORACLE_ADMIN_KEY and secrets.compare_digest(api_key, ORACLE_ADMIN_KEY):
+        return api_key
 
     if not secrets.compare_digest(api_key, INTELLIGENCE_API_KEY):
         logger.warning("Auth failed (invalid key) from %s", client_ip)

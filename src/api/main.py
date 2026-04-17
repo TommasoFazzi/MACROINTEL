@@ -23,6 +23,7 @@ from src.utils.logger import get_logger
 from src.api.routers import dashboard, reports, stories, oracle, map as map_router, ingest, waitlist, insights
 from src.api.auth import verify_api_key
 from src.api.limiter import limiter
+from src.api.security import SecurityMiddleware
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,9 @@ ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:3000,http://localhost:3001,http://localhost:3002"
 ).split(",")
+
+# Security: null bytes, scanner UAs, body size, security headers
+app.add_middleware(SecurityMiddleware)
 
 # GZip compression — reduces GeoJSON payloads ~90% (3MB → ~300KB)
 app.add_middleware(GZipMiddleware, minimum_size=500)
@@ -82,7 +86,7 @@ async def root(request: Request):
 
 
 @app.get("/health")
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def health_check(request: Request):
     """Health check endpoint"""
     return {"status": "healthy"}
