@@ -95,6 +95,16 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
 
 - `036_add_previous_value_macro_indicators.sql` — Adds `previous_value NUMERIC(20,6)` column to `macro_indicators` + one-time backfill via correlated UPDATE. The Phase 3 screening function (`_get_macro_indicators_for_screening`) and `market_tool.py` both SELECT this column; it was never added to the schema, causing the entire v2 analysis path to bypass on every pipeline run since the merge. `_save_macro_indicator()` in `openbb_service.py` now populates this column at insert time via inline scalar subquery. Rollback: `ALTER TABLE macro_indicators DROP COLUMN IF EXISTS previous_value`.
 
+### Romania Vertical PoC (2026-05-07)
+
+- `037_romania_vertical.sql` — Geo-focus tagging + per-source cadence metadata for Romania vertical:
+  1. Adds `geo_focus TEXT[] DEFAULT '{}'` to `articles` with GIN index (`idx_articles_geo_focus`). Backfills from `entities->'by_type'->'GPE'`.
+  2. Adds `geo_region TEXT DEFAULT 'global'` to `intelligence_sources`. Values: `romania`, `cee`, `eu`, `italy`, `global`.
+  3. Adds `cadence_use TEXT[]`, `cadence_weight JSONB`, `retrieval_profile TEXT`, `languages TEXT[]` to `intelligence_sources`. Populated by `scripts/seed_sources.py` from `config/sources_romania.yaml`.
+  4. Adds `country_code VARCHAR(10) DEFAULT 'US'` to `macro_indicators` with index. Enables `/api/v1/romania/macro` to filter `country_code='RO'`.
+  - `database.py:save_article()` now populates `geo_focus` at insert time from NLP entity data.
+  - Rollback: DROP the four `intelligence_sources` columns + `articles.geo_focus` + `macro_indicators.country_code`.
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -104,6 +114,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 034: **Not yet applied** — apply with: `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita < migrations/034_sanctions_view.sql`
 - 035: **Applied** (2026-04-14)
 - 036: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/036_add_previous_value_macro_indicators.sql`
+- 037: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/037_romania_vertical.sql`
 
 ## Execution Order
 
@@ -119,6 +130,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 034 (view only — no spatial dependency, requires 030 applied first)
   → 035 (Strategic Intelligence Layer — no external dependencies)
   → 036 (Strategic Intelligence Layer Phase 3 fix — no external dependencies)
+  → 037 (Romania Vertical PoC — no external dependencies)
 ```
 
 Run a single migration:
