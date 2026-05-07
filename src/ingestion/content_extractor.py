@@ -96,6 +96,14 @@ PDF_LANDING_PAGE_DOMAINS = [
     'cfr.org',
     'stimson.org',
     'atlanticcouncil.org',
+    # Romanian institutional sources (Romania vertical)
+    'bnr.ro',
+    'anre.ro',
+    'mfinante.gov.ro',
+    'insse.ro',
+    'energie.gov.ro',
+    'transelectrica.ro',
+    'transgaz.ro',
 ]
 
 

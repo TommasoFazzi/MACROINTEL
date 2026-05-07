@@ -47,17 +47,55 @@ CLASSIFICATION_PROMPT = (
     "TESTO (primi 300 caratteri): {snippet}"
 )
 
+_CESEO_SCOPE_PROMPT = (
+    "Sei un analista economico specializzato in Romania e relazioni economiche Italia-Romania.\n\n"
+    "Classifica questo articolo come RILEVANTE se riguarda uno dei seguenti ambiti:\n"
+    "- Macroeconomia e finanza rumena: inflazione, PIL, disoccupazione, bilancio, debito, deficit, pensioni, salari, investimenti\n"
+    "- Banca Nazionale della Romania (BNR): politica monetaria, tassi, riserve, regolamentazione bancaria\n"
+    "- Energia e utilities Romania: elettricità, gas, petrolio, nucleare, rinnovabili, ANRE, Transelectrica, Transgaz\n"
+    "- Infrastrutture Romania: autostrade, ferrovie, porti, aeroporti, fondi UE, PNRR Romania\n"
+    "- Banking e mercati finanziari Romania: banche commerciali, credito, Borsa di Bucarest, dividendi, rating\n"
+    "- Politica economica e legislazione Romania: governo, parlamento, leggi fiscali, regolamentazione business\n"
+    "- Relazioni economiche UE-Romania: sorveglianza macroeconomica, MIP, coesione, aiuti di Stato\n"
+    "- Aziende italiane in Romania: investimenti, manufacturing, supply chain, operazioni\n"
+    "- Mar Nero e Caspio con impatto su Romania: gas, grano, corridoi commerciali, Costanza port\n"
+    "- Outlook economico CEE con impatto diretto su Romania: Moldova, Bulgaria, Ungheria, Serbia\n\n"
+    "Classifica come NON RILEVANTE se riguarda:\n"
+    "- Sport, intrattenimento, lifestyle, cronaca nera, gossip\n"
+    "- Articoli senza connessione a economia, business o politica economica rumena\n"
+    "- Notizie internazionali senza impatto su Romania o interessi italiani in Romania\n\n"
+    "REGOLE:\n"
+    "- Se il tema ha anche un impatto indiretto sull'economia rumena o sulle aziende italiane → relevant: true\n"
+    "- Se hai dubbi, preferisci relevant: true\n\n"
+    'Rispondi SOLO con JSON: {"relevant": true} oppure {"relevant": false}\n\n'
+    "TITOLO: {title}\n"
+    "FONTE: {source}\n"
+    "TESTO (primi 300 caratteri): {snippet}"
+)
+
 # Rate limit between LLM calls (seconds)
 RATE_LIMIT_SECONDS = 0.15  # Flash-Lite is fast and has high quotas
 
+_SCOPE_PROMPTS = {
+    "global": CLASSIFICATION_PROMPT,
+    "ceseo": _CESEO_SCOPE_PROMPT,
+}
+
 
 class RelevanceFilter:
-    """Classifies articles as relevant or not using T5 (Gemini 2.5 Flash-Lite)."""
+    """Classifies articles as relevant or not using T5 (Gemini 2.5 Flash-Lite).
 
-    def __init__(self):
+    Args:
+        scope: Classification scope — "global" (default geopolitics) or
+               "ceseo" (Romania economic/business focus for the CESEO vertical).
+    """
+
+    def __init__(self, scope: str = "global"):
         from ..llm.llm_factory import LLMFactory
         self._llm = LLMFactory.get("t5")
-        logger.info("RelevanceFilter: T5 (Gemini 2.5 Flash-Lite) initialized")
+        self._scope = scope
+        self._prompt_template = _SCOPE_PROMPTS.get(scope, CLASSIFICATION_PROMPT)
+        logger.info(f"RelevanceFilter: T5 (Gemini 2.5 Flash-Lite) initialized [scope={scope}]")
 
     def classify_article(self, article: Dict) -> bool:
         """
@@ -71,7 +109,7 @@ class RelevanceFilter:
         full_text = article.get('full_text', '') or article.get('summary', '') or ''
         snippet = full_text[:300]
 
-        prompt = CLASSIFICATION_PROMPT.format(title=title, source=source, snippet=snippet)
+        prompt = self._prompt_template.format(title=title, source=source, snippet=snippet)
 
         try:
             response = self._llm.generate(
@@ -125,7 +163,7 @@ class RelevanceFilter:
                 )
 
         logger.info(
-            f"✓ LLM relevance filter: {len(articles)} → {len(relevant)} relevant "
+            f"✓ LLM relevance filter [{self._scope}]: {len(articles)} → {len(relevant)} relevant "
             f"({len(filtered_out)} not relevant, "
             f"{len(filtered_out)/len(articles)*100:.1f}% filtered)"
         )

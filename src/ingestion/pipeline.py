@@ -67,6 +67,77 @@ _BLOCKLIST_PATTERNS: List[re.Pattern] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Romania thematic allowlist
+# Applied as a pre-LLM gate for articles from sources with geo_region='romania'.
+# Reduces T5 volume from ~9k to ~1.5k/month for Romanian sources.
+# OR-logic: at least one keyword match → article proceeds. No match → dropped.
+# ---------------------------------------------------------------------------
+_ROMANIA_ALLOWLIST_PATTERN: re.Pattern = re.compile(
+    r'\b(?:'
+    # Macro / fiscal (Romanian + English)
+    r'infla[tț]i[ei]|dobând[aă]|BNR|deficit|buget|PIB|datorie|taxe?|impozit|investi[tț]i[ei]|'
+    r'economie|economici?|cre[șș]tere|recesiune|[șș]omaj|salariu?|pensie|pensii|'
+    r'inflation|interest rate|GDP|fiscal|budget|debt|tax|investment|economy|growth|'
+    r'recession|unemployment|wage|pension|'
+    # Energy (Romanian + English)
+    r'energie|electricitate|gaz|petrol|regenerabil|ANRE|Transelectrica|Transgaz|'
+    r'central[aă]|reactor|fotovoltaic|eolian|hidrocarburi|'
+    r'energy|electricity|natural gas|oil|renewable|nuclear|solar|wind|power plant|'
+    # Infrastructure (Romanian + English)
+    r'autostrad[aă]|infrastructur[aă]|construc[tț]i[ei]|cale ferat[aă]|metrou|'
+    r'port|aeroport|CNADNR|CFR|fonduri europene|PNRR|'
+    r'motorway|highway|infrastructure|railway|metro|airport|EU funds|cohesion|'
+    # Politics / legislation (Romanian + English)
+    r'guvern|parlament|lege|ordonan[tț][aă]|ministerul?|premier|ministru|'
+    r'coali[tț]ie|alegeri|partid|PSD|PNL|USR|'
+    r'government|parliament|law|ordinance|ministry|prime minister|minister|'
+    r'coalition|election|party|legislation|regulation|'
+    # Italian companies / bilateral
+    r'companie italian[aă]|italian[aă]|Confindustria|investitor italian|'
+    r'Italian company|Italian investor|Italian firm|Made in Italy|'
+    # Banking / finance (Romanian + English)
+    r'banc[aă]|credit|finan[tț]are|burs[aă]|dividende|profit|pierdere|'
+    r'bank|credit|financing|stock exchange|dividend|'
+    # Trade routes / geopolitics relevant to Romania
+    r'Constan[tț]a|portul|coridorul|tranzit|'
+    r'Marea Neagr[aă]|Black Sea|Caspian|Middle Corridor'
+    r')\b',
+    re.IGNORECASE,
+)
+
+# Set of source names with geo_region='romania' — loaded lazily from sources_romania.yaml
+_ROMANIA_SOURCE_NAMES: Optional[set] = None
+
+
+def _load_romania_source_names() -> set:
+    """Load source names with geo_region='romania' from config/sources_romania.yaml."""
+    global _ROMANIA_SOURCE_NAMES
+    if _ROMANIA_SOURCE_NAMES is not None:
+        return _ROMANIA_SOURCE_NAMES
+
+    names: set = set()
+    config_path = Path("config/sources_romania.yaml")
+    if config_path.exists():
+        try:
+            import yaml
+            with open(config_path) as f:
+                sources = yaml.safe_load(f) or []
+            for s in sources:
+                if s.get('geo_region') == 'romania':
+                    names.add(s['name'])
+        except Exception as e:
+            logger.warning(f"Could not load sources_romania.yaml: {e}")
+
+    _ROMANIA_SOURCE_NAMES = names
+    return names
+
+
+def _passes_romania_allowlist(title: str) -> bool:
+    """Return True if article title matches at least one Romania thematic keyword."""
+    return bool(_ROMANIA_ALLOWLIST_PATTERN.search(title))
+
+
 def _is_off_topic(title: str) -> Optional[str]:
     """
     Check if an article title matches any off-topic blocklist pattern.
@@ -226,6 +297,29 @@ class IngestionPipeline:
             logger.info(f"✓ Keyword blocklist: No off-topic articles found ({pre_filter_count} kept)")
         articles = filtered
         stats.count_post_blocklist = len(articles)
+
+        # Step 1.6b: Romania thematic allowlist (post-blocklist, pre-LLM)
+        # For sources with geo_region='romania', drop articles not matching any
+        # thematic keyword. Avoids wasting T5 calls on sport/lifestyle content.
+        romania_sources = _load_romania_source_names()
+        if romania_sources:
+            post_allowlist = []
+            by_source: Dict[str, Tuple[int, int]] = {}  # source → (blocked, total)
+            for a in articles:
+                source_name = a.get('source', '')
+                if source_name not in romania_sources:
+                    post_allowlist.append(a)
+                    continue
+                total, blk = by_source.get(source_name, (0, 0))
+                if _passes_romania_allowlist(a.get('title', '')):
+                    post_allowlist.append(a)
+                    by_source[source_name] = (total + 1, blk)
+                else:
+                    by_source[source_name] = (total + 1, blk + 1)
+            for src, (total, blk) in by_source.items():
+                if blk:
+                    logger.info(f"[Romania allowlist] {blk}/{total} filtered (source: {src})")
+            articles = post_allowlist
 
         # Filter articles by age (sync, pure computation)
         stats.stage_start("1.7_age_filter")
