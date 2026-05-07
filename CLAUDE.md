@@ -42,14 +42,17 @@ Visual documentation in [`docs/architecture/`](docs/architecture/) — Mermaid, 
 ## Key Commands
 
 ```bash
-# Pipeline — 7 steps in order (run from repo root)
-python -m src.ingestion.pipeline              # 1. Ingest RSS feeds
-python scripts/fetch_daily_market_data.py     # 2. Fetch market data
-python scripts/process_nlp.py                 # 3. NLP processing
-python scripts/load_to_database.py            # 4. Load to database
-python scripts/process_narratives.py          # 5. Narrative processing
-python scripts/generate_report.py             # 6. Generate LLM report
-python scripts/refresh_map_data.py            # 7. Refresh map + intelligence scores
+# Pipeline — 10 steps in order (run from repo root)
+python -m src.ingestion.pipeline                                              # 1. Ingest RSS feeds
+python scripts/fetch_daily_market_data.py                                    # 2. Fetch market data
+python scripts/process_nlp.py                                                # 3. NLP processing
+python scripts/load_to_database.py                                           # 4. Load to database
+python scripts/process_narratives.py --days 1                                # 5. Narrative clustering
+python scripts/compute_communities.py --min-weight 0.25 --resolution 0.8    # 6. Community detection (Louvain)
+python scripts/extract_entities.py --days 2                                  # 7. Entity extraction
+python scripts/geocode_geonames.py --limit 50                                # 8. Geocoding (GeoNames+Gemini)
+python scripts/refresh_map_data.py                                           # 9. Refresh map + intelligence scores
+python scripts/generate_report.py --macro-first --skip-article-signals      # 10. Generate LLM report
 
 # Full automated pipeline
 python scripts/daily_pipeline.py
