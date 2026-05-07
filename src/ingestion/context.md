@@ -39,7 +39,7 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
     - Level 2: Landing page scan → `_try_level2_pdf()` → `_find_pdf_link()` (think tank pattern: landing page → PDF download)
   - `_find_pdf_link(html, base_url)` - Scans HTML for `<a href="*.pdf">` with keyword-only matching (download, full report, etc.). The `len>5` fallback was removed to prevent footnote/citation PDFs from triggering.
   - `_try_level2_pdf(url, html_content, raw_html)` - Level 2 gated by domain allowlist only. If domain is in `PDF_LANDING_PAGE_DOMAINS` AND a PDF download link is found → PDF is the primary document, returned directly. If no PDF found → HTML content returned as fallback. No text-length gate: on known research domains a PDF download button always takes precedence over the HTML abstract.
-  - `PDF_LANDING_PAGE_DOMAINS` - Allowlist: rand.org, ecb.europa.eu, imf.org, worldbank.org, oecd.org, brookings.edu, iiss.org, sipri.org, chathamhouse.org, rusi.org, csis.org, cfr.org, etc.
+  - `PDF_LANDING_PAGE_DOMAINS` - Allowlist: rand.org, ecb.europa.eu, imf.org, worldbank.org, oecd.org, brookings.edu, iiss.org, sipri.org, chathamhouse.org, rusi.org, csis.org, cfr.org, etc. + **Romanian institutional** (Romania vertical): bnr.ro, anre.ro, mfinante.gov.ro, insse.ro, energie.gov.ro, transelectrica.ro, transgaz.ro
   - `_extract_pdf_content_sync(url)` - Downloads and extracts PDF text, uses same User-Agent as HTML crawler
   - Level 2 combines HTML abstract + PDF full text with `---` separator
 
@@ -55,6 +55,11 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
     - **UFC escluso** dal gruppo sport: compare in contesti sanzionatori/geopolitici ("ex-UFC fighter + sanctions").
     - **Arsenal** non è nel pattern semplice: richiede esplicitamente "Arsenal F.C." / "Arsenal FC" per evitare falsi positivi con uso militare del termine ("arsenal of weapons", "The Arsenal as the Battlefield").
     - `_is_off_topic(title)` — restituisce il pattern che ha fatto match (per logging) o None se l'articolo va tenuto.
+  - **Romania thematic allowlist** (Romania vertical, Step 1.6b): After blocklist, sources with `geo_region='romania'` are filtered via `_passes_romania_allowlist(title)`. Articles not matching any keyword (macro/fiscal/energy/infra/politics/banking in RO+EN) are dropped without LLM call. Reduces T5 volume from ~9k to ~1.5k/month for Romanian sources.
+    - `_ROMANIA_ALLOWLIST_PATTERN` — Compiled regex with Romanian + English keywords
+    - `_load_romania_source_names()` — Lazy-loads Romania source names from `config/sources_romania.yaml`
+    - `_passes_romania_allowlist(title)` — OR-logic: one keyword match → passes
+    - Log: `"[Romania allowlist] {blocked}/{total} filtered (source: {source_name})"`
 
 - **`pdf_ingestor.py`** - **PDF document ingestion** (rewritten for pymupdf4llm)
   - `PDFIngestor` class - Extracts text from PDF files as clean Markdown

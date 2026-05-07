@@ -9,6 +9,7 @@ Uso:
     python scripts/seed_sources.py
 """
 
+import json
 import os
 import sys
 import logging
@@ -18,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, Json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# MATRICE INTELLIGENCE SOURCES
+# MATRICE INTELLIGENCE SOURCES (global)
 # Campi: (name, domain, source_type, authority_score, llm_context, feed_names, has_rss)
 # ============================================================
 SOURCES = [
@@ -289,7 +290,7 @@ def get_db_connection():
 
 
 def seed_sources(conn) -> int:
-    """Inserisce/aggiorna tutte le fonti. Ritorna il numero di righe upsertate."""
+    """Inserisce/aggiorna tutte le fonti globali. Ritorna il numero di righe upsertate."""
     sql = """
         INSERT INTO intelligence_sources
             (name, domain, source_type, authority_score, llm_context, feed_names, has_rss)
@@ -309,6 +310,65 @@ def seed_sources(conn) -> int:
     with conn.cursor() as cur:
         execute_batch(cur, sql, rows)
     conn.commit()
+    return len(rows)
+
+
+def seed_romania_sources(conn) -> int:
+    """
+    Upsert Romania/CEE sources from config/sources_romania.yaml.
+    Populates the new per-source metadata columns (migration 037).
+    Backward-compat: global sources not touched.
+    """
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "sources_romania.yaml"
+    if not config_path.exists():
+        logger.warning(f"sources_romania.yaml not found at {config_path} — skipping Romania sources")
+        return 0
+
+    with open(config_path) as f:
+        sources = yaml.safe_load(f) or []
+
+    sql = """
+        INSERT INTO intelligence_sources
+            (name, domain, source_type, authority_score, llm_context,
+             feed_names, has_rss, geo_region,
+             cadence_use, cadence_weight, retrieval_profile, languages)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (name) DO UPDATE SET
+            domain           = EXCLUDED.domain,
+            authority_score  = EXCLUDED.authority_score,
+            llm_context      = EXCLUDED.llm_context,
+            feed_names       = EXCLUDED.feed_names,
+            has_rss          = EXCLUDED.has_rss,
+            geo_region       = EXCLUDED.geo_region,
+            cadence_use      = EXCLUDED.cadence_use,
+            cadence_weight   = EXCLUDED.cadence_weight,
+            retrieval_profile = EXCLUDED.retrieval_profile,
+            languages        = EXCLUDED.languages
+    """
+
+    rows = []
+    for s in sources:
+        cadence_weight = s.get('cadence_weight', {'daily': 0.5, 'weekly': 0.5})
+        rows.append((
+            s['name'],
+            s.get('domain', 'economics'),
+            'Romania Vertical',
+            s.get('authority_score', 3.0),
+            s.get('llm_context', ''),
+            s.get('feed_names', []),
+            s.get('has_rss', False),
+            s.get('geo_region', 'global'),
+            s.get('cadence_use', ['daily', 'weekly']),
+            json.dumps(cadence_weight),
+            s.get('retrieval_profile', 'always'),
+            s.get('languages', ['en']),
+        ))
+
+    with conn.cursor() as cur:
+        execute_batch(cur, sql, rows)
+    conn.commit()
+    logger.info(f"  ✓ {len(rows)} Romania/CEE sources upserted")
     return len(rows)
 
 
@@ -354,12 +414,17 @@ def main():
     conn = get_db_connection()
 
     try:
-        # 1. Seed fonti
-        logger.info("Inserimento/aggiornamento fonti in intelligence_sources...")
+        # 1. Seed global sources
+        logger.info("Inserimento/aggiornamento fonti globali in intelligence_sources...")
         n = seed_sources(conn)
-        logger.info(f"  ✓ {n} fonti inserite/aggiornate")
+        logger.info(f"  ✓ {n} fonti globali inserite/aggiornate")
 
-        # 2. Backfill articoli
+        # 2. Seed Romania/CEE sources
+        logger.info("Inserimento/aggiornamento fonti Romania/CEE da sources_romania.yaml...")
+        n_ro = seed_romania_sources(conn)
+        logger.info(f"  ✓ {n_ro} fonti Romania/CEE inserite/aggiornate")
+
+        # 3. Backfill articoli
         logger.info("Backfill articles.source_id e articles.domain...")
         result = backfill_articles(conn)
         logger.info(f"  ✓ {result['updated']} articoli aggiornati")

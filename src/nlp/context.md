@@ -67,14 +67,18 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
     - `_extract_entity_list(entities_json)` — Handles both new format (`clean.all`) and old format (`by_type.GPE/ORG/PERSON`)
   - **Module-level constants:** `_SCOPE_KEYWORDS` (compiled regex with geopolitical terms), `_OFF_TOPIC_PATTERNS` (list of compiled regexes for sports/entertainment/celebrity/food/tourism)
 
-- `relevance_filter.py` - **LLM Relevance Classification** (Filtro 2) (~141 lines)
-  - `RelevanceFilter` class — uses `LLMFactory.get("t5")` (Gemini 2.5 Flash-Lite, timeout=15s)
+- `relevance_filter.py` - **LLM Relevance Classification** (Filtro 2) (~160 lines)
+  - `RelevanceFilter(scope: str = "global")` — uses `LLMFactory.get("t5")` (Gemini 2.5 Flash-Lite, timeout=15s)
+  - `scope` parameter: `"global"` (geopolitics/defense/finance — default) or `"ceseo"` (Romania economic/business — activated with `--scope ceseo` in `process_nlp.py`)
   - `classify_article(article)` — Returns `True` (relevant) or `False` (not relevant); parses `{"relevant": bool}` JSON response; on LLM error defaults to `True` (conservative)
   - `filter_batch(articles)` — Classifies a batch, returns `(relevant_articles, filtered_out_articles)` tuple; tags articles with `relevance_label` field; rate-limited at 0.15s between calls
   - JSON mode enabled — eliminates fragile NOT_RELEVANT text parsing; timeout=15s prevents 900s hangs
-  - `CLASSIFICATION_PROMPT` — Italian-language system prompt with scope definition
-  - `SCOPE_DESCRIPTION` / `OUT_OF_SCOPE` — Platform scope boundaries
+  - `CLASSIFICATION_PROMPT` — Global Italian-language system prompt (geopolitics scope)
+  - `_CESEO_SCOPE_PROMPT` — CESEO Romania scope prompt: classifies economic/business/energy/banking/infrastructure RO content as relevant; sport/lifestyle → not_relevant
+  - `_SCOPE_PROMPTS` — dict mapping scope name → prompt template
+  - `SCOPE_DESCRIPTION` / `OUT_OF_SCOPE` — Platform scope boundaries (global)
   - Conservative: borderline cases → RELEVANT (prefer false positives over missing intelligence)
+  - **invoke**: `python scripts/process_nlp.py --scope ceseo` for Romania vertical; default unchanged
 
 **Note:** `story_manager.py` (legacy narrative engine) has been **deleted**. `narrative_processor.py` is the sole storyline engine.
 

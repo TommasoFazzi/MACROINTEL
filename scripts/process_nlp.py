@@ -77,6 +77,8 @@ def main():
     parser.add_argument('--chunk-overlap', type=int, default=50, help='Overlap between chunks')
     parser.add_argument('--skip-relevance', action='store_true',
                         help='Skip LLM relevance classification (faster, no API costs)')
+    parser.add_argument('--scope', choices=['global', 'ceseo'], default='global',
+                        help='Relevance filter scope: global (geopolitics) or ceseo (Romania economics)')
     args = parser.parse_args()
 
     logger.info("=" * 80)
@@ -125,7 +127,7 @@ def main():
         logger.info(f"\n[STEP 1.5] LLM relevance classification ({len(articles)} articles)...")
         try:
             from src.nlp.relevance_filter import RelevanceFilter
-            relevance_filter = RelevanceFilter()
+            relevance_filter = RelevanceFilter(scope=args.scope)
             articles, filtered_out = relevance_filter.filter_batch(articles)
 
             # Save filtered-out articles for audit

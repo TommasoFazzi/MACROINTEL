@@ -458,13 +458,18 @@ class DatabaseManager:
                         if isinstance(fc, dict):
                             extraction_method = fc.get('extraction_method')
 
+                    # Derive geo_focus from GPE entities
+                    entities_data = nlp_data.get('entities', {})
+                    gpe_list = entities_data.get('by_type', {}).get('GPE', [])
+                    geo_focus = list(gpe_list) if gpe_list else []
+
                     # Insert article
                     cur.execute("""
                         INSERT INTO articles
                         (title, link, published_date, source, category, subcategory, summary,
                          full_text, entities, nlp_metadata, full_text_embedding, content_hash,
-                         source_id, domain, extraction_method)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         source_id, domain, extraction_method, geo_focus)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                     """, (
                         self._sanitize_text(article.get('title')),
@@ -484,10 +489,11 @@ class DatabaseManager:
                             'entity_count': nlp_data.get('entities', {}).get('entity_count', 0)
                         }),
                         nlp_data.get('full_text_embedding', []),
-                        content_hash,  # PHASE 2: Save content hash
+                        content_hash,
                         src_id,
                         src_domain,
                         extraction_method,
+                        geo_focus,
                     ))
 
                     article_id = cur.fetchone()[0]

@@ -106,3 +106,54 @@ pdf_sources:
     category: "intelligence"
     subcategory: "conflict_methodology"
     cadence: "annual"
+
+  # === ROMANIA VERTICAL — Institutional PDFs ===
+  # ⚠️ URLs require periodic verification — institutional PDFs may move between publications.
+  # If a URL 404s, check bnr.ro/publications, imf.org/en/Publications, etc. for updated links.
+
+  - url: "https://www.bnr.ro/files/d/Pubs_en/InfRep/InflRep2025q1.pdf"
+    title: "BNR Inflation Report Q1 2025"
+    publisher: "BNR"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "quarterly"
+    # ⚠️ Verify URL stability: BNR publishes at bnr.ro/en/Inflation-reports--3587.aspx
+
+  - url: "https://www.bnr.ro/files/d/Pubs_en/RSF/RSF2024.pdf"
+    title: "BNR Financial Stability Report 2024"
+    publisher: "BNR"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "biannual"
+    # ⚠️ Verify URL: BNR publishes FSR at bnr.ro/en/Financial-Stability-Reports--3574.aspx
+
+  - url: "https://www.imf.org/en/Publications/CR/Issues/2024/02/14/Romania-2023-Article-IV-Consultation-Press-Release-and-Staff-Report-545249"
+    title: "IMF Article IV Romania 2023"
+    publisher: "IMF Romania"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "annual"
+
+  - url: "https://documents1.worldbank.org/curated/en/099062123182533247/pdf/P17893815d73ab0fa0b47a0e93f6e0c0f58.pdf"
+    title: "World Bank Romania Economic Monitor 2023"
+    publisher: "World Bank Romania"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "biannual"
+    # ⚠️ URL approximate; check worldbank.org/en/country/romania/publication/romania-economic-monitor
+
+  - url: "https://insse.ro/cms/sites/default/files/field/publicatii/anuarul_statistic_al_romaniei_carte_2022.pdf"
+    title: "INSSE Statistical Yearbook of Romania 2022"
+    publisher: "INSSE"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "annual"
+    # ⚠️ INSSE yearbook may be split into chapters; check insse.ro for direct PDF links
+
+  - url: "https://www.ebrd.com/documents/research/transition-report-2023-country-diagnostics-romania.pdf"
+    title: "EBRD Transition Report 2023 — Romania Chapter"
+    publisher: "EBRD Romania"
+    category: "economics"
+    subcategory: "romania_macro"
+    cadence: "annual"
+    # ⚠️ URL approximate; check ebrd.com/transition-report for current year

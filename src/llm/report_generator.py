@@ -124,6 +124,63 @@ def _linkify_citations(text: str, links_map: dict) -> str:
     return re.sub(r'\[Article\s+(\d+)\]', _replace, text)
 
 
+# =============================================================================
+# Romania Vertical — System Prompts
+# =============================================================================
+
+ROMANIA_DAILY_SYSTEM_PROMPT = """Sei un analista di intelligence economica specializzato in Romania \
+e relazione Italia-Romania. Produci un briefing giornaliero conciso, in italiano, \
+rivolto a imprenditori e manager italiani con interessi in Romania.
+
+STRUTTURA DEL REPORT (se segnale materiale forte):
+1. **Hook** (2-3 frasi): tesi del giorno — la cosa più importante
+2. **Contesto macro** (1 riga auto-generata — sarà fornita come input)
+3. **Cosa è successo** (ultime 24h): 3-5 punti chiave Romania-direct + storyline regionali
+4. **Deep-dive geopolitico** (1 paragrafo): storyline rilevante con framing esplicito sull'impatto RO
+5. **Implicazioni per Imprese Italiane** (3 bullet azionabili, ciascuno etichettato [OPPORTUNITÀ], [RISCHIO] o [WATCHLIST])
+
+Lunghezza target: ~600 parole per forma completa.
+
+FORMA BREVE: Se il segnale materiale è debole (nessuna storyline con score ≥ 0.20, \
+nessuna breaking news, nessun rilascio dati nelle ultime 24h), \
+restituisci una versione breve di 100-150 parole con solo Contesto macro + 2-3 watchlist. \
+Imposta is_short_form: true. Non inventare notizie.
+
+LINEE GUIDA:
+- Lingua: italiano per tutto il testo
+- Cita le fonti autorevoli (BNR, INSSE, MinFinanze, ANRE) quando disponibili nel contesto
+- Framing esplicito per implicazioni aziende italiane (manifattura, logistica, energia)
+- Niente genericità: ogni punto deve avere un dato o un fatto specifico
+"""
+
+ROMANIA_WEEKLY_SYSTEM_PROMPT = """Sei un analista senior di intelligence economica \
+specializzato in Romania, hub di transito strategico tra UE, Mar Nero, Caspio e Asia Centrale. \
+Il tuo lettore decide su impegni economici Italia-Romania. Produci un briefing settimanale \
+approfondito, in italiano.
+
+STRUTTURA DEL REPORT:
+1. **Executive Summary** (5 frasi max): regime di rischio settimana + 2-3 takeaway chiave
+2. **Contesto macro + delta settimanale**: numeri attuali BNR/INSSE/MinFinanze vs lunedì precedente
+3. **Macro Update Romania**: SOLO dati ufficiali ultimi 7 giorni da BNR, INSSE, MinFinanze, ANRE. \
+   Interpretazione e implicazioni. Se nessun dato rilasciato, ≤100 parole + nota esplicita.
+4. **Energy & Infrastructure**: Black Sea offshore, ANRE tariffe, assorbimento fondi UE/PNRR
+5. **Banking & Financial Outlook**: ING Think + Erste Group + sentiment credito
+6. **Contesto Geopolitico**: 1 tema chiave con framing esplicito su impatto Romania \
+   (transito gas, corridoi commerciali, fianco orientale NATO)
+7. **Implicazioni per Imprese Italiane in Romania** (5+ bullet con [OPPORTUNITÀ]/[RISCHIO]/[WATCHLIST])
+
+Lunghezza target: ~1500 parole.
+
+LINEE GUIDA:
+- Lingua: italiano per tutto il testo
+- is_short_form: false (settimanale non ha forma breve)
+- Cita fonti per nome ufficiale + autorevolezza quando presenti nel contesto
+- Romania come hub: esplicita impatto di eventi in Caspio, Azerbaijan, Kazakhstan su economia RO
+- Sezione Implicazioni deve coprire: manifattura italiana in RO, logistica Costanța, \
+  energy supply chain, banking e credito
+"""
+
+
 class ReportGenerator:
     """
     Generates intelligence reports using LLM with RAG context.
@@ -496,7 +553,9 @@ Output ONLY the {self.expansion_variants} variant queries, one per line, without
         focus_areas: List[str],
         top_n: int = 100,
         min_similarity: float = 0.30,
-        min_fallback: int = 10
+        min_fallback: int = 10,
+        cadence_weight_key: Optional[str] = None,
+        source_cadence_weights: Optional[Dict[str, float]] = None,
     ) -> List[Dict]:
         """
         Filter articles by relevance using cosine similarity with quality threshold.
@@ -561,6 +620,14 @@ Output ONLY the {self.expansion_variants} variant queries, one per line, without
         if not articles_with_similarity:
             logger.error("No articles with embeddings found for filtering")
             return []
+
+        # Apply cadence_weight multiplier (Romania vertical — boosts sources with higher cadence weight)
+        if source_cadence_weights:
+            for item in articles_with_similarity:
+                src = item['article'].get('source', '')
+                weight = source_cadence_weights.get(src, 1.0)
+                item['similarity'] = item['similarity'] * weight
+            logger.info(f"Applied cadence weights for {cadence_weight_key!r} to {len(articles_with_similarity)} articles")
 
         # Sort by similarity (descending)
         articles_with_similarity.sort(key=lambda x: x['similarity'], reverse=True)
@@ -1765,9 +1832,17 @@ Respond with JSON only:"""
     # Narrative Storyline Context
     # =====================================================================
 
-    def _get_narrative_context(self, days: int = 1, top_n: int = 10) -> Dict[str, Any]:
+    def _get_narrative_context(
+        self,
+        days: int = 1,
+        top_n: int = 10,
+        report_type: str = "global",
+    ) -> Dict[str, Any]:
         """
         Fetch top storylines, their graph edges, and recent linked articles.
+
+        When report_type starts with 'romania-', applies tiered Romania scoring
+        to rank and filter storylines. Falls back to top-3 global if none qualify.
 
         Returns:
             Dict with 'storylines' list, 'edges' list, or empty if unavailable.
@@ -1775,14 +1850,15 @@ Respond with JSON only:"""
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Top N active storylines by momentum
+                    # Fetch more storylines when Romania scoring will filter
+                    fetch_n = max(top_n, 30) if report_type.startswith("romania-") else top_n
                     cur.execute("""
                         SELECT id, title, summary, narrative_status,
                                momentum_score, article_count, key_entities,
                                start_date, last_update
                         FROM v_active_storylines
                         LIMIT %s
-                    """, [top_n])
+                    """, [fetch_n])
                     storyline_rows = cur.fetchall()
 
                     if not storyline_rows:
@@ -1854,6 +1930,29 @@ Respond with JSON only:"""
                 for r in edge_rows
             ]
 
+            # Romania scoring: rerank storylines by tiered relevance score
+            if report_type.startswith("romania-") and storylines:
+                try:
+                    from .storyline_scoring import filter_storylines_for_report
+                    source_geo_regions = self._get_source_geo_regions()
+                    # Normalize entities format for scoring
+                    for sl in storylines:
+                        ents = sl.get("entities", [])
+                        if isinstance(ents, list):
+                            sl["entities"] = {"all": ents}
+                        sl["article_sources"] = [
+                            a["source"] for a in sl.get("recent_articles", [])
+                        ]
+                    scored = filter_storylines_for_report(
+                        storylines, report_type, source_geo_regions
+                    )
+                    # Re-assign rank
+                    for i, s in enumerate(scored):
+                        s["rank"] = i + 1
+                    storylines = scored
+                except Exception as score_err:
+                    logger.warning(f"Romania scoring failed, using momentum ranking: {score_err}")
+
             return {'storylines': storylines, 'edges': edges}
 
         except Exception as e:
@@ -1912,6 +2011,92 @@ Respond with JSON only:"""
 
         lines.append('</strategic_storylines>')
         return '\n'.join(lines)
+
+    def _get_source_geo_regions(self) -> Dict[str, str]:
+        """Load {source_name: geo_region} from intelligence_sources for Romania scoring."""
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, geo_region FROM intelligence_sources "
+                        "WHERE geo_region IS NOT NULL"
+                    )
+                    return {row[0]: row[1] for row in cur.fetchall()}
+        except Exception as e:
+            logger.debug(f"Could not load source geo_regions: {e}")
+            return {}
+
+    def _get_source_cadence_weights(self, cadence_key: str) -> Dict[str, float]:
+        """Load {source_name: cadence_weight} for a given cadence key ('daily' or 'weekly')."""
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, cadence_weight FROM intelligence_sources "
+                        "WHERE geo_region IN ('romania', 'cee') AND cadence_weight IS NOT NULL"
+                    )
+                    result = {}
+                    for name, weights in cur.fetchall():
+                        if isinstance(weights, dict):
+                            w = weights.get(cadence_key)
+                            if w is not None:
+                                result[name] = float(w)
+                    return result
+        except Exception as e:
+            logger.debug(f"Could not load source cadence weights: {e}")
+            return {}
+
+    def _format_romania_macro_header(self) -> str:
+        """
+        Build single-line macro context string for Romania report header.
+        Pulls latest 5 indicators with country_code='RO' from macro_indicators.
+        Returns formatted line or substitutes n/d for missing/stale (>30 days) values.
+        """
+        from datetime import date, timedelta
+        stale_threshold = date.today() - timedelta(days=30)
+
+        indicator_labels = {
+            'BNR_RATE': 'BNR',
+            'RO_CPI_YOY': 'CPI YoY',
+            'EUR_RON': 'EUR/RON',
+            'RO_DEFICIT_GDP': 'Deficit/PIL',
+            'RO_10Y_YIELD': '10Y RON',
+        }
+
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT DISTINCT ON (indicator_key)
+                            indicator_key, value, unit, date
+                        FROM macro_indicators
+                        WHERE country_code = 'RO'
+                          AND indicator_key = ANY(%s)
+                        ORDER BY indicator_key, date DESC
+                    """, [list(indicator_labels.keys())])
+                    rows = {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
+        except Exception as e:
+            logger.warning(f"[Romania macro header] DB query failed: {e}")
+            rows = {}
+
+        parts = []
+        today = date.today()
+        for key, label in indicator_labels.items():
+            if key in rows:
+                value, unit, data_date = rows[key]
+                if data_date and data_date < stale_threshold:
+                    parts.append(f"{label} n/d")
+                else:
+                    formatted = f"{float(value):.2f}"
+                    if unit in ('%', '% of GDP'):
+                        parts.append(f"{label} {formatted}%")
+                    else:
+                        parts.append(f"{label} {formatted}")
+            else:
+                parts.append(f"{label} n/d")
+
+        date_str = today.strftime('%Y-%m-%d')
+        return f"Contesto macro [{date_str}]: {' · '.join(parts)}"
 
     def _extract_bluf_from_text(self, text: str) -> str:
         """
@@ -2042,7 +2227,8 @@ Respond with JSON only:"""
         rag_top_k: int = 5,
         top_articles: int = 100,
         min_similarity: float = 0.30,
-        min_fallback: int = 10
+        min_fallback: int = 10,
+        report_type: str = "global",
     ) -> Dict[str, Any]:
         """
         Generate intelligence report with RAG context.
@@ -2057,6 +2243,7 @@ Respond with JSON only:"""
             top_articles: Maximum number of top relevant articles to include (default: 60)
             min_similarity: Minimum cosine similarity threshold for relevance (default: 0.30)
             min_fallback: Minimum articles to return even if below threshold (default: 10)
+            report_type: Report variant — "global" (default), "romania-daily", "romania-weekly"
 
         Returns:
             Dictionary with report content and metadata
@@ -2166,12 +2353,16 @@ Respond with JSON only:"""
 
         # Step 1b: Filter articles by relevance to focus areas
         logger.info(f"\n[STEP 1b] Filtering articles by relevance...")
+        cadence_key = "daily" if report_type == "romania-daily" else "weekly" if report_type == "romania-weekly" else None
+        src_cadence_weights = self._get_source_cadence_weights(cadence_key) if cadence_key else None
         recent_articles = self.filter_relevant_articles(
             articles=all_recent_articles,
             focus_areas=focus_areas,
             top_n=top_articles,
             min_similarity=min_similarity,
-            min_fallback=min_fallback
+            min_fallback=min_fallback,
+            cadence_weight_key=cadence_key,
+            source_cadence_weights=src_cadence_weights,
         )
 
         if not recent_articles:
@@ -2229,7 +2420,7 @@ Respond with JSON only:"""
 
         # Step 2.5: Fetch narrative storyline context
         logger.info(f"\n[STEP 2.5] Fetching narrative storyline context...")
-        narrative_ctx = self._get_narrative_context(days=days, top_n=10)
+        narrative_ctx = self._get_narrative_context(days=days, top_n=10, report_type=report_type)
         narrative_xml = self._format_narrative_xml(narrative_ctx)
         storyline_count = len(narrative_ctx.get('storylines', []))
 
@@ -2253,6 +2444,17 @@ Use them to:
         # Phase 5 branch: variables shared by both v1 and v2 paths
         report_date = datetime.now().strftime('%Y-%m-%d')
         use_strategic_v2 = bool(macro_v2_result and macro_v2_result.get('success'))
+
+        # ── Romania Vertical Report Path ────────────────────────────────────
+        if report_type.startswith("romania-"):
+            return self._generate_romania_report(
+                report_type=report_type,
+                recent_articles=recent_articles,
+                narrative_ctx=narrative_ctx,
+                unique_rag_results=unique_rag_results,
+                days=days,
+                report_date=report_date,
+            )
 
         # ── Phase 5: v2 strategic report (LLM call #2) ──────────────────────
         if use_strategic_v2:
@@ -2493,6 +2695,107 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
 
         logger.info("\n✓ Report generation complete")
         return report
+
+    def _generate_romania_report(
+        self,
+        report_type: str,
+        recent_articles: List[Dict],
+        narrative_ctx: Dict[str, Any],
+        unique_rag_results: List[Dict],
+        days: int,
+        report_date: str,
+    ) -> Dict[str, Any]:
+        """Generate Romania daily or weekly briefing using Romania system prompts."""
+        logger.info(f"\n[Romania] Generating {report_type} briefing...")
+
+        # Romania macro header
+        macro_header = self._format_romania_macro_header()
+
+        # System prompt dispatch
+        if report_type == "romania-daily":
+            system_prompt = ROMANIA_DAILY_SYSTEM_PROMPT
+        else:
+            system_prompt = ROMANIA_WEEKLY_SYSTEM_PROMPT
+
+        # Format articles and narrative for prompt
+        recent_articles_text = self.format_recent_articles(recent_articles[:50])
+        rag_context_text = self.format_rag_context(unique_rag_results[:20])
+        narrative_xml = self._format_narrative_xml(narrative_ctx)
+
+        # Build relevance signal breakdown for output metadata
+        relevance_breakdown = [
+            {
+                "storyline_id": s.get("id"),
+                "title": s.get("title", ""),
+                "romania_score": s.get("romania_score", {}),
+            }
+            for s in narrative_ctx.get("storylines", [])
+            if s.get("romania_score")
+        ]
+
+        prompt = f"""{system_prompt}
+
+---
+**CONTESTO MACRO ROMANIA:**
+{macro_header}
+
+---
+**ARTICOLI RECENTI (ultimi {days} giorni):**
+{recent_articles_text}
+
+---
+**CONTESTO RAG (articoli storici rilevanti):**
+{rag_context_text}
+
+---
+**STORYLINE NARRATIVE ATTIVE (ordinate per rilevanza Romania):**
+{narrative_xml or 'Nessuna storyline disponibile.'}
+
+---
+Genera ora il briefing in italiano secondo la struttura indicata. Inizia direttamente con il contenuto.
+"""
+
+        try:
+            report_text = self._reasoning_model.generate_content_raw(
+                prompt,
+                generation_config={"temperature": 0.35},
+                request_options={"timeout": 240},
+            )
+
+            # Detect is_short_form from output
+            is_short_form = len(report_text.split()) < 200 or "is_short_form: true" in report_text.lower()
+            if report_type == "romania-weekly":
+                is_short_form = False
+
+            report_header = f"# 🇷🇴 Romania Intelligence Briefing — {report_date}\n\n{macro_header}\n\n---\n\n"
+            full_text = report_header + report_text
+
+            logger.info(f"✓ Romania {report_type} generated ({len(full_text)} chars, short_form={is_short_form})")
+
+            return {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "report_text": full_text,
+                "report_type": report_type,
+                "is_short_form": is_short_form,
+                "relevance_signal_breakdown": relevance_breakdown,
+                "metadata": {
+                    "title": f"Romania Briefing — {report_date}",
+                    "report_type": report_type,
+                    "recent_articles_count": len(recent_articles),
+                    "days_covered": days,
+                    "model_used": self.model.model_name,
+                    "macro_header": macro_header,
+                },
+            }
+        except Exception as e:
+            logger.error(f"[Romania] Failed to generate report: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "report_type": report_type,
+                "timestamp": datetime.now().isoformat(),
+            }
 
     def _compute_and_save_report_embedding(self, report_id: int, report: Dict[str, Any]) -> None:
         """Compute and save embedding for a report so Oracle can find it via semantic search."""

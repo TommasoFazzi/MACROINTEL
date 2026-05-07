@@ -20,7 +20,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
-from src.api.routers import dashboard, reports, stories, oracle, map as map_router, ingest, waitlist, insights
+from src.api.routers import dashboard, reports, stories, oracle, map as map_router, ingest, waitlist, insights, romania as romania_router
 from src.api.auth import verify_api_key
 from src.api.limiter import limiter
 from src.api.security import SecurityMiddleware
@@ -65,6 +65,7 @@ app.include_router(map_router.router)
 app.include_router(ingest.router)
 app.include_router(waitlist.router)
 app.include_router(insights.router)
+app.include_router(romania_router.router)
 
 
 # ===================================================================
