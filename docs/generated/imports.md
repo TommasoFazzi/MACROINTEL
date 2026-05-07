@@ -137,6 +137,7 @@ flowchart TD
     query_router["query_router.py"]
     report_generator["report_generator.py"]
     schemas["schemas.py"]
+    storyline_scoring["storyline_scoring.py"]
     aggregation_tool["aggregation_tool.py"]
     base["base.py"]
     graph_tool["graph_tool.py"]
@@ -164,6 +165,7 @@ flowchart TD
     report_generator --> nlp
     report_generator --> storage
     report_generator --> utils
+    storyline_scoring --> utils
     aggregation_tool --> utils
     graph_tool --> utils
     market_tool --> utils
@@ -242,6 +244,7 @@ flowchart TD
     map["map.py"]
     oracle["oracle.py"]
     reports["reports.py"]
+    romania["romania.py"]
     stories["stories.py"]
     waitlist["waitlist.py"]
     common["common.py"]
@@ -272,6 +275,7 @@ flowchart TD
     oracle --> llm
     reports --> services
     reports --> storage
+    romania --> storage
     stories --> services
     stories --> storage
     waitlist --> storage
@@ -292,6 +296,7 @@ flowchart TD
     map --> EXT_fastapi
     oracle --> EXT_fastapi
     reports --> EXT_fastapi
+    romania --> EXT_fastapi
     stories --> EXT_fastapi
     waitlist --> EXT_fastapi
     waitlist --> EXT_pydantic
