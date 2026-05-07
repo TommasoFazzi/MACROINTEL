@@ -1,0 +1,392 @@
+# Romania Vertical PoC — Source Registry
+# Source of truth for 26 Romania/CEE intelligence sources.
+# Loaded by scripts/seed_sources.py → populates intelligence_sources table.
+#
+# RSS availability verified 2026-05-07 (⚠️ = needs periodic re-check):
+#   has_rss: true  → feed_names populated, included in config/feeds.yaml
+#   has_rss: false → PDF/HTML ingestion only (ingest_pdfs.py or manual)
+#
+# retrieval_profile:
+#   always       → fetched daily without condition
+#   event-driven → fetched when relevant event detected (institutional releases)
+#   research     → long-form, 14-day lookback window preferred
+
+# =============================================================================
+# CLUSTER A — Institutional / Official (authority 5.0)
+# =============================================================================
+
+- name: "BNR"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Banca Națională a României — central bank. Publishes monetary policy decisions, inflation reports, financial stability reports (FSR), payment statistics. Primary source for BNR policy rate, RO CPI commentary."
+  feed_names: []
+  has_rss: false  # ⚠️ no RSS feed confirmed; PDF/HTML ingestion via ingest_pdfs.py
+
+- name: "mfinante.gov.ro"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro]
+  llm_context: "Ministerul Finanțelor României — Romanian Finance Ministry. Publishes budget execution reports, fiscal statistics, deficit data, debt issuance. Official source for Deficit/PIL and government bond data."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "INSSE"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Institutul Național de Statistică România — national statistics office. Publishes CPI, GDP, trade, employment data. Primary source for INSSE CPI YoY."
+  feed_names: ["INSSE"]
+  has_rss: true  # ⚠️ verify at insse.ro/comunicatedepresa
+
+- name: "IMF Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.3, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "IMF Romania — Article IV consultation reports, staff country notes, WEO Romania projections. Annual/biannual publication cycle."
+  feed_names: []
+  has_rss: false  # IMF main RSS exists but not Romania-specific
+
+- name: "World Bank Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.2, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "World Bank Romania — Romania Economic Monitor (biannual), country data, project pipeline. Key for EU cohesion fund tracking and structural reform assessment."
+  feed_names: []
+  has_rss: false
+
+- name: "EBRD Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.2, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "EBRD Romania chapter — Transition Report, country diagnostics, project finance data. Key for assessing private sector reform and green energy investment."
+  feed_names: []
+  has_rss: false
+
+- name: "EU Economic Surveillance Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.3, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "European Commission — Romania under Macroeconomic Imbalance Procedure (MIP), Country-Specific Recommendations, European Semester. Fiscal surveillance, cohesion funds tracking."
+  feed_names: []
+  has_rss: false
+
+# =============================================================================
+# CLUSTER B — Banking Research (authority 4.0–4.5)
+# =============================================================================
+
+- name: "ING Think Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 4.5
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.0, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "ING Bank Romania Research — macro briefings, FX outlook, interest rate forecasts, credit market analysis. Weekly frequency, English language."
+  feed_names: []
+  has_rss: false  # ⚠️ ING Think has global RSS; Romania-specific subset not confirmed
+
+- name: "Erste Group Research Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 4.5
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.0, weekly: 1.0}
+  retrieval_profile: research
+  languages: [en]
+  llm_context: "Erste Group Bank — Romania country research: macro, banking sector, equity. Erste operates BCR (one of top-2 Romanian banks). Biweekly/monthly research notes."
+  feed_names: []
+  has_rss: false
+
+- name: "Banca Transilvania Research"
+  geo_region: romania
+  domain: economics
+  authority_score: 4.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.3, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Banca Transilvania — largest Romanian bank by assets. Publishes quarterly results, investor presentations, credit market data. BT Research provides RO banking sector view."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "BCR"
+  geo_region: romania
+  domain: economics
+  authority_score: 4.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.3, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Banca Comercială Română (Erste subsidiary) — second-largest RO bank. Macro commentary, SME finance data, retail credit trends."
+  feed_names: []
+  has_rss: false
+
+# =============================================================================
+# CLUSTER C — Business News (authority 3.0–3.5)
+# =============================================================================
+
+- name: "Ziarul Financiar"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 0.6}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "Ziarul Financiar (ZF) — leading Romanian financial daily. Covers macro, banking, real estate, energy, M&A, corporate earnings. ~300 articles/day total; Romania allowlist filters to relevant subset."
+  feed_names: ["Ziarul Financiar"]
+  has_rss: true  # rss.zf.ro or zf.ro/rss.xml
+
+- name: "Profit.ro"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.5}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "Profit.ro — Romanian business news portal. Real-time coverage of macro events, corporate news, fiscal/legislative changes. Strong on government budget and BNR decisions."
+  feed_names: ["Profit.ro"]
+  has_rss: true  # profit.ro/feed or rss
+
+- name: "CursDeGuvernare"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.6}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "CursDeGuvernare.ro — fiscal policy, public finance, European funds, budget execution analysis. Strong analytical depth on Romanian public finance."
+  feed_names: ["CursDeGuvernare"]
+  has_rss: true
+
+- name: "Agerpres Economic"
+  geo_region: romania
+  domain: economics
+  authority_score: 4.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 0.7}
+  retrieval_profile: always
+  languages: [ro, en]
+  llm_context: "Agerpres — Romanian national news agency. Economic/business wire service. Official government communiqués, macroeconomic data releases, EU decisions affecting Romania."
+  feed_names: ["Agerpres Economic"]
+  has_rss: true
+
+- name: "Romania Insider Business"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.6, weekly: 0.5}
+  retrieval_profile: always
+  languages: [en]
+  llm_context: "Romania Insider — English-language business coverage of Romania. Useful for Italian companies monitoring developments without Romanian language capability."
+  feed_names: ["Romania Insider"]
+  has_rss: true  # romaniainsider.com/feed
+
+- name: "Economica.net"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.6, weekly: 0.4}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "Economica.net — Romanian business news. Covers fiscal policy, banking, energy, infrastructure projects and EU funds."
+  feed_names: ["Economica.net"]
+  has_rss: true
+
+# =============================================================================
+# CLUSTER D — Energy / Infrastructure (authority 3.5–5.0)
+# =============================================================================
+
+- name: "energie.gov.ro"
+  geo_region: romania
+  domain: energy
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro]
+  llm_context: "Ministerul Energiei România — energy ministry. Policy decisions, licensing, Black Sea offshore, nuclear (Cernavodă Units 3&4), hydrogen strategy. Primary source for RO energy policy."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "ANRE"
+  geo_region: romania
+  domain: energy
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 1.0, weekly: 1.0}
+  retrieval_profile: event-driven
+  languages: [ro]
+  llm_context: "Autoritatea Națională de Reglementare în domeniul Energiei — Romanian energy regulator. Electricity and gas tariff decisions, market regulations, interconnection permits."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "Transelectrica"
+  geo_region: romania
+  domain: energy
+  authority_score: 4.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.8}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Transelectrica — Romanian electricity TSO (transmission system operator). Grid data, interconnection capacity, annual reports, investment plans."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "Transgaz"
+  geo_region: romania
+  domain: energy
+  authority_score: 4.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.8}
+  retrieval_profile: event-driven
+  languages: [ro, en]
+  llm_context: "Transgaz — Romanian gas TSO. Critical for Southern Gas Corridor (SGC) transit, BRUA pipeline data, gas storage levels, Neptun Deep offshore gas supply planning."
+  feed_names: []
+  has_rss: false  # ⚠️ no public RSS confirmed
+
+- name: "MT Romania"
+  geo_region: romania
+  domain: economics
+  authority_score: 5.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.9}
+  retrieval_profile: event-driven
+  languages: [ro]
+  llm_context: "Ministerul Transporturilor și Infrastructurii România — transport ministry. Motorway contracts, EU cohesion fund absorption, CFR rail network, Constanța port development."
+  feed_names: []
+  has_rss: false
+
+- name: "Proinfrastructura"
+  geo_region: romania
+  domain: economics
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.7, weekly: 0.6}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "Proinfrastructura.ro — civil society observatory tracking Romanian infrastructure project status. Motorway, rail, PNRR milestones updated in near-real-time."
+  feed_names: ["Proinfrastructura"]
+  has_rss: true
+
+- name: "E-nergia.ro"
+  geo_region: romania
+  domain: energy
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.7, weekly: 0.6}
+  retrieval_profile: always
+  languages: [ro]
+  llm_context: "E-nergia.ro — Romanian energy sector news portal. Covers ANRE decisions, renewable project permits, electricity prices, gas market."
+  feed_names: ["E-nergia.ro"]
+  has_rss: true
+
+# =============================================================================
+# CLUSTER E — Geopolitics / Security (authority 3.5–4.5, geo_region=cee)
+# =============================================================================
+
+- name: "NewStrategyCenter"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 4.0
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 0.9}
+  retrieval_profile: always
+  languages: [en, ro]
+  llm_context: "New Strategy Center (NSC) Bucharest — Romanian defense/security think tank. NATO Eastern Flank, Black Sea security, Russia-Ukraine spillover, CEE defense cooperation."
+  feed_names: ["NewStrategyCenter"]
+  has_rss: true  # newstrategycenter.ro/feed
+
+- name: "GlobalFocus Magazine"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 4.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.4, weekly: 0.9}
+  retrieval_profile: always
+  languages: [en, ro]
+  llm_context: "Global Focus — Romanian think tank magazine covering security, foreign policy, Black Sea region, Romania-NATO-EU strategic posture."
+  feed_names: ["GlobalFocus"]
+  has_rss: true
+
+- name: "IER"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 4.0
+  cadence_use: [weekly]
+  cadence_weight: {daily: 0.3, weekly: 0.8}
+  retrieval_profile: research
+  languages: [en, ro]
+  llm_context: "Institutul European din România (IER) — EU affairs research. Romania-EU relations, cohesion policy analysis, accession negotiations for Moldova."
+  feed_names: []
+  has_rss: false
+
+- name: "CEPA"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 4.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 1.0}
+  retrieval_profile: always
+  languages: [en]
+  llm_context: "Center for European Policy Analysis (CEPA, Washington DC) — CEE security, NATO, energy security, disinformation. Frequently covers Romania as Eastern Flank anchor."
+  feed_names: ["CEPA"]
+  has_rss: true  # cepa.org/feed
+
+- name: "OSW"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 4.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.8, weekly: 1.0}
+  retrieval_profile: always
+  languages: [en]
+  llm_context: "Ośrodek Studiów Wschodnich (OSW, Warsaw) — premier CEE think tank. Russia, Ukraine, Black Sea, energy security, CEE economic outlook. High-quality weekly commentary."
+  feed_names: ["OSW"]
+  has_rss: true  # osw.waw.pl/en/rss
+
+- name: "BalkanInsight Romania"
+  geo_region: cee
+  domain: geopolitics
+  authority_score: 3.5
+  cadence_use: [daily, weekly]
+  cadence_weight: {daily: 0.7, weekly: 0.7}
+  retrieval_profile: always
+  languages: [en]
+  llm_context: "Balkan Insight (BIRN) — Romania section. Investigative coverage of governance, rule of law, anti-corruption, judicial reform, EU accession conditionality."
+  feed_names: ["BalkanInsight Romania"]
+  has_rss: true  # balkaninsight.com/feed

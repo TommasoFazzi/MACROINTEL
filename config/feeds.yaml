@@ -229,3 +229,96 @@ feeds:
     url: "https://www.kommersant.ru/rss/section-economics.xml"
     category: "economics"
     subcategory: "russia"
+
+  # ==========================================================================
+  # ROMANIA VERTICAL — RSS feeds (verified 2026-05-07)
+  # Sources without RSS use PDF/HTML ingestion via ingest_pdfs.py
+  # ==========================================================================
+
+  # CLUSTER A — Institutional
+  - name: "INSSE"
+    url: "https://insse.ro/cms/ro/rss.xml"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  # CLUSTER C — Business News
+  - name: "Ziarul Financiar"
+    url: "https://www.zf.ro/rss/"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  - name: "Profit.ro"
+    url: "https://www.profit.ro/rss/"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  - name: "CursDeGuvernare"
+    url: "https://cursdeguvernare.ro/feed"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  - name: "Agerpres Economic"
+    url: "https://www.agerpres.ro/rss/economie.xml"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  - name: "Romania Insider"
+    url: "https://www.romaniainsider.com/feed"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "en"
+
+  - name: "Economica.net"
+    url: "https://economica.net/feed"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  # CLUSTER D — Energy / Infrastructure
+  - name: "Proinfrastructura"
+    url: "https://www.proinfrastructura.ro/feed"
+    category: "economics"
+    subcategory: "romania_macro"
+    language: "ro"
+
+  - name: "E-nergia.ro"
+    url: "https://www.e-nergia.ro/feed"
+    category: "economics"
+    subcategory: "romania_energy"
+    language: "ro"
+
+  # CLUSTER E — Geopolitics / Security (CEE)
+  - name: "NewStrategyCenter"
+    url: "https://newstrategycenter.ro/feed/"
+    category: "intelligence"
+    subcategory: "romania_geopolitics"
+    language: "en"
+
+  - name: "GlobalFocus"
+    url: "https://globalfocus.ro/feed/"
+    category: "intelligence"
+    subcategory: "romania_geopolitics"
+    language: "en"
+
+  - name: "CEPA"
+    url: "https://cepa.org/feed/"
+    category: "intelligence"
+    subcategory: "romania_geopolitics"
+    language: "en"
+
+  - name: "OSW"
+    url: "https://www.osw.waw.pl/en/rss.xml"
+    category: "intelligence"
+    subcategory: "romania_geopolitics"
+    language: "en"
+
+  - name: "BalkanInsight Romania"
+    url: "https://balkaninsight.com/feed/?country=romania"
+    category: "intelligence"
+    subcategory: "romania_geopolitics"
+    language: "en"

@@ -437,6 +437,50 @@ class OpenBBMarketService:
             'fetch_category': 'fred',
         },
         # CFETS_RMB: deferred to B3 — no public API found (PBOC weekly, scraping non-goal)
+
+        # ================================================================
+        # ROMANIA VERTICAL — 5 key indicators (country_code='RO')
+        # ================================================================
+        'EUR_RON': {
+            'symbol': 'EURRON=X',
+            'unit': 'Rate',
+            'category': 'FX',
+            'description': 'EUR/RON Exchange Rate (Romania)',
+            'fetch_category': 'fx',
+            'country_code': 'RO',
+        },
+        'RO_10Y_YIELD': {
+            'fred_series': 'IRLTLT01ROM156N',
+            'unit': '%',
+            'category': 'RATES',
+            'description': 'Romania 10Y Government Bond Yield (OECD/FRED)',
+            'fetch_category': 'fred',
+            'country_code': 'RO',
+        },
+        'RO_CPI_YOY': {
+            'fred_series': 'ROPCPIROROINMEI',
+            'unit': '%',
+            'category': 'INFLATION',
+            'description': 'Romania CPI YoY (OECD MEI)',
+            'fetch_category': 'fred',
+            'country_code': 'RO',
+        },
+        'BNR_RATE': {
+            'fred_series': 'IROMDROMRONM',
+            'unit': '%',
+            'category': 'RATES',
+            'description': 'BNR Policy Rate — Romania Central Bank (FRED/OECD)',
+            'fetch_category': 'fred',
+            'country_code': 'RO',
+        },
+        'RO_DEFICIT_GDP': {
+            'fred_series': 'GGNLBAROUA188N',
+            'unit': '% of GDP',
+            'category': 'FISCAL',
+            'description': 'Romania Fiscal Balance (% of GDP, IMF/FRED)',
+            'fetch_category': 'fred',
+            'country_code': 'RO',
+        },
     }
 
     def __init__(self, db: Optional[DatabaseManager] = None):
@@ -518,7 +562,8 @@ class OpenBBMarketService:
                         value, data_date, frequency = result
                         self._save_macro_indicator(
                             data_date, key, value,           # data_date, not target_date
-                            config['unit'], config['category']
+                            config['unit'], config['category'],
+                            country_code=config.get('country_code', 'US'),
                         )
                         self._upsert_indicator_metadata(
                             key=key,
@@ -545,7 +590,8 @@ class OpenBBMarketService:
                     if value is not None:
                         self._save_macro_indicator(
                             target_date, key, value,
-                            config['unit'], config['category']
+                            config['unit'], config['category'],
+                            country_code=config.get('country_code', 'US'),
                         )
                         frequency = config.get('frequency', 'daily')
                         self._upsert_indicator_metadata(
@@ -954,7 +1000,8 @@ class OpenBBMarketService:
                         value = float(hist['Close'].iloc[-1])
                         self._save_macro_indicator(
                             target_date, key, value,
-                            config['unit'], config['category']
+                            config['unit'], config['category'],
+                            country_code=config.get('country_code', 'US'),
                         )
                         success_count += 1
                         logger.debug(f"  {key}: {value}")
@@ -1349,24 +1396,27 @@ class OpenBBMarketService:
         key: str,
         value: float,
         unit: str,
-        category: str
+        category: str,
+        country_code: str = 'US',
     ) -> bool:
         """Save macro indicator with upsert, populating previous_value inline."""
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO macro_indicators (date, indicator_key, value, unit, category, previous_value)
-                        VALUES (%s, %s, %s, %s, %s,
+                        INSERT INTO macro_indicators
+                            (date, indicator_key, value, unit, category, country_code, previous_value)
+                        VALUES (%s, %s, %s, %s, %s, %s,
                             (SELECT value FROM macro_indicators
                              WHERE indicator_key = %s AND date < %s
                              ORDER BY date DESC LIMIT 1))
                         ON CONFLICT (date, indicator_key)
                         DO UPDATE SET
                             value = EXCLUDED.value,
+                            country_code = EXCLUDED.country_code,
                             previous_value = EXCLUDED.previous_value,
                             updated_at = NOW()
-                    """, (target_date, key, value, unit, category, key, target_date))
+                    """, (target_date, key, value, unit, category, country_code, key, target_date))
                     return True
         except Exception as e:
             logger.error(f"Error saving macro indicator: {e}")
