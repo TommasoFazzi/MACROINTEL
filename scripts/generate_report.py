@@ -30,10 +30,16 @@ def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(description="Generate intelligence report with RAG")
     parser.add_argument(
+        '--report-type',
+        choices=['global', 'romania-daily', 'romania-weekly'],
+        default='global',
+        help='Report variant: global (default), romania-daily, romania-weekly'
+    )
+    parser.add_argument(
         '--days',
         type=int,
-        default=1,
-        help='Number of days to look back for articles (default: 1)'
+        default=None,
+        help='Days to look back for articles (default: 1 for global/romania-daily, 7 for romania-weekly)'
     )
     parser.add_argument(
         '--from-time',
@@ -100,6 +106,10 @@ def main():
 
     args = parser.parse_args()
 
+    # Apply days default based on report-type (unless explicitly set)
+    if args.days is None:
+        args.days = 7 if args.report_type == 'romania-weekly' else 1
+
     # Parse and validate time window arguments
     from_time = None
     to_time = None
@@ -125,7 +135,7 @@ def main():
         return 1
 
     logger.info("=" * 80)
-    logger.info("INTELLIGENCE REPORT GENERATION")
+    logger.info(f"INTELLIGENCE REPORT GENERATION — {args.report_type.upper()}")
     logger.info("=" * 80)
 
     # Check for API key
@@ -260,7 +270,8 @@ def main():
             rag_top_k=5,
             top_articles=args.top_articles,
             min_similarity=args.min_similarity,
-            min_fallback=args.min_articles
+            min_fallback=args.min_articles,
+            report_type=args.report_type,
         )
 
         if not report['success']:
@@ -296,8 +307,8 @@ def main():
         logger.error(f"Error saving report to database: {e}")
         # Don't fail the entire script if DB save fails
 
-    # SPRINT 2.2: Generate structured analysis for each article (if enabled)
-    if args.analyze_articles:
+    # SPRINT 2.2: Generate structured analysis for each article (if enabled, global only)
+    if args.analyze_articles and report.get('sources'):
         try:
             logger.info(f"\n[STEP 6 - SPRINT 2.2] Generating structured analysis for articles...")
             logger.info(f"Processing {len(report['sources']['recent_articles'])} articles with full schema...")
@@ -309,16 +320,17 @@ def main():
                 'saved_to_db': 0
             }
 
-            for i, article_ref in enumerate(report['sources']['recent_articles'], 1):
+            recent_articles_list = report.get('sources', {}).get('recent_articles', [])
+            for i, article_ref in enumerate(recent_articles_list, 1):
                 try:
                     # Fetch full article from database
                     article = generator.db.get_article_by_link(article_ref['link'])
                     if not article:
-                        logger.warning(f"  [{i}/{len(report['sources']['recent_articles'])}] Article not found in DB: {article_ref['title'][:50]}...")
+                        logger.warning(f"  [{i}/{len(recent_articles_list)}] Article not found in DB: {article_ref['title'][:50]}...")
                         analysis_stats['failed'] += 1
                         continue
 
-                    logger.info(f"  [{i}/{len(report['sources']['recent_articles'])}] Analyzing: {article['title'][:60]}...")
+                    logger.info(f"  [{i}/{len(recent_articles_list)}] Analyzing: {article['title'][:60]}...")
 
                     # Generate full analysis
                     result = generator.generate_full_analysis(
@@ -361,8 +373,9 @@ def main():
             logger.info("\n" + "-" * 80)
             logger.info("STRUCTURED ANALYSIS SUMMARY (Sprint 2.2)")
             logger.info("-" * 80)
-            success_rate = (analysis_stats['success'] / len(report['sources']['recent_articles']) * 100) if report['sources']['recent_articles'] else 0
-            logger.info(f"Success Rate: {success_rate:.1f}% ({analysis_stats['success']}/{len(report['sources']['recent_articles'])})")
+            articles_analyzed = report.get('sources', {}).get('recent_articles', [])
+            success_rate = (analysis_stats['success'] / len(articles_analyzed) * 100) if articles_analyzed else 0
+            logger.info(f"Success Rate: {success_rate:.1f}% ({analysis_stats['success']}/{len(articles_analyzed)})")
             logger.info(f"Trade Signals Extracted: {analysis_stats['trade_signals_found']}")
             logger.info(f"Saved to Database: {analysis_stats['saved_to_db']}")
             logger.info("-" * 80)
@@ -376,36 +389,52 @@ def main():
     logger.info("REPORT SUMMARY")
     logger.info("=" * 80)
     logger.info(f"\nGenerated: {report['timestamp']}")
-    logger.info(f"Model: {report['metadata']['model_used']}")
-    logger.info(f"Recent articles analyzed: {report['metadata']['recent_articles_count']}")
-    logger.info(f"Historical context chunks: {report['metadata']['historical_chunks_count']}")
-    logger.info(f"Report length: {len(report['report_text'])} characters")
+    meta = report.get('metadata', {})
+    if meta.get('model_used'):
+        logger.info(f"Model: {meta['model_used']}")
+    if meta.get('recent_articles_count') is not None:
+        logger.info(f"Recent articles analyzed: {meta['recent_articles_count']}")
+    if meta.get('historical_chunks_count') is not None:
+        logger.info(f"Historical context chunks: {meta['historical_chunks_count']}")
+    if report.get('report_type'):
+        logger.info(f"Report type: {report['report_type']}")
+    if report.get('is_short_form') is not None:
+        logger.info(f"Short form: {report['is_short_form']}")
+    logger.info(f"Report length: {len(report.get('report_text', ''))} characters")
 
     # Print report text
     print("\n" + "=" * 80)
     print("INTELLIGENCE REPORT")
     print("=" * 80)
-    print(report['report_text'])
+    print(report.get('report_text', ''))
     print("\n" + "=" * 80)
 
-    # Print sources
-    print("\nSOURCES:")
-    print(f"\nRecent Articles ({len(report['sources']['recent_articles'])}):")
-    for i, article in enumerate(report['sources']['recent_articles'][:10], 1):
-        print(f"  [{i}] {article['title']}")
-        print(f"      {article['source']} - {article['published_date']}")
-        print(f"      {article['link']}")
+    # Print sources (global reports only)
+    if report.get('sources'):
+        recent = report['sources'].get('recent_articles', [])
+        historical = report['sources'].get('historical_context', [])
+        print("\nSOURCES:")
+        print(f"\nRecent Articles ({len(recent)}):")
+        for i, article in enumerate(recent[:10], 1):
+            print(f"  [{i}] {article['title']}")
+            print(f"      {article['source']} - {article['published_date']}")
+            print(f"      {article['link']}")
+        if len(recent) > 10:
+            print(f"  ... and {len(recent) - 10} more")
+        print(f"\nHistorical Context ({len(historical)}):")
+        for i, ctx in enumerate(historical[:5], 1):
+            print(f"  [{i}] {ctx['title']} (similarity: {ctx['similarity']:.3f})")
+            print(f"      {ctx['link']}")
+        if len(historical) > 5:
+            print(f"  ... and {len(historical) - 5} more")
 
-    if len(report['sources']['recent_articles']) > 10:
-        print(f"  ... and {len(report['sources']['recent_articles']) - 10} more")
-
-    print(f"\nHistorical Context ({len(report['sources']['historical_context'])}):")
-    for i, ctx in enumerate(report['sources']['historical_context'][:5], 1):
-        print(f"  [{i}] {ctx['title']} (similarity: {ctx['similarity']:.3f})")
-        print(f"      {ctx['link']}")
-
-    if len(report['sources']['historical_context']) > 5:
-        print(f"  ... and {len(report['sources']['historical_context']) - 5} more")
+    # Print Romania signal breakdown if present
+    breakdown = report.get('relevance_signal_breakdown', [])
+    if breakdown:
+        print("\nROMANIA STORYLINE SIGNALS:")
+        for entry in breakdown[:5]:
+            score = entry.get('romania_score', {})
+            print(f"  {entry.get('title', '')[:70]} → {score.get('score', 0):.3f}")
 
     logger.info("\n✓ Report generation complete!")
     return 0

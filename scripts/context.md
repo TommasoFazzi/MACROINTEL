@@ -48,6 +48,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 - `load_to_database.py` - Load processed articles to PostgreSQL
 - `generate_report.py` - Generate daily intelligence reports (now includes Storyline Tracker section)
   - `--macro-first` flag for serialized pipeline with trade signals
+  - `--report-type {global,romania-daily,romania-weekly}` (default: `global`) — Romania variants bypass macro-first pipeline, use Italian system prompts, apply Romania storyline scoring. `--days` defaults to 1 for romania-daily and 7 for romania-weekly unless explicitly overridden.
 - `generate_weekly_report.py` - Generate weekly aggregated meta-analysis
 - `generate_recap_report.py` - Generate recap reports for date ranges
 
