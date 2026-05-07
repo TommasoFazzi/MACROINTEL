@@ -1,0 +1,88 @@
+# Romania Geo Scope — Storyline Scoring Configuration
+# =====================================================
+# Weights and sets used by src/llm/storyline_scoring.py
+# compute_romania_relevance_score().
+#
+# score = direct*0.35 + regional*0.25 + trade_route*0.15 + source*0.15 + thematic*0.10
+#
+# Tune weights after 2 weeks of real data (Task 12.8).
+# Changes take effect without code redeploy.
+
+weights:
+  direct: 0.35       # 'Romania' in storyline entities
+  regional: 0.25     # Jaccard with NEIGHBORS_SET
+  trade_route: 0.15  # Jaccard with TRADE_ROUTES_SET (Caspian, Middle Corridor, SGC)
+  source: 0.15       # Fraction of storyline articles from geo_region=romania/cee
+  thematic: 0.10     # Keyword match in title/summary
+
+thresholds:
+  romania-daily: 0.20   # Top 3 storylines ≥ 0.20
+  romania-weekly: 0.15  # Top 5-7 storylines ≥ 0.15
+
+neighbors:
+  # Direct neighborhood — spillover risk or tight economic coupling
+  - Moldova
+  - Ukraine
+  - Bulgaria
+  - Hungary
+  - Serbia
+  - Black Sea
+  - Turkey
+  - Slovakia
+  - Poland
+  - Baltic
+
+trade_routes:
+  # Trade route hubs — indirect impact via Constanța port, SGC, Middle Corridor
+  - Kazakhstan
+  - Uzbekistan
+  - Turkmenistan
+  - Azerbaijan
+  - Georgia
+  - Armenia
+  - Middle Corridor
+  - Trans-Caspian
+  - TITR
+  - Caspian Sea
+  - Caspian
+  - Constanta
+  - Constanța
+  - Silk Road
+  - BRI
+  - Belt and Road
+  - Southern Gas Corridor
+  - SGC
+  - TANAP
+  - TAP
+  - SOCAR
+  - BP Caspian
+  - CNPC Caspian
+  - Neptun Deep
+  - Black Sea gas
+  - BRUA
+
+thematic_keywords:
+  # Keywords in storyline title/summary that boost Romania relevance
+  - Black Sea grain
+  - EU cohesion
+  - Eastern flank
+  - CEE banking
+  - Italian companies Romania
+  - Made in Italy
+  - Confindustria
+  - Romanian economy
+  - Romania GDP
+  - BNR rate
+  - RON
+  - leu
+  - Bucharest
+  - Constanța
+  - Timișoara
+  - Cluj
+  - Pitești
+  - Iași
+  - Galați
+  - PNRR Romania
+  - Neptun Deep
+  - Cernavodă
+  - OMV Petrom
