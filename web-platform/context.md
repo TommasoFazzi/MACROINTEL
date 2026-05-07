@@ -19,6 +19,8 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 - `app/access/page.tsx` - Legacy route — redirects to `/dashboard` (platform is now fully public).
 - `app/insights/page.tsx` - **Public intelligence briefings list**: fetches from `/api/v1/insights`, renders briefings with category badges and summaries. No auth required — public SEO page.
 - `app/insights/[slug]/page.tsx` - **Briefing detail**: renders full executive summary. No auth required.
+- `app/romania/page.tsx` - **Romania Intelligence vertical** (`/romania`): public page with macro dashboard (5 indicator cards with sparklines) + briefing list (Daily/Weekly tab). Server component layout + client SWR components. No auth.
+- `app/romania/[id]/page.tsx` - **Single Romania briefing** (`/romania/{id}`): server-side fetch + full content render as pre-formatted text. Shows macro header summary bar when available. No auth.
 - `middleware.ts` - **No-op passthrough**: platform is fully public, all routes accessible without authentication.
 - `lib/communityColors.ts` - **Shared 15-color palette**: used by both `TacticalMap` (COLOR: COMM toggle) and `StorylineGraph` for visual consistency across pages.
   - State: `compareId` (nullable) to track which report is being compared
@@ -112,6 +114,12 @@ Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` i
 
 #### Insights Components (`components/insights/`)
 - `WaitlistInline.tsx` - Email waitlist signup form embedded in insights pages
+
+#### Romania Components (`components/romania/`)
+- `MacroMiniDashboard.tsx` (`'use client'`) — SWR-fetches `/api/v1/romania/macro`, renders 5 `MacroIndicatorCard` in a responsive grid; shows animated skeleton while loading; empty state with setup instruction.
+- `MacroIndicatorCard.tsx` (`'use client'`) — single indicator card with formatted value, delta vs previous, and SVG sparkline (no chart lib); trending green/red color based on direction.
+- `BriefingList.tsx` (`'use client'`) — tabs Daily/Weekly, SWR-fetches `/api/v1/romania/briefings?type=...&limit=20`, renders `BriefingCard` list; shows command hint when empty.
+- `BriefingCard.tsx` (`'use client'`) — single briefing item with date, type badge (Giornaliero/Settimanale), excerpt (3-line clamp), and link to `/romania/{id}`.
 
 #### Landing Components (`components/landing/`)
 Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cinematic / tactical HUD). Data e JSON-LD in `lib/landing/`.
