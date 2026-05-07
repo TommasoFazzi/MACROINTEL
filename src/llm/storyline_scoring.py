@@ -84,13 +84,20 @@ def _jaccard(set_a: Set[str], set_b: Set[str]) -> float:
 
 
 def _entity_set(storyline: dict) -> Set[str]:
-    """Extract lowercase entity strings from storyline dict."""
+    """Extract lowercase entity strings from storyline dict.
+
+    Handles both flat {'GPE': [...]} and nested {'by_type': {'GPE': [...]}} structures.
+    """
     entities = storyline.get("entities", {})
     if isinstance(entities, dict):
         all_ents: List[str] = []
         for v in entities.values():
             if isinstance(v, list):
                 all_ents.extend(v)
+            elif isinstance(v, dict):
+                for inner_v in v.values():
+                    if isinstance(inner_v, list):
+                        all_ents.extend(inner_v)
         return {e.lower() for e in all_ents if isinstance(e, str)}
     return set()
 
@@ -108,9 +115,15 @@ def _regional_signal(storyline: dict) -> float:
 
 
 def _trade_route_signal(storyline: dict) -> float:
-    """Jaccard similarity between storyline entities and TRADE_ROUTES_SET."""
+    """Fraction of storyline entities that are trade-route terms.
+
+    Uses containment (not Jaccard) because the trade-routes reference set is large
+    (~20+ terms); Jaccard would be artificially low even for highly relevant stories.
+    """
     entities = _entity_set(storyline)
-    return _jaccard(entities, _get_trade_routes())
+    if not entities:
+        return 0.0
+    return len(entities & _get_trade_routes()) / len(entities)
 
 
 def _source_signal(storyline: dict, source_geo_regions: Dict[str, str]) -> float:

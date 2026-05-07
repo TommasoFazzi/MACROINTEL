@@ -294,7 +294,7 @@ def test_save_article_unicode_in_content_hash(db_manager, mock_connection):
         # index 3: [0]=link check, [1]=content_hash check, [2]=load_source_cache, [3]=INSERT
         insert_call = cursor.execute.call_args_list[3]
         params = insert_call[0][1]
-        assert params[-4] == expected_hash  # content_hash is 4th from last (before source_id, domain, extraction_method)
+        assert params[-5] == expected_hash  # content_hash is 5th from last (before source_id, domain, extraction_method, geo_focus)
 
 
 @pytest.mark.unit
@@ -330,7 +330,7 @@ def test_save_article_very_long_content(db_manager, mock_connection):
         # index 3: [0]=link check, [1]=content_hash check, [2]=load_source_cache, [3]=INSERT
         insert_call = cursor.execute.call_args_list[3]
         params = insert_call[0][1]
-        assert len(params[-4]) == 32  # content_hash is 4th from last (before source_id, domain, extraction_method)
+        assert len(params[-5]) == 32  # content_hash is 5th from last (before source_id, domain, extraction_method, geo_focus)
 
 
 # ============================================================================
