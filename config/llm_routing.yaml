@@ -2,7 +2,7 @@ tiers:
   t1:
     provider: gemini
     model: gemini-3.1-pro-preview
-    timeout: 120
+    timeout: 300
 
   t2:
     provider: anthropic
