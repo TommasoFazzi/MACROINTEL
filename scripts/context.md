@@ -96,6 +96,9 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 ### Quality Auditing
 - `audit_entity_quality.py` - Audit entity data quality: checks for garbage entities, geocoding gaps, low-mention counts, and duplicate names. Outputs a quality report to stdout.
 
+### Static Data Freshness
+- `check_static_data_freshness.py` - **Upstream freshness checker**: queries the DB for current state of each static table and does lightweight upstream checks (no bulk downloads) to detect available updates. Covers IMF WEO, World Bank, UCDP, and OpenSanctions. CLI flag: `--no-db` (upstream only, no DB access). Requires `UCDP_API_TOKEN` for UCDP checks.
+
 ### Ticker Management
 - `seed_tickers.py` - Seed ticker whitelist to database
 
