@@ -59,7 +59,7 @@ def db_imf_state(db):
 
 def db_worldbank_state(db):
     rows = _db_query(db, """
-        SELECT COUNT(*), MAX(updated_at)
+        SELECT COUNT(*), MAX(last_updated)
         FROM country_profiles
     """)
     return rows[0] if rows else (0, None)
