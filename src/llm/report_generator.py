@@ -3583,7 +3583,8 @@ Respond with JSON only:"""
         top_articles: int = 100,
         min_similarity: float = 0.30,
         min_fallback: int = 10,
-        skip_article_signals: bool = False
+        skip_article_signals: bool = False,
+        report_type: str = "global"
     ) -> Dict[str, Any]:
         """
         Run the serialized Macro-First pipeline.
@@ -3624,7 +3625,8 @@ Respond with JSON only:"""
             to_time=to_time,
             top_articles=top_articles,
             min_similarity=min_similarity,
-            min_fallback=min_fallback
+            min_fallback=min_fallback,
+            report_type=report_type
         )
 
         if not report['success']:

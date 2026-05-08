@@ -199,7 +199,8 @@ def main():
                 top_articles=args.top_articles,
                 min_similarity=args.min_similarity,
                 min_fallback=args.min_articles,
-                skip_article_signals=args.skip_article_signals
+                skip_article_signals=args.skip_article_signals,
+                report_type=args.report_type
             )
 
             if not report['success']:
