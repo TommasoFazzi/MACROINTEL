@@ -224,10 +224,31 @@ def render_imf(db_rows, upstream):
         expected = upstream["vintage"]
         api_year = upstream["latest_year"]
         print(info(f"Upstream: expected vintage = {BOLD}{expected}{RESET}  |  latest data year in API = {api_year}"))
-        if db_latest and db_latest == expected:
-            print(ok(f"DB is up to date ({db_latest})"))
-        elif db_latest:
-            print(stale(f"UPDATE AVAILABLE — DB has {db_latest}, upstream expects {expected}"))
+
+        # Derive minimum acceptable load month from expected vintage label
+        # e.g. "April2026" → 202604, "October2025" → 202510
+        def _vintage_to_yyyymm(v):
+            try:
+                if v.startswith("auto_"):
+                    return int(v[5:11])  # auto_202605 → 202605
+                month_map = {"January":1,"February":2,"March":3,"April":4,
+                             "May":5,"June":6,"July":7,"August":8,
+                             "September":9,"October":10,"November":11,"December":12}
+                for m, n in month_map.items():
+                    if v.startswith(m):
+                        year = int(v[len(m):])
+                        return year * 100 + n
+            except Exception:
+                pass
+            return None
+
+        if db_latest:
+            db_ym = _vintage_to_yyyymm(db_latest)
+            ex_ym = _vintage_to_yyyymm(expected)
+            if db_ym is not None and ex_ym is not None and db_ym >= ex_ym:
+                print(ok(f"DB is up to date ({db_latest} ≥ {expected})"))
+            else:
+                print(stale(f"UPDATE AVAILABLE — DB has {db_latest}, upstream expects {expected}"))
         else:
             print(stale(f"No data in DB — run load_imf_weo.py"))
     else:
