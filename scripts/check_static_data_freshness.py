@@ -138,8 +138,8 @@ def check_ucdp_upstream():
     Query UCDP candidate API with pagesize=1 ordered by date descending to get
     the most recent event date — no bulk download.
     """
-    token = os.getenv("UCDP_API_TOKEN", "")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    token = os.getenv("UCDP_API_TOKEN", "").strip()
+    headers = {"x-ucdp-access-token": token} if token else {}
 
     results = {}
     for label, base_url in [
