@@ -1062,6 +1062,7 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                     "max_output_tokens": 2000,  # Gemini 2.5 Flash is a thinking model; ~300-500 thinking tokens
                     "temperature": 0.3,         # consumed before output — 400 was too low, only TITLE returned
                 },
+                raise_on_truncation=True,
             )
             # Strip markdown formatting that Gemini may emit despite instructions
             text = _strip_llm_markdown(raw_text)

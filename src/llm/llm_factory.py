@@ -117,13 +117,20 @@ class GeminiClient(BaseLLMClient):
         return response.text
 
     def generate_content_raw(
-        self, prompt: str, generation_config: dict, request_options: dict | None = None
+        self,
+        prompt: str,
+        generation_config: dict,
+        request_options: dict | None = None,
+        raise_on_truncation: bool = False,
     ) -> str:
         """Compatibility shim: passthrough to genai.GenerativeModel.generate_content().
 
         For gradual migration of report_generator.py call sites that pass complex
         generation_config dicts. Remove once all T1 call sites use generate().
         request_options overrides the default timeout when provided.
+
+        raise_on_truncation: if True, raises RuntimeError when finish_reason is MAX_TOKENS
+        so callers can preserve existing data instead of storing partial output.
         """
         model = self._genai.GenerativeModel(
             self._model_name,
@@ -131,6 +138,13 @@ class GeminiClient(BaseLLMClient):
         )
         opts = request_options if request_options is not None else {"timeout": self._timeout}
         response = model.generate_content(prompt, request_options=opts)
+        if raise_on_truncation and response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+            if finish_reason.name == "MAX_TOKENS":
+                raise RuntimeError(
+                    f"Gemini response truncated at max_output_tokens "
+                    f"(model={self._model_name!r}, chars={len(response.text)})"
+                )
         return response.text
 
     def __repr__(self) -> str:
