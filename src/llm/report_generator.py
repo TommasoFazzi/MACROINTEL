@@ -1987,7 +1987,18 @@ Respond with JSON only:"""
                 summary = s['summary'][:500]
                 lines.append(f'    <summary>{summary}</summary>')
             if s['entities']:
-                lines.append(f'    <entities>{", ".join(s["entities"][:10])}</entities>')
+                ents = s['entities']
+                if isinstance(ents, dict):
+                    flat = []
+                    for v in ents.values():
+                        if isinstance(v, list):
+                            flat.extend(v)
+                        elif isinstance(v, dict):
+                            for inner in v.values():
+                                if isinstance(inner, list):
+                                    flat.extend(inner)
+                    ents = flat
+                lines.append(f'    <entities>{", ".join(str(e) for e in ents[:10])}</entities>')
 
             # Recent articles
             if s['recent_articles']:
