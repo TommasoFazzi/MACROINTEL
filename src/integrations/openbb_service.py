@@ -518,6 +518,12 @@ class OpenBBMarketService:
         """
         target_date = target_date or date.today()
 
+        # Weekend skip: markets are closed Sat/Sun — no new equity/commodity data to fetch.
+        # The report step uses the most recent weekday record via get_macro_context_text fallback.
+        if target_date.weekday() >= 5:
+            logger.info(f"Skipping macro fetch for {target_date} (weekend — markets closed)")
+            return True
+
         # Check if already have data
         if self._has_macro_data(target_date):
             logger.info(f"Macro data already present for {target_date}")
@@ -1028,8 +1034,24 @@ class OpenBBMarketService:
         Returns:
             Formatted text for LLM prompt
         """
+        from datetime import timedelta as _td
         target_date = target_date or date.today()
         indicators = self._get_macro_indicators(target_date)
+        weekend_note = None
+
+        # Weekend fallback: look back up to 5 days for most recent weekday record
+        if not indicators and target_date.weekday() >= 5:
+            for offset in range(1, 6):
+                fallback_date = target_date - _td(days=offset)
+                indicators = self._get_macro_indicators(fallback_date)
+                if indicators:
+                    weekend_note = (
+                        f"[WEEKEND — markets closed. Data reflects last trading day: {fallback_date}. "
+                        "DoD changes are from that session, not today.]"
+                    )
+                    logger.info(f"Weekend fallback: using macro data from {fallback_date}")
+                    target_date = fallback_date  # use fallback date for DoD calculation
+                    break
 
         if not indicators:
             return ""
@@ -1121,6 +1143,9 @@ class OpenBBMarketService:
             "(Use this data to correlate geopolitical events with market movements)",
             ""
         ]
+        if weekend_note:
+            lines.insert(2, weekend_note)
+            lines.insert(3, "")
 
         category_emojis = {
             'RATES': '',

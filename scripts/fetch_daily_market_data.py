@@ -53,8 +53,13 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
     if force:
         logger.info("FORCE MODE - Will refresh existing data")
 
+    # Weekend skip: markets closed Sat/Sun — no new data to fetch.
+    # The report step will use the most recent weekday record already in the DB.
+    if target_date.weekday() >= 5:
+        logger.info(f"Skipping fetch for {target_date} (weekend — markets closed)")
+        return True
+
     # Holiday awareness: log when fetching on a US market holiday.
-    # Weekends are skipped upstream (backfill) or by explicit date choice.
     try:
         from src.integrations.market_calendar import fetch_mode
         _mode = fetch_mode(target_date)

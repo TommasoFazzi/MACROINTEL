@@ -1059,8 +1059,8 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
             raw_text = self.model.generate_content_raw(
                 prompt,
                 generation_config={
-                    "max_output_tokens": 2000,  # Gemini 2.5 Flash is a thinking model; ~300-500 thinking tokens
-                    "temperature": 0.3,         # consumed before output — 400 was too low, only TITLE returned
+                    "max_output_tokens": 8192,  # Gemini 2.5 Flash thinking model: observed ~1700 thinking tokens
+                    "temperature": 0.3,         # consumed before output — 2000 was too low (1700 thinking + 300 output)
                 },
                 raise_on_truncation=True,
             )

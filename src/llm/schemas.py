@@ -525,9 +525,16 @@ class DashboardItemV2(BaseModel):
     key: str
     value: float
     delta_pct: float
-    materiality: Literal["noise", "notable", "significant"]
+    materiality: Literal["noise", "notable", "significant"] = "notable"
     label: str
     note: Optional[str] = None
+
+    @field_validator('materiality', mode='before')
+    @classmethod
+    def coerce_null_materiality(cls, v):
+        if v is None:
+            return "notable"
+        return v
 
 
 class MacroAnalysisResultV2(BaseModel):
