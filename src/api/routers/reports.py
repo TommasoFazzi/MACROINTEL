@@ -73,7 +73,7 @@ async def list_reports(
     db = get_db()
     try:
         # Build query — Romania verticals are served at /romania, not here
-        conditions = ["report_type NOT LIKE 'romania-%'"]
+        conditions = ["report_type NOT LIKE 'romania-%%'"]
         params = []
 
         if status:
