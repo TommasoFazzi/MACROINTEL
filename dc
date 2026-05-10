@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Wrapper: docker compose with correct project name and env file.
+# Usage: ./dc <any docker compose args>
+# Example: ./dc up -d frontend
+#          ./dc build --no-cache backend
+#          ./dc logs -f frontend
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env.production"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "ERROR: $ENV_FILE not found — cannot start without production env" >&2
+  exit 1
+fi
+
+exec docker compose -p app --env-file "$ENV_FILE" "$@"
