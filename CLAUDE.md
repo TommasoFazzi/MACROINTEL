@@ -189,8 +189,6 @@ When the user asks about scores, intelligence scores, or scoring — they mean t
 
 ## Infrastructure Reference
 
-**Server**: Hetzner CAX31 · 8 GB ARM64 · Deploy path: `/opt/intelligence-ita/repo` · Env: `.env.production`
-
-Full ops reference (Docker Compose, SSH, DB, Nginx, GitHub Actions): **[docs/runbooks/production.md](docs/runbooks/production.md)**
+Full ops reference (server specs, deploy paths, SSH, DB, Nginx, GitHub Actions): `docs/runbooks/production.md` — kept local-only, not committed to VCS.
 
 **GitHub Actions workflows**: `deploy.yml` · `pipeline.yml` · `migrate.yml` · `evals_fast.yml` · `evals_nightly.yml` · `update-docs.yml`
