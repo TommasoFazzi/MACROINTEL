@@ -47,7 +47,7 @@ Key database objects consumed:
 | GET | `/api/v1/map/stats` | routers/map.py | Live HUD stats: entity counts, geocoded count, active storylines, type breakdown | Yes |
 | POST | `/api/v1/map/cache/invalidate` | routers/map.py | Invalidate map entity cache (called by refresh_map_data.py after pipeline) | Yes |
 | GET | `/api/v1/dashboard/stats` | routers/dashboard.py | Aggregated dashboard statistics (overview, articles, entities, quality) | Yes |
-| GET | `/api/v1/reports` | routers/reports.py | Paginated report list; query params: `page`, `per_page`, `status`, `report_type`, `date_from`, `date_to` | Yes |
+| GET | `/api/v1/reports` | routers/reports.py | Paginated report list; query params: `page`, `per_page`, `status`, `report_type`, `date_from`, `date_to`. **Always excludes `report_type LIKE 'romania-%'`** — Romania reports are served at `/api/v1/romania/briefings`. | Yes |
 | GET | `/api/v1/reports/{report_id}` | routers/reports.py | Full report detail: content, sources, feedback, metadata | Yes |
 | GET | `/api/v1/reports/compare` | routers/reports.py | **LLM-synthesized delta analysis** between two reports; query params: `ids` (comma-separated report IDs, e.g. `42,38`); returns Gemini-generated delta: new_developments, resolved_topics, trend_shifts, persistent_themes | Yes |
 | GET | `/api/v1/stories/graph` | routers/stories.py | Full narrative graph (nodes + links + aggregate stats) for react-force-graph; query params: `min_edge_weight` (default 0.10), `min_momentum` (optional); cached 1h; filters isolated nodes (0 edges). Views (`v_active_storylines`, `v_storyline_graph`) include `emerging`, `active`, **and `stabilized`** storylines (migration 017). | Yes |

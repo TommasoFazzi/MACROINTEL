@@ -8,10 +8,9 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function BriefingList() {
   const [tab, setTab] = useState<'daily' | 'weekly'>('daily');
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || '';
 
   const { data, isLoading } = useSWR<{ briefings: Briefing[] }>(
-    `${apiBase}/api/v1/romania/briefings?type=${tab}&limit=20`,
+    `/api/proxy/romania/briefings?type=${tab}&limit=20`,
     fetcher,
     { refreshInterval: 300_000 }
   );
@@ -28,6 +27,7 @@ export function BriefingList() {
         {tabs.map((t) => (
           <button
             key={t.key}
+            type="button"
             onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === t.key

@@ -72,8 +72,8 @@ async def list_reports(
     """
     db = get_db()
     try:
-        # Build query
-        conditions = []
+        # Build query — Romania verticals are served at /romania, not here
+        conditions = ["report_type NOT LIKE 'romania-%'"]
         params = []
 
         if status:
@@ -89,7 +89,7 @@ async def list_reports(
             conditions.append("report_date <= %s")
             params.append(date_to)
 
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        where_clause = " AND ".join(conditions)
 
         with db.get_connection() as conn:
             with conn.cursor() as cur:

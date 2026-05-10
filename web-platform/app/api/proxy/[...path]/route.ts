@@ -4,7 +4,7 @@ const API_URL = process.env.INTELLIGENCE_API_URL || 'http://localhost:8000';
 const API_KEY = process.env.INTELLIGENCE_API_KEY || '';
 
 // Allowed API path prefixes for GET requests (first segment of the path)
-const ALLOWED_GET_PREFIXES = ['dashboard', 'reports', 'stories', 'map', 'insights'];
+const ALLOWED_GET_PREFIXES = ['dashboard', 'reports', 'stories', 'map', 'insights', 'romania'];
 
 // Allowed API path prefixes for POST requests
 const ALLOWED_POST_PREFIXES = ['oracle', 'ingest', 'waitlist'];

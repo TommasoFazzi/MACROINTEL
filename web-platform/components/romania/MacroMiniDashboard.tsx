@@ -14,9 +14,8 @@ interface Indicator {
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function MacroMiniDashboard() {
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || '';
   const { data, error, isLoading } = useSWR<{ indicators: Indicator[] }>(
-    `${apiBase}/api/v1/romania/macro`,
+    '/api/proxy/romania/macro',
     fetcher,
     { refreshInterval: 300_000 }
   );

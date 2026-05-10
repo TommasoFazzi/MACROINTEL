@@ -11,7 +11,7 @@ import os
 import re
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 import numpy as np
@@ -151,6 +151,14 @@ LINEE GUIDA:
 - Cita le fonti autorevoli (BNR, INSSE, MinFinanze, ANRE) quando disponibili nel contesto
 - Framing esplicito per implicazioni aziende italiane (manifattura, logistica, energia)
 - Niente genericità: ogni punto deve avere un dato o un fatto specifico
+- Il contesto include anche <global_context_via_graph>: storylines globali collegate per \
+  relazione di grafo alle narrative Romania. Usale per il deep-dive geopolitico quando \
+  gli eventi globali (NATO, BCE, UE, Ucraina) hanno impatto diretto su Romania — \
+  esplicitare sempre il collegamento causale ("X → impatto su Romania: Y").
+- Usa il contesto <previously_reported> per distinguere sviluppi [NEW] da continuazioni \
+  [ONGOING]: non trattare come breaking news ciò che era già il tema principale ieri, \
+  a meno che non ci siano nuovi fatti materiali. Dai priorità agli articoli marcati \
+  fresh="true" nel contesto narrativo (pubblicati nelle ultime 24-48h).
 """
 
 ROMANIA_WEEKLY_SYSTEM_PROMPT = """Sei un analista senior di intelligence economica \
@@ -178,6 +186,15 @@ LINEE GUIDA:
 - Romania come hub: esplicita impatto di eventi in Caspio, Azerbaijan, Kazakhstan su economia RO
 - Sezione Implicazioni deve coprire: manifattura italiana in RO, logistica Costanța, \
   energy supply chain, banking e credito
+- Il contesto include <global_context_via_graph>: storylines globali connesse per relazione \
+  di grafo alle narrative Romania. Nella sezione Contesto Geopolitico usa queste storylines \
+  per collegare i grandi movimenti internazionali (NATO, BCE, UE, Ucraina) all'economia rumena, \
+  esplicitando sempre il meccanismo causale.
+- Usa il contesto <previously_reported> (ultimo briefing settimanale) per strutturare \
+  l'analisi come delta rispetto alla settimana precedente: evidenzia cosa è cambiato, \
+  cosa si è risolto e cosa rimane irrisolto. Non ripetere lo stesso assessment settimanale \
+  se non ci sono nuovi sviluppi. Dai priorità agli articoli marcati fresh="true" nel \
+  contesto narrativo.
 """
 
 
@@ -1931,6 +1948,7 @@ Respond with JSON only:"""
             ]
 
             # Romania scoring: rerank storylines by tiered relevance score
+            global_connected: list = []
             if report_type.startswith("romania-") and storylines:
                 try:
                     from .storyline_scoring import filter_storylines_for_report
@@ -1953,14 +1971,87 @@ Respond with JSON only:"""
                 except Exception as score_err:
                     logger.warning(f"Romania scoring failed, using momentum ranking: {score_err}")
 
-            return {'storylines': storylines, 'edges': edges}
+                # Graph expansion: find globally-connected storylines (1-hop neighbors
+                # of Romania storylines that are not themselves Romania-qualified).
+                # These capture global dynamics that affect Romania indirectly.
+                try:
+                    romania_ids = [s['id'] for s in storylines]
+                    if romania_ids:
+                        with self.db.get_connection() as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    SELECT DISTINCT
+                                        CASE
+                                            WHEN se.source_story_id = ANY(%s) THEN se.target_story_id
+                                            ELSE se.source_story_id
+                                        END AS neighbor_id,
+                                        MAX(se.weight) AS max_weight,
+                                        MAX(se.relation_type) AS relation_type
+                                    FROM storyline_edges se
+                                    WHERE (se.source_story_id = ANY(%s)
+                                           OR se.target_story_id = ANY(%s))
+                                      AND NOT (se.source_story_id = ANY(%s)
+                                               AND se.target_story_id = ANY(%s))
+                                    GROUP BY neighbor_id
+                                    HAVING MAX(se.weight) >= 0.25
+                                    ORDER BY max_weight DESC
+                                    LIMIT 8
+                                """, [romania_ids] * 5)
+                                neighbor_rows = cur.fetchall()
+                                neighbor_ids = [r[0] for r in neighbor_rows]
+                                neighbor_weight = {r[0]: r[1] for r in neighbor_rows}
+
+                                if neighbor_ids:
+                                    cur.execute("""
+                                        SELECT id, title, summary, momentum_score
+                                        FROM v_active_storylines
+                                        WHERE id = ANY(%s)
+                                    """, [neighbor_ids])
+                                    meta_rows = cur.fetchall()
+
+                                    cur.execute("""
+                                        SELECT als.storyline_id, a.title, a.source,
+                                               a.published_date
+                                        FROM article_storylines als
+                                        JOIN articles a ON als.article_id = a.id
+                                        WHERE als.storyline_id = ANY(%s)
+                                          AND a.published_date >= NOW() - make_interval(days => %s)
+                                        ORDER BY a.published_date DESC
+                                    """, [neighbor_ids, days])
+                                    nb_article_rows = cur.fetchall()
+
+                                nb_articles_by_story: Dict[int, list] = {}
+                                for sid, t, src, pub in nb_article_rows:
+                                    nb_articles_by_story.setdefault(sid, []).append({
+                                        'title': t, 'source': src,
+                                        'date': pub.strftime('%Y-%m-%d') if pub else '',
+                                    })
+
+                                for m in meta_rows:
+                                    global_connected.append({
+                                        'id': m[0],
+                                        'title': m[1] or '',
+                                        'summary': m[2] or '',
+                                        'momentum': round(m[3] or 0.0, 2),
+                                        'edge_weight': round(neighbor_weight.get(m[0], 0.0), 2),
+                                        'recent_articles': nb_articles_by_story.get(m[0], [])[:3],
+                                    })
+                                global_connected.sort(key=lambda x: x['edge_weight'], reverse=True)
+                                logger.info(f"[Romania graph expansion] {len(global_connected)} globally-connected storylines found")
+                except Exception as gx_err:
+                    logger.warning(f"Romania graph expansion failed (non-blocking): {gx_err}")
+
+            return {'storylines': storylines, 'edges': edges, 'global_connected': global_connected}
 
         except Exception as e:
             logger.warning(f"Failed to fetch narrative context (non-blocking): {e}")
             return {'storylines': [], 'edges': []}
 
-    def _format_narrative_xml(self, narrative_ctx: Dict[str, Any]) -> str:
-        """Format narrative context as structured XML for LLM prompt."""
+    def _format_narrative_xml(self, narrative_ctx: Dict[str, Any], fresh_cutoff: Optional[str] = None) -> str:
+        """Format narrative context as structured XML for LLM prompt.
+
+        fresh_cutoff: YYYY-MM-DD string. Articles with date >= cutoff get fresh="true" attribute.
+        """
         storylines = narrative_ctx.get('storylines', [])
         edges = narrative_ctx.get('edges', [])
 
@@ -2004,8 +2095,11 @@ Respond with JSON only:"""
             if s['recent_articles']:
                 lines.append('    <recent_articles>')
                 for a in s['recent_articles']:
+                    fresh_attr = ""
+                    if fresh_cutoff and a.get("date", "") >= fresh_cutoff:
+                        fresh_attr = ' fresh="true"'
                     lines.append(
-                        f'      <article date="{a["date"]}" source="{a["source"]}">'
+                        f'      <article date="{a["date"]}" source="{a["source"]}"{fresh_attr}>'
                         f'{a["title"]}</article>'
                     )
                 lines.append('    </recent_articles>')
@@ -2021,6 +2115,34 @@ Respond with JSON only:"""
             lines.append('  </storyline>')
 
         lines.append('</strategic_storylines>')
+
+        # Global context: storylines connected via graph to Romania storylines
+        global_connected = narrative_ctx.get('global_connected', [])
+        if global_connected:
+            lines.append('')
+            lines.append('<global_context_via_graph>')
+            lines.append('  <!-- Storylines not Romania-specific but connected by graph edges to Romania narratives -->')
+            for gc in global_connected:
+                lines.append(
+                    f'  <storyline edge_weight="{gc["edge_weight"]}" momentum="{gc["momentum"]}">'
+                )
+                lines.append(f'    <title>{gc["title"]}</title>')
+                if gc['summary']:
+                    lines.append(f'    <summary>{gc["summary"][:300]}</summary>')
+                if gc['recent_articles']:
+                    lines.append('    <recent_articles>')
+                    for a in gc['recent_articles']:
+                        fresh_attr = ""
+                        if fresh_cutoff and a.get("date", "") >= fresh_cutoff:
+                            fresh_attr = ' fresh="true"'
+                        lines.append(
+                            f'      <article date="{a["date"]}" source="{a["source"]}"{fresh_attr}>'
+                            f'{a["title"]}</article>'
+                        )
+                    lines.append('    </recent_articles>')
+                lines.append('  </storyline>')
+            lines.append('</global_context_via_graph>')
+
         return '\n'.join(lines)
 
     def _get_source_geo_regions(self) -> Dict[str, str]:
@@ -2056,6 +2178,35 @@ Respond with JSON only:"""
         except Exception as e:
             logger.debug(f"Could not load source cadence weights: {e}")
             return {}
+
+    def _fetch_previous_romania_reports(self, report_type: str, limit: int = 2) -> List[Dict]:
+        """Fetch last N Romania reports of same type for previously-reported delta context."""
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT report_date, draft_content
+                        FROM reports
+                        WHERE report_type = %s
+                        ORDER BY report_date DESC
+                        LIMIT %s
+                        """,
+                        [report_type, limit],
+                    )
+                    rows = cur.fetchall()
+            result = []
+            for report_date, content in rows:
+                # Strip header lines (# headings and --- separators) to get body text
+                lines = (content or "").split('\n')
+                body_lines = [l for l in lines if not l.startswith('#') and l.strip() != '---']
+                body = '\n'.join(body_lines).strip()[:700]
+                date_str = report_date.strftime('%Y-%m-%d') if hasattr(report_date, 'strftime') else str(report_date)
+                result.append({'date': date_str, 'summary': body})
+            return result
+        except Exception as e:
+            logger.debug(f"Could not fetch previous Romania reports for delta context: {e}")
+            return []
 
     def _format_romania_macro_header(self) -> str:
         """
@@ -2332,19 +2483,43 @@ Respond with JSON only:"""
 
         # Default focus areas - aligned with feed coverage
         if focus_areas is None:
-            focus_areas = [
-                "cybersecurity threats, data breaches, and critical infrastructure vulnerabilities",
-                "geopolitical tensions and power dynamics in Indo-Pacific region (China, Taiwan, ASEAN)",
-                "Middle East conflicts, security developments, and regional stability (Israel, Iran, Arab states)",
-                "defense technology, military procurement, and strategic weapons systems",
-                "global supply chain disruptions, semiconductor industry, and critical materials",
-                "energy markets, OPEC dynamics, and transition to renewables",
-                "European Union policy, Russia-NATO relations, and transatlantic security",
-                "space industry developments, satellite technology, and dual-use applications",
-                "Africa security challenges, conflicts, and great power competition",
-                "Latin America political developments and China's influence in the region",
-                "economic policy shifts, central bank decisions, and financial market trends"
-            ]
+            if report_type.startswith("romania-"):
+                focus_areas = [
+                    # Macro / fiscal
+                    "Romania GDP growth inflation CPI budget deficit fiscal consolidation IMF programme",
+                    # Financial markets
+                    "EUR/RON exchange rate BVB Bucharest Stock Exchange Banca Transilvania BCR BRD NBR interest rate Romanian sovereign bonds",
+                    # EU funds
+                    "Romania PNRR milestones disbursement EU cohesion structural funds absorption European Commission assessment",
+                    # Energy upstream
+                    "Neptun Deep offshore gas OMV Petrom Romgaz Black Sea Transgaz BRUA pipeline LNG ANRE energy regulator",
+                    # Energy transition
+                    "Romania renewable energy solar wind Hidroelectrica decarbonization green capacity ETS carbon",
+                    # Security & NATO
+                    "Romania NATO Black Sea Mihail Kogalniceanu air base Ukraine war drone incident Deveselu missile defence Romanian MApN defence procurement",
+                    # Infrastructure
+                    "Via Carpathia Romania highway Autostrada Transilvania A3 CFR railway Constanta port TEN-T corridor infrastructure",
+                    # Italy-Romania bilateral
+                    "Italian companies Romania investment Confindustria Romania Italy trade FDI Made in Italy Eastern Europe",
+                    # Regional geopolitics
+                    "Moldova Romania EU NATO accession Bulgaria Hungary Serbia CEE Black Sea Balkans stability hybrid warfare disinformation",
+                    # Governance & politics
+                    "Romania anti-corruption DNA SNA rule of law judicial reform Romanian elections political parties AUR PSD PNL",
+                ]
+            else:
+                focus_areas = [
+                    "cybersecurity threats, data breaches, and critical infrastructure vulnerabilities",
+                    "geopolitical tensions and power dynamics in Indo-Pacific region (China, Taiwan, ASEAN)",
+                    "Middle East conflicts, security developments, and regional stability (Israel, Iran, Arab states)",
+                    "defense technology, military procurement, and strategic weapons systems",
+                    "global supply chain disruptions, semiconductor industry, and critical materials",
+                    "energy markets, OPEC dynamics, and transition to renewables",
+                    "European Union policy, Russia-NATO relations, and transatlantic security",
+                    "space industry developments, satellite technology, and dual-use applications",
+                    "Africa security challenges, conflicts, and great power competition",
+                    "Latin America political developments and China's influence in the region",
+                    "economic policy shifts, central bank decisions, and financial market trends"
+                ]
 
         # Step 1: Get recent articles
         if from_time or to_time:
@@ -2728,10 +2903,29 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         else:
             system_prompt = ROMANIA_WEEKLY_SYSTEM_PROMPT
 
+        # Feature A — previously reported delta context
+        prev_reports = self._fetch_previous_romania_reports(report_type, limit=2)
+        if prev_reports:
+            prev_lines = [
+                "<previously_reported>",
+                "  <!-- Sintesi dei report precedenti: non ripetere come breaking news ciò che era già il tema principale, a meno di nuovi fatti materiali -->",
+            ]
+            for pr in prev_reports:
+                prev_lines.append(f'  <report date="{pr["date"]}">')
+                prev_lines.append(f'    {pr["summary"]}')
+                prev_lines.append('  </report>')
+            prev_lines.append("</previously_reported>")
+            prev_context_block = "\n".join(prev_lines)
+        else:
+            prev_context_block = "<previously_reported>Primo report — nessun precedente disponibile.</previously_reported>"
+
+        # Feature B — freshness cutoff: articles from yesterday onward get fresh="true"
+        fresh_cutoff = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+
         # Format articles and narrative for prompt
         recent_articles_text = self.format_recent_articles(recent_articles[:50])
         rag_context_text = self.format_rag_context(unique_rag_results[:20])
-        narrative_xml = self._format_narrative_xml(narrative_ctx)
+        narrative_xml = self._format_narrative_xml(narrative_ctx, fresh_cutoff=fresh_cutoff)
 
         # Build relevance signal breakdown for output metadata
         relevance_breakdown = [
@@ -2747,11 +2941,15 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         prompt = f"""{system_prompt}
 
 ---
+**REPORT PRECEDENTI (delta context — non ripetere lo stesso lead):**
+{prev_context_block}
+
+---
 **CONTESTO MACRO ROMANIA:**
 {macro_header}
 
 ---
-**ARTICOLI RECENTI (ultimi {days} giorni):**
+**ARTICOLI RECENTI (ultimi {days} giorni — articoli con fresh="true" nelle storyline = ultime 24-48h):**
 {recent_articles_text}
 
 ---
@@ -2759,7 +2957,7 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
 {rag_context_text}
 
 ---
-**STORYLINE NARRATIVE ATTIVE (ordinate per rilevanza Romania):**
+**STORYLINE NARRATIVE (Romania-rilevanti + contesto globale connesso per grafo):**
 {narrative_xml or 'Nessuna storyline disponibile.'}
 
 ---

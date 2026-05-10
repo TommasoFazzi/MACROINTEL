@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 const NAV_LINKS: Array<[string, string]> = [
   ['Features', '/#features'],
   ['FAQ', '/#faq'],
+  ['Romania', '/romania'],
   ['Insights', 'https://macrointel.net/insights'],
   ['About', '/about'],
 ];

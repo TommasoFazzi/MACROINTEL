@@ -86,9 +86,12 @@ def _jaccard(set_a: Set[str], set_b: Set[str]) -> float:
 def _entity_set(storyline: dict) -> Set[str]:
     """Extract lowercase entity strings from storyline dict.
 
-    Handles both flat {'GPE': [...]} and nested {'by_type': {'GPE': [...]}} structures.
+    Handles flat list, flat {'GPE': [...]} dict, and nested {'by_type': {'GPE': [...]}} structures.
+    The key_entities column from v_active_storylines is a flat list; NLP pipeline stores dicts.
     """
     entities = storyline.get("entities", {})
+    if isinstance(entities, list):
+        return {e.lower() for e in entities if isinstance(e, str)}
     if isinstance(entities, dict):
         all_ents: List[str] = []
         for v in entities.values():
