@@ -104,6 +104,8 @@ Tests mirror `src/` structure under `tests/`. Mock HTTP with `responses`, mock d
 - **spaCy model**: `python -m spacy download xx_ent_wiki_sm`
 - **Docker Compose services**: `postgres`, `backend`, `frontend`, `nginx`, `photon` (optional, `--profile photon`)
 - **Required env vars**: `DATABASE_URL`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `INTELLIGENCE_API_KEY`, `FRED_API_KEY`
+- **Accepted CVE — postcss@8.4.31 (XSS via `</style>`):** pinned by `next@16.x` — unfixable without a Next.js upstream bump. Risk is negligible: vulnerability requires user-supplied CSS injected into HTML; we use only static build-time CSS.
+- **Accepted CVE — transformers@4.57.x (Trainer ACE):** `sentence-transformers==5.1.2` caps `transformers<5.0.0`; `Trainer` class is never used (inference-only via `SentenceTransformer`). Risk accepted until sentence-transformers releases a version compatible with transformers 5.x.
 
 ## Key Technical Patterns
 
