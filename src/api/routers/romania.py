@@ -92,7 +92,7 @@ async def get_romania_macro(request: Request):
                 "latest": None,
                 "series": [],
             }
-        entry = {"date": date.isoformat() if hasattr(date, "isoformat") else str(date), "value": value}
+        entry = {"date": date.isoformat() if hasattr(date, "isoformat") else str(date), "value": float(value) if value is not None else None}
         if indicators[key]["latest"] is None:
             indicators[key]["latest"] = entry
         indicators[key]["series"].append(entry)
