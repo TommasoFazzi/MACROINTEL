@@ -92,5 +92,8 @@ docs/generated/*.json
 # Keep local-only; do not publish to GitHub
 docs/runbooks/
 
+# Project AI instructions — kept local-only (internal architecture details)
+CLAUDE.md
+
 # OpenSpec planning files (local-only, not for VCS)
 openspec/
