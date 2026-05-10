@@ -67,7 +67,7 @@ async def get_romania_macro(request: Request):
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT indicator_key, value, unit, date, description
+                    SELECT indicator_key, value, unit, date
                     FROM macro_indicators
                     WHERE country_code = 'RO'
                       AND indicator_key = ANY(%s)
@@ -83,13 +83,12 @@ async def get_romania_macro(request: Request):
 
     # Organise into indicator buckets
     indicators: dict = {}
-    for key, value, unit, date, description in rows:
+    for key, value, unit, date in rows:
         if key not in indicators:
             indicators[key] = {
                 "key": key,
                 "label": _RO_INDICATOR_LABELS.get(key, key),
                 "unit": unit,
-                "description": description,
                 "latest": None,
                 "series": [],
             }

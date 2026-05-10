@@ -2001,6 +2001,8 @@ Respond with JSON only:"""
                                 neighbor_ids = [r[0] for r in neighbor_rows]
                                 neighbor_weight = {r[0]: r[1] for r in neighbor_rows}
 
+                                meta_rows = []
+                                nb_article_rows = []
                                 if neighbor_ids:
                                     cur.execute("""
                                         SELECT id, title, summary, momentum_score
