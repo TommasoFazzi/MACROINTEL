@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-REPO="TommasoFazzi/INTELLIGENCE_ITA"
+REPO="TommasoFazzi/MACROINTEL"
 WORKFLOW="pipeline.yml"
 REF="main"
 LOG_PREFIX="[$(date -u '+%Y-%m-%d %H:%M:%S UTC')]"
