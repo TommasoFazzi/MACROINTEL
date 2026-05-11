@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+import yaml
 
 # Load environment variables
 load_dotenv()
@@ -155,23 +156,24 @@ def main():
         logger.error(f"Failed to initialize report generator: {e}")
         return 1
 
-    # Define focus areas
-    focus_areas = [
-    # Cybersecurity: Aggiungiamo l'intento malevolo e l'infrastruttura
-    "cybersecurity threats, state-sponsored cyber attacks, ransomware campaigns, and critical infrastructure vulnerabilities",
+    # Define focus areas — load from verticals.yaml for vertical report types
+    _GLOBAL_FOCUS_AREAS = [
+        "cybersecurity threats, state-sponsored cyber attacks, ransomware campaigns, and critical infrastructure vulnerabilities",
+        "breakthroughs in artificial intelligence, semiconductor supply chain shifts, and dual-use technology regulations",
+        "escalation of military conflicts, diplomatic ruptures, and changing alliances in NATO, Russia, China, and Middle East",
+        "territorial control changes, strategic military movements, maritime security in choke points, and border disputes",
+        "global economic impact of sanctions, energy market volatility, and trade protectionism policies",
+    ]
 
-    # Tech: Aggiungiamo la dimensione strategica (chip/supply chain)
-    "breakthroughs in artificial intelligence, semiconductor supply chain shifts, and dual-use technology regulations",
-
-    # Geopolitica (Generale): Rendiamola più attiva
-    "escalation of military conflicts, diplomatic ruptures, and changing alliances in NATO, Russia, China, and Middle East",
-
-    # NUOVO: Geografia dei Conflitti (Specifico per la tua richiesta)
-    "territorial control changes, strategic military movements, maritime security in choke points, and border disputes",
-
-    # Economia: Colleghiamola alla geopolitica
-    "global economic impact of sanctions, energy market volatility, and trade protectionism policies"
-]
+    focus_areas = _GLOBAL_FOCUS_AREAS
+    if args.report_type.startswith("romania-"):
+        _verticals_path = Path(__file__).parent.parent / "config" / "verticals.yaml"
+        try:
+            with open(_verticals_path) as f:
+                _verticals = yaml.safe_load(f)
+            focus_areas = _verticals["verticals"]["romania"]["focus_areas"]
+        except Exception as e:
+            logger.warning(f"Could not load Romania focus areas from verticals.yaml ({e}), using global")
 
     logger.info(f"\n[STEP 2] Focus areas:")
     for area in focus_areas:
