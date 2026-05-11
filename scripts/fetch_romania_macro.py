@@ -97,16 +97,21 @@ def main() -> int:
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "DELETE FROM macro_indicators WHERE date = %s AND country_code = 'RO'",
-                        (target_date,)
+                        "DELETE FROM macro_indicators WHERE country_code = 'RO'",
+                        # Delete all RO rows (not just today) so FRED monthly data is re-fetched
                     )
                     logger.info(f"Deleted {cur.rowcount} existing RO indicators (force mode)")
         except Exception as e:
             logger.error(f"Force-delete failed: {e}")
             return 1
+    elif service._has_macro_data(target_date, country_code='RO'):
+        logger.info(f"RO macro data already present for {target_date} — skipping fetch (use --force to override)")
+        _show_ro_context(db, target_date)
+        db.close()
+        return 0
 
-    # ensure_daily_macro_data is idempotent — safe to call even if global already ran.
-    success = service.ensure_daily_macro_data(target_date)
+    # Fetch only the 5 RO indicators, independent of the global US pipeline state
+    success = service.fetch_ro_indicators(target_date)
 
     if success:
         logger.info("Macro fetch completed.")

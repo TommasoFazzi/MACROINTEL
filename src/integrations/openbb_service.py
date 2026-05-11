@@ -1401,20 +1401,94 @@ class OpenBBMarketService:
     # 3. DATABASE OPERATIONS
     # ========================================================================
 
-    def _has_macro_data(self, target_date: date) -> bool:
-        """Check if macro data exists for date."""
+    def _has_macro_data(self, target_date: date, country_code: Optional[str] = None) -> bool:
+        """Check if macro data exists for date, optionally scoped to a country_code."""
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT COUNT(*) FROM macro_indicators WHERE date = %s",
-                        (target_date,)
-                    )
-                    count = cur.fetchone()[0]
-                    return count >= 3  # At least 3 indicators
+                    if country_code:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM macro_indicators WHERE date = %s AND country_code = %s",
+                            (target_date, country_code)
+                        )
+                        count = cur.fetchone()[0]
+                        return count >= 1
+                    else:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM macro_indicators WHERE date = %s",
+                            (target_date,)
+                        )
+                        count = cur.fetchone()[0]
+                        return count >= 3
         except Exception as e:
             logger.debug(f"Error checking macro data: {e}")
             return False
+
+    _RO_INDICATOR_KEYS = ["BNR_RATE", "RO_CPI_YOY", "EUR_RON", "RO_DEFICIT_GDP", "RO_10Y_YIELD"]
+
+    def fetch_ro_indicators(self, target_date: Optional[date] = None) -> bool:
+        """Fetch only the 5 Romania macro indicators, bypassing the global has_data check.
+
+        Safe to call even when global US indicators already exist for today.
+        Used by fetch_romania_macro.py and the Romania report pipeline.
+        """
+        target_date = target_date or date.today()
+        obb = get_obb()
+        success_count = 0
+
+        for key in self._RO_INDICATOR_KEYS:
+            config = self.MACRO_INDICATORS.get(key)
+            if not config:
+                logger.warning(f"[RO fetch] Unknown indicator key: {key}")
+                continue
+            try:
+                if 'fred_series' in config:
+                    result = self._fetch_indicator_openbb_fixed(config['fred_series'], target_date)
+                    if result is not None:
+                        value, data_date, frequency = result
+                        self._save_macro_indicator(
+                            data_date, key, value,
+                            config['unit'], config['category'],
+                            country_code='RO',
+                        )
+                        self._upsert_indicator_metadata(
+                            key=key, frequency=frequency, last_updated=data_date,
+                            last_source='fred', is_stale=False,
+                            staleness_days=(target_date - data_date).days,
+                            fetch_attempted=True, fetch_succeeded=True,
+                        )
+                        success_count += 1
+                        logger.info(f"  [RO] {key}: {value} (data_date={data_date}, freq={frequency})")
+                    else:
+                        logger.warning(f"  [RO] {key}: no data from FRED")
+                        self._upsert_indicator_metadata(
+                            key=key, fetch_attempted=True, fetch_succeeded=False,
+                        )
+                elif 'symbol' in config:
+                    value = self._fetch_indicator_yfinance(config['symbol'])
+                    if value is None and obb:
+                        value = self._fetch_indicator_openbb(obb, key, config, target_date)
+                    if value is not None:
+                        self._save_macro_indicator(
+                            target_date, key, value,
+                            config['unit'], config['category'],
+                            country_code='RO',
+                        )
+                        frequency = config.get('frequency', 'daily')
+                        self._upsert_indicator_metadata(
+                            key=key, frequency=frequency, last_updated=target_date,
+                            last_source='yfinance', is_stale=False, staleness_days=0,
+                            fetch_attempted=True, fetch_succeeded=True,
+                        )
+                        success_count += 1
+                        logger.info(f"  [RO] {key}: {value} (yfinance)")
+                    else:
+                        logger.warning(f"  [RO] {key}: no data from yfinance/OpenBB")
+            except Exception as e:
+                logger.error(f"  [RO] {key} fetch error: {e}")
+
+        logger.info(f"[RO fetch] {success_count}/{len(self._RO_INDICATOR_KEYS)} indicators fetched")
+        return success_count > 0
 
     def _save_macro_indicator(
         self,
