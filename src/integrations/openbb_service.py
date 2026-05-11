@@ -1021,7 +1021,7 @@ class OpenBBMarketService:
             logger.error("yfinance not available")
             return False
 
-    def get_macro_context_text(self, target_date: Optional[date] = None) -> str:
+    def get_macro_context_text(self, target_date: Optional[date] = None, country_code: str = 'US') -> str:
         """
         Format macro indicators for LLM prompt injection.
 
@@ -1030,20 +1030,21 @@ class OpenBBMarketService:
 
         Args:
             target_date: Date to get context for (default: today)
+            country_code: Filter indicators by country (default 'US' = global indicators)
 
         Returns:
             Formatted text for LLM prompt
         """
         from datetime import timedelta as _td
         target_date = target_date or date.today()
-        indicators = self._get_macro_indicators(target_date)
+        indicators = self._get_macro_indicators(target_date, country_code)
         weekend_note = None
 
         # Weekend fallback: look back up to 5 days for most recent weekday record
         if not indicators and target_date.weekday() >= 5:
             for offset in range(1, 6):
                 fallback_date = target_date - _td(days=offset)
-                indicators = self._get_macro_indicators(fallback_date)
+                indicators = self._get_macro_indicators(fallback_date, country_code)
                 if indicators:
                     weekend_note = (
                         f"[WEEKEND — markets closed. Data reflects last trading day: {fallback_date}. "
@@ -1447,8 +1448,8 @@ class OpenBBMarketService:
             logger.error(f"Error saving macro indicator: {e}")
             return False
 
-    def _get_macro_indicators(self, target_date: date) -> List[Dict[str, Any]]:
-        """Get all macro indicators for date."""
+    def _get_macro_indicators(self, target_date: date, country_code: str = 'US') -> List[Dict[str, Any]]:
+        """Get macro indicators for date, filtered by country_code (default 'US' = global)."""
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -1456,8 +1457,9 @@ class OpenBBMarketService:
                         SELECT indicator_key, value, unit, category
                         FROM macro_indicators
                         WHERE date = %s
+                          AND country_code = %s
                         ORDER BY category, indicator_key
-                    """, (target_date,))
+                    """, (target_date, country_code))
 
                     return [
                         {

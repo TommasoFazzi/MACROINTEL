@@ -57,7 +57,7 @@ Key database objects consumed:
 | GET | `/api/v1/stories/{storyline_id}` | routers/stories.py | Storyline detail with related storylines (up to 10) and recent articles (up to 10) | Yes |
 | POST | `/api/v1/oracle/chat` | routers/oracle.py | Oracle 2.0 chat: NL query → agentic tool loop (RAG/SQL/Graph/Market/...) → Claude Sonnet 4.6 synthesis. Body: `query`, `session_id`, `start_date`, `end_date`, `categories`, `gpe_filter`, `mode`. **BREAKING (2026-04-17)**: `gemini_api_key` BYOK field removed — passing it returns HTTP 422. Rate limit: **3/minute per IP**. | Yes |
 | GET | `/api/v1/oracle/health` | routers/oracle.py | Oracle 2.0 service health check | No |
-| GET | `/api/v1/romania/macro` | routers/romania.py | Latest values + 90-day series for 5 RO indicators (BNR_RATE, RO_CPI_YOY, EUR_RON, RO_DEFICIT_GDP, RO_10Y_YIELD). Cached 5min. | No |
+| GET | `/api/v1/romania/macro` | routers/romania.py | Latest values + 90-day series for 5 RO indicators (BNR_RATE, RO_CPI_YOY, EUR_RON, RO_DEFICIT_GDP, RO_10Y_YIELD). Each indicator includes `expected_frequency`, `is_stale`, `staleness_days` from `macro_indicator_metadata` JOIN. Cached 5min. | No |
 | GET | `/api/v1/romania/briefings` | routers/romania.py | List saved Romania briefings newest-first; params: `type` (`daily`/`weekly`), `limit` (1–100, default 20). | No |
 | GET | `/api/v1/romania/briefings/{id}` | routers/romania.py | Full content + metadata for a single Romania briefing. Cached 10min. | No |
 

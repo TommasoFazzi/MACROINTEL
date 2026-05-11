@@ -116,8 +116,8 @@ Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` i
 - `WaitlistInline.tsx` - Email waitlist signup form embedded in insights pages
 
 #### Romania Components (`components/romania/`)
-- `MacroMiniDashboard.tsx` (`'use client'`) — SWR-fetches `/api/v1/romania/macro`, renders 5 `MacroIndicatorCard` in a responsive grid; shows animated skeleton while loading; empty state with setup instruction.
-- `MacroIndicatorCard.tsx` (`'use client'`) — single indicator card with formatted value, delta vs previous, and SVG sparkline (no chart lib); trending green/red color based on direction.
+- `MacroMiniDashboard.tsx` (`'use client'`) — SWR-fetches `/api/proxy/romania/macro`, renders 5 `MacroIndicatorCard` in a responsive grid; 3 distinct error states: network error (red) / no indicators (gray+setup hint) / all-null values (amber). Skeleton on loading.
+- `MacroIndicatorCard.tsx` (`'use client'`) — single indicator card with formatted value, delta vs previous, SVG sparkline; **staleness-aware**: amber border + `is_stale` prop shows "Xg fa" badge and grayed value when data is old relative to its cadence; frequency label ("mensile", "giornaliero") shown top-right. Props: `expectedFrequency`, `isStale`, `stalenessDays` (fed by `/romania/macro` API extension).
 - `BriefingList.tsx` (`'use client'`) — tabs Daily/Weekly, SWR-fetches `/api/v1/romania/briefings?type=...&limit=20`, renders `BriefingCard` list; shows command hint when empty.
 - `BriefingCard.tsx` (`'use client'`) — single briefing item with date, type badge (Giornaliero/Settimanale), excerpt (3-line clamp), and link to `/romania/{id}`.
 

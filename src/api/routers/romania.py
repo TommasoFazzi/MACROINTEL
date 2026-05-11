@@ -66,6 +66,7 @@ async def get_romania_macro(request: Request):
     try:
         with db.get_connection() as conn:
             with conn.cursor() as cur:
+                # Fetch series data
                 cur.execute("""
                     SELECT indicator_key, value, unit, date
                     FROM macro_indicators
@@ -75,6 +76,15 @@ async def get_romania_macro(request: Request):
                     ORDER BY indicator_key, date DESC
                 """, [_RO_INDICATOR_KEYS])
                 rows = cur.fetchall()
+
+                # Fetch staleness metadata per indicator
+                cur.execute("""
+                    SELECT key, expected_frequency, is_stale, staleness_days
+                    FROM macro_indicator_metadata
+                    WHERE key = ANY(%s)
+                """, [_RO_INDICATOR_KEYS])
+                meta_map = {r[0]: {"expected_frequency": r[1], "is_stale": r[2], "staleness_days": r[3]}
+                            for r in cur.fetchall()}
     except Exception as e:
         logger.error(f"[Romania macro] DB error: {e}")
         raise HTTPException(status_code=500, detail="Database error")
@@ -85,12 +95,16 @@ async def get_romania_macro(request: Request):
     indicators: dict = {}
     for key, value, unit, date in rows:
         if key not in indicators:
+            meta = meta_map.get(key, {})
             indicators[key] = {
                 "key": key,
                 "label": _RO_INDICATOR_LABELS.get(key, key),
                 "unit": unit,
                 "latest": None,
                 "series": [],
+                "expected_frequency": meta.get("expected_frequency", "monthly"),
+                "is_stale": meta.get("is_stale", False),
+                "staleness_days": meta.get("staleness_days"),
             }
         entry = {"date": date.isoformat() if hasattr(date, "isoformat") else str(date), "value": float(value) if value is not None else None}
         if indicators[key]["latest"] is None:

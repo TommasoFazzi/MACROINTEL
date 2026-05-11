@@ -1,0 +1,41 @@
+# verticals.yaml — Config-driven vertical report definitions.
+# Loaded by ReportGenerator to centralise all vertical-specific parameters instead of
+# scattering `if report_type.startswith("romania-")` conditionals across the codebase.
+#
+# Fields per vertical:
+#   report_types       — list of valid report_type strings for this vertical
+#   country_code       — ISO-2 country code used to filter macro_indicators
+#   geo_regions        — list of geo_region values in intelligence_sources (for cadence weights)
+#   macro_keys         — which indicator keys to display in the macro header
+#   staleness_days     — per-frequency override thresholds (days). Falls back to _FREQUENCY_STALE_DAYS defaults.
+#   focus_areas        — default semantic focus areas for article filtering (used when none passed by caller)
+
+verticals:
+  romania:
+    report_types:
+      - romania-daily
+      - romania-weekly
+    country_code: RO
+    geo_regions:
+      - romania
+      - cee
+    macro_keys:
+      - BNR_RATE
+      - RO_CPI_YOY
+      - EUR_RON
+      - RO_DEFICIT_GDP
+      - RO_10Y_YIELD
+    staleness_days:
+      daily: 3
+      weekly: 14
+      monthly: 75
+      quarterly: 120
+      annual: 400
+    focus_areas:
+      - "Romania GDP growth inflation CPI budget deficit fiscal consolidation IMF programme"
+      - "EUR/RON exchange rate BVB Bucharest Stock Exchange Banca Transilvania BCR BRD NBR interest rate Romanian sovereign bonds"
+      - "Romania PNRR milestones disbursement EU cohesion structural funds absorption European Commission assessment"
+      - "Neptun Deep offshore gas OMV Petrom Romgaz Black Sea Transgaz BRUA pipeline LNG ANRE energy regulator"
+      - "Romania renewable energy solar wind Hidroelectrica decarbonization green capacity ETS carbon"
+      - "Romania NATO Black Sea security Eastern flank Moldova Ukraine border geopolitics"
+      - "Romania political stability coalition government AUR USR PSD PNL electoral risk institutions rule of law"

@@ -10,6 +10,7 @@ Generates daily intelligence reports using:
 import os
 import re
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Optional
@@ -196,6 +197,17 @@ LINEE GUIDA:
   se non ci sono nuovi sviluppi. Dai priorità agli articoli marcati fresh="true" nel \
   contesto narrativo.
 """
+
+
+@dataclass
+class RomaniaReportContext:
+    """Encapsulates all inputs needed by _generate_romania_report()."""
+    report_type: str
+    recent_articles: List[Dict]
+    narrative_ctx: Dict[str, Any]
+    unique_rag_results: List[Dict]
+    days: int
+    report_date: str
 
 
 class ReportGenerator:
@@ -717,12 +729,14 @@ Output ONLY the {self.expansion_variants} variant queries, one per line, without
 
         return "\n".join(context_parts)
 
-    def format_recent_articles(self, articles: List[Dict]) -> str:
+    def format_recent_articles(self, articles: List[Dict], fresh_cutoff: Optional[str] = None) -> str:
         """
         Format recent articles for LLM prompt.
 
         Args:
             articles: List of recent articles from database
+            fresh_cutoff: YYYY-MM-DD string. Articles on or after this date get a [FRESH] tag
+                so the LLM can prioritise last-24h developments.
 
         Returns:
             Formatted string with recent news
@@ -735,20 +749,27 @@ Output ONLY the {self.expansion_variants} variant queries, one per line, without
 
         for i, article in enumerate(articles, 1):
             pub_date = article.get('published_date', 'Unknown date')
+            pub_date_str = 'Unknown date'
             if pub_date and pub_date != 'Unknown date':
-                pub_date = pub_date.strftime('%Y-%m-%d %H:%M') if hasattr(pub_date, 'strftime') else str(pub_date)
+                pub_date_str = pub_date.strftime('%Y-%m-%d %H:%M') if hasattr(pub_date, 'strftime') else str(pub_date)
+
+            # Freshness tag: mark articles from the last 24h so the LLM prioritises them
+            fresh_tag = ""
+            if fresh_cutoff and pub_date_str != 'Unknown date':
+                if pub_date_str[:10] >= fresh_cutoff:
+                    fresh_tag = " [FRESH]"
 
             entities = article.get('entities', {})
             entity_summary = []
             for entity_type in ['PERSON', 'ORG', 'GPE']:
                 if entity_type in entities and entities[entity_type]:
-                    top_entities = entities[entity_type][:3]  # Top 3 of each type
+                    top_entities = entities[entity_type][:3]
                     entity_summary.append(f"{entity_type}: {', '.join(top_entities)}")
 
             formatted_parts.append(
-                f"\n[Article {i}]\n"
+                f"\n[Article {i}]{fresh_tag}\n"
                 f"Title: {article['title']}\n"
-                f"Source: {article['source']} | Date: {pub_date} | Category: {article.get('category', 'N/A')}\n"
+                f"Source: {article['source']} | Date: {pub_date_str} | Category: {article.get('category', 'N/A')}\n"
                 f"Summary: {article.get('summary', 'No summary available')}\n"
             )
 
@@ -2210,14 +2231,24 @@ Respond with JSON only:"""
             logger.debug(f"Could not fetch previous Romania reports for delta context: {e}")
             return []
 
+    # Maximum staleness (days) before an indicator is considered n/d, keyed by expected_frequency.
+    _FREQUENCY_STALE_DAYS: dict = {
+        "daily": 3,
+        "24_7": 2,
+        "weekly": 14,
+        "monthly": 75,
+        "quarterly": 120,
+        "annual": 400,
+    }
+
     def _format_romania_macro_header(self) -> str:
         """
         Build single-line macro context string for Romania report header.
         Pulls latest 5 indicators with country_code='RO' from macro_indicators.
-        Returns formatted line or substitutes n/d for missing/stale (>30 days) values.
+        Staleness threshold is derived per-indicator from macro_indicator_metadata.expected_frequency
+        so monthly FRED series (publish ~45d lag) are not incorrectly marked n/d.
         """
         from datetime import date, timedelta
-        stale_threshold = date.today() - timedelta(days=30)
 
         indicator_labels = {
             'BNR_RATE': 'BNR',
@@ -2231,14 +2262,16 @@ Respond with JSON only:"""
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT DISTINCT ON (indicator_key)
-                            indicator_key, value, unit, date
-                        FROM macro_indicators
-                        WHERE country_code = 'RO'
-                          AND indicator_key = ANY(%s)
-                        ORDER BY indicator_key, date DESC
+                        SELECT DISTINCT ON (mi.indicator_key)
+                            mi.indicator_key, mi.value, mi.unit, mi.date,
+                            COALESCE(meta.expected_frequency, 'monthly') AS freq
+                        FROM macro_indicators mi
+                        LEFT JOIN macro_indicator_metadata meta ON meta.key = mi.indicator_key
+                        WHERE mi.country_code = 'RO'
+                          AND mi.indicator_key = ANY(%s)
+                        ORDER BY mi.indicator_key, mi.date DESC
                     """, [list(indicator_labels.keys())])
-                    rows = {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
+                    rows = {r[0]: (r[1], r[2], r[3], r[4]) for r in cur.fetchall()}
         except Exception as e:
             logger.warning(f"[Romania macro header] DB query failed: {e}")
             rows = {}
@@ -2247,7 +2280,9 @@ Respond with JSON only:"""
         today = date.today()
         for key, label in indicator_labels.items():
             if key in rows:
-                value, unit, data_date = rows[key]
+                value, unit, data_date, freq = rows[key]
+                max_stale = self._FREQUENCY_STALE_DAYS.get(freq, 75)
+                stale_threshold = today - timedelta(days=max_stale)
                 if data_date and data_date < stale_threshold:
                     parts.append(f"{label} n/d")
                 else:
@@ -2435,9 +2470,13 @@ Respond with JSON only:"""
                 # Ensure macro data is available
                 openbb_service.ensure_daily_macro_data(today)
 
+                # Romania vertical skips global LLM macro analysis — RO indicators are
+                # read from DB directly by _format_romania_macro_header() later.
+                is_romania = report_type.startswith("romania-")
+
                 # Get formatted macro context for LLM prompt (raw data)
                 macro_context_text = openbb_service.get_macro_context_text(today)
-                if macro_context_text:
+                if macro_context_text and not is_romania:
                     logger.info(f"✓ Macro context loaded ({len(macro_context_text)} chars)")
 
                     # [STEP 0.5] Generate interpretive macro analysis (two-step pipeline)
@@ -2474,6 +2513,8 @@ Respond with JSON only:"""
                                 logger.warning(f"[v2] analysis failed: {macro_v2_result.get('error')}")
                         except Exception as v2_err:
                             logger.warning(f"[v2] exception (falling back to v1): {v2_err}")
+                elif is_romania:
+                    logger.info("  Romania report: skipping global macro LLM analysis (RO indicators read from DB)")
                 else:
                     logger.info("  No macro data available for today")
             except Exception as e:
@@ -2635,14 +2676,14 @@ Use them to:
 
         # ── Romania Vertical Report Path ────────────────────────────────────
         if report_type.startswith("romania-"):
-            return self._generate_romania_report(
+            return self._generate_romania_report(RomaniaReportContext(
                 report_type=report_type,
                 recent_articles=recent_articles,
                 narrative_ctx=narrative_ctx,
                 unique_rag_results=unique_rag_results,
                 days=days,
                 report_date=report_date,
-            )
+            ))
 
         # ── Phase 5: v2 strategic report (LLM call #2) ──────────────────────
         if use_strategic_v2:
@@ -2884,20 +2925,123 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         logger.info("\n✓ Report generation complete")
         return report
 
-    def _generate_romania_report(
-        self,
-        report_type: str,
-        recent_articles: List[Dict],
-        narrative_ctx: Dict[str, Any],
-        unique_rag_results: List[Dict],
-        days: int,
-        report_date: str,
-    ) -> Dict[str, Any]:
+    def _generate_romania_macro_analysis(self) -> str:
+        """
+        Call T5 (Flash-Lite) to produce a short structured interpretation of the 5 RO macro
+        indicators. Returns a formatted Italian text block injected into the Romania report
+        prompt as a richer CONTESTO MACRO section. Falls back to the plain macro header on
+        any failure so the report is never blocked.
+        """
+        from datetime import date as _date, timedelta
+
+        _FREQ_STALE = {"daily": 3, "24_7": 2, "weekly": 14, "monthly": 75, "quarterly": 120, "annual": 400}
+        _LABELS = {
+            "BNR_RATE": "BNR Policy Rate",
+            "RO_CPI_YOY": "CPI YoY",
+            "EUR_RON": "EUR/RON",
+            "RO_DEFICIT_GDP": "Deficit/PIL",
+            "RO_10Y_YIELD": "10Y RON Yield",
+        }
+
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT DISTINCT ON (mi.indicator_key)
+                            mi.indicator_key, mi.value, mi.unit, mi.date,
+                            COALESCE(meta.expected_frequency, 'monthly') AS freq,
+                            COALESCE(meta.staleness_days, 0) AS staleness_days
+                        FROM macro_indicators mi
+                        LEFT JOIN macro_indicator_metadata meta ON meta.key = mi.indicator_key
+                        WHERE mi.country_code = 'RO'
+                          AND mi.indicator_key = ANY(%s)
+                        ORDER BY mi.indicator_key, mi.date DESC
+                    """, [list(_LABELS.keys())])
+                    rows = {r[0]: r[1:] for r in cur.fetchall()}
+
+                    # Fetch 60-day series for trend context
+                    cur.execute("""
+                        SELECT indicator_key, value, date
+                        FROM macro_indicators
+                        WHERE country_code = 'RO'
+                          AND indicator_key = ANY(%s)
+                          AND date >= CURRENT_DATE - INTERVAL '60 days'
+                        ORDER BY indicator_key, date DESC
+                    """, [list(_LABELS.keys())])
+                    series_rows = cur.fetchall()
+        except Exception as e:
+            logger.warning(f"[RO macro analysis] DB query failed: {e}")
+            return self._format_romania_macro_header()
+
+        if not rows:
+            return self._format_romania_macro_header()
+
+        # Build series map: key → list of (date, value) newest-first
+        series_map: dict = {}
+        for key, val, dt in series_rows:
+            series_map.setdefault(key, []).append((dt, float(val)))
+
+        today = _date.today()
+        lines = []
+        for key, label in _LABELS.items():
+            if key not in rows:
+                lines.append(f"- {label}: n/d (nessun dato)")
+                continue
+            value, unit, data_date, freq, staleness_days = rows[key]
+            max_stale = _FREQ_STALE.get(freq, 75)
+            is_stale = data_date < today - timedelta(days=max_stale)
+            stale_note = f" [dato di {data_date}, {staleness_days}gg fa]" if is_stale else f" [aggiornato {data_date}]"
+            formatted = f"{float(value):.2f}{'%' if unit in ('%', '% of GDP', 'Rate') else ''}"
+
+            # Compute trend from series
+            s = series_map.get(key, [])
+            trend_note = ""
+            if len(s) >= 2:
+                delta = float(s[0][1]) - float(s[-1][1])
+                trend_note = f", trend {'↑' if delta > 0 else '↓'} {abs(delta):.3f} ultimi {len(s)} dati"
+
+            lines.append(f"- {label}: {formatted}{stale_note}{trend_note}")
+
+        indicator_block = "\n".join(lines)
+
+        prompt = (
+            "Sei un analista macro specializzato sui mercati emergenti CEE. "
+            "Dati i seguenti indicatori macroeconomici della Romania, scrivi UN paragrafo sintetico in italiano (max 120 parole) "
+            "che interpreti il quadro complessivo: regime di politica monetaria, pressione inflazionistica, rischio fiscale, "
+            "e posizionamento del cambio EUR/RON. Evidenzia se ci sono segnali di stress o stabilità. "
+            "Usa un tono analitico diretto, senza formule di cortesia.\n\n"
+            f"INDICATORI ROMANIA:\n{indicator_block}\n\n"
+            "Paragrafo di analisi:"
+        )
+
+        try:
+            from .llm_factory import LLMFactory
+            t5_model = LLMFactory.get("t5")
+            analysis_text = t5_model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.2, "max_output_tokens": 250},
+                request_options={"timeout": 30},
+            )
+            if not analysis_text or len(analysis_text.strip()) < 20:
+                raise ValueError("Empty or too-short response")
+            logger.info(f"[RO macro analysis] T5 analysis generated ({len(analysis_text)} chars)")
+            return f"{self._format_romania_macro_header()}\n\n**Analisi macro:**\n{analysis_text.strip()}"
+        except Exception as e:
+            logger.warning(f"[RO macro analysis] T5 call failed ({e}), falling back to header only")
+            return self._format_romania_macro_header()
+
+    def _generate_romania_report(self, ctx: RomaniaReportContext) -> Dict[str, Any]:
         """Generate Romania daily or weekly briefing using Romania system prompts."""
+        report_type = ctx.report_type
+        recent_articles = ctx.recent_articles
+        narrative_ctx = ctx.narrative_ctx
+        unique_rag_results = ctx.unique_rag_results
+        days = ctx.days
+        report_date = ctx.report_date
         logger.info(f"\n[Romania] Generating {report_type} briefing...")
 
-        # Romania macro header
-        macro_header = self._format_romania_macro_header()
+        # Romania macro context — T5 structured analysis (falls back to plain header on failure)
+        macro_header = self._generate_romania_macro_analysis()
 
         # System prompt dispatch
         if report_type == "romania-daily":
@@ -2921,11 +3065,11 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         else:
             prev_context_block = "<previously_reported>Primo report — nessun precedente disponibile.</previously_reported>"
 
-        # Feature B — freshness cutoff: articles from yesterday onward get fresh="true"
+        # Feature B — freshness cutoff: articles from yesterday onward get [FRESH] tag
         fresh_cutoff = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
         # Format articles and narrative for prompt
-        recent_articles_text = self.format_recent_articles(recent_articles[:50])
+        recent_articles_text = self.format_recent_articles(recent_articles[:50], fresh_cutoff=fresh_cutoff)
         rag_context_text = self.format_rag_context(unique_rag_results[:20])
         narrative_xml = self._format_narrative_xml(narrative_ctx, fresh_cutoff=fresh_cutoff)
 

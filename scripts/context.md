@@ -54,7 +54,8 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 
 ### Market Data
 - `backfill_market_data.py` - Backfill Yahoo Finance OHLCV data
-- `fetch_daily_market_data.py` - Daily market data fetch
+- `fetch_daily_market_data.py` - Daily market data fetch (global indicators, country_code='US')
+- `fetch_romania_macro.py` - **Romania macro fetch**: calls `ensure_daily_macro_data()` (idempotent), then shows RO-specific indicator preview with staleness info. Flags: `--date YYYY-MM-DD`, `--force` (deletes existing RO rows for date before re-fetching). Used as standalone verification or pipeline pre-step.
 - `backfill_sruuf.py` - **One-shot ticker switch recovery**: deletes all URANIUM rows (URA history), downloads SRUUF daily closes via yfinance (last 90 days), reinserts with correct `previous_value` chain, and flags today's report as `draft` so it doesn't enter the knowledge base. Idempotent. Run after any equity/ETF ticker substitution in `MACRO_INDICATORS`.
 - `backfill_new_indicators_b2.py` - **B2 expansion backfill**: fetches 60 calendar days of history for TTF_GAS (yfinance `TTF=F`) and YIELD_CURVE_10Y_3M (FRED REST API `T10Y3M`) and inserts with correct `previous_value` chain. Run once after deploying the B2 indicator additions. Requires `DATABASE_URL` and `FRED_API_KEY`. Idempotent.
 

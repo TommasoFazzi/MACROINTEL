@@ -10,6 +10,9 @@ interface MacroIndicatorCardProps {
   unit: string;
   latest: { date: string; value: number } | null;
   series: SeriesPoint[];
+  expectedFrequency?: string;
+  isStale?: boolean;
+  stalenessDays?: number | null;
 }
 
 function Sparkline({ series }: { series: SeriesPoint[] }) {
@@ -50,8 +53,27 @@ function Sparkline({ series }: { series: SeriesPoint[] }) {
   );
 }
 
-export function MacroIndicatorCard({ label, unit, latest, series }: MacroIndicatorCardProps) {
+const FREQ_LABELS: Record<string, string> = {
+  daily: 'giornaliero',
+  '24_7': 'giornaliero',
+  weekly: 'settimanale',
+  monthly: 'mensile',
+  quarterly: 'trimestrale',
+  annual: 'annuale',
+};
+
+export function MacroIndicatorCard({
+  label,
+  unit,
+  latest,
+  series,
+  expectedFrequency,
+  isStale,
+  stalenessDays,
+}: MacroIndicatorCardProps) {
   const value = latest?.value;
+  // For non-daily data the series can span months — delta vs previous point is still meaningful
+  // but we show the period label so the user knows the comparison horizon.
   const prev = series.length > 1 ? series[1].value : null;
   const delta = value != null && prev != null ? value - prev : null;
 
@@ -61,21 +83,67 @@ export function MacroIndicatorCard({ label, unit, latest, series }: MacroIndicat
     return v.toFixed(4);
   }
 
+  const freqLabel = expectedFrequency ? FREQ_LABELS[expectedFrequency] ?? expectedFrequency : null;
+
+  // Staleness display: show days-ago if stale and we have the count
+  const staleBadge =
+    isStale && stalenessDays != null
+      ? `${stalenessDays}g fa`
+      : isStale
+      ? 'stale'
+      : null;
+
+  // Date shown for the latest data point
+  const dataDate = latest?.date
+    ? new Date(latest.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })
+    : null;
+
   return (
-    <div className="bg-[#1a2332]/70 border border-white/8 rounded-xl p-4 flex flex-col gap-2 hover:border-blue-400/30 transition-colors">
-      <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</div>
+    <div
+      className={`bg-[#1a2332]/70 border rounded-xl p-4 flex flex-col gap-2 transition-colors ${
+        isStale
+          ? 'border-amber-500/30 hover:border-amber-400/50'
+          : 'border-white/8 hover:border-blue-400/30'
+      }`}
+    >
+      {/* Header row: label + frequency + staleness */}
+      <div className="flex items-start justify-between gap-1">
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider leading-tight">
+          {label}
+        </span>
+        <div className="flex flex-col items-end gap-0.5 shrink-0">
+          {freqLabel && (
+            <span className="text-[9px] font-medium text-gray-600 uppercase tracking-wide">
+              {freqLabel}
+            </span>
+          )}
+          {staleBadge && (
+            <span className="text-[9px] font-semibold text-amber-500 uppercase tracking-wide">
+              {staleBadge}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Value + delta */}
       <div className="flex items-end gap-3">
-        <span className="text-2xl font-bold text-white">{fmtValue(value)}</span>
+        <span className={`text-2xl font-bold ${isStale ? 'text-gray-300' : 'text-white'}`}>
+          {fmtValue(value)}
+        </span>
         {delta != null && (
           <span className={`text-xs font-medium mb-1 ${delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
+            {delta >= 0 ? '+' : ''}{delta.toFixed(3)}
           </span>
         )}
       </div>
+
+      {/* Sparkline */}
       <Sparkline series={series.slice(0, 30)} />
-      {latest?.date && (
-        <div className="text-[10px] text-gray-600">
-          {new Date(latest.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}
+
+      {/* Data date */}
+      {dataDate && (
+        <div className={`text-[10px] ${isStale ? 'text-amber-600' : 'text-gray-600'}`}>
+          dato: {dataDate}
         </div>
       )}
     </div>

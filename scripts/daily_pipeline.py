@@ -157,6 +157,13 @@ DEFAULT_STEPS = [
         timeout_seconds=900,  # 15 min
         continue_on_failure=False
     ),
+    PipelineStep(
+        name="generate_romania_report",
+        command="python scripts/generate_report.py --report-type romania-daily",
+        description="Generazione report giornaliero Romania",
+        timeout_seconds=600,  # 10 min — no macro-first LLM analysis
+        continue_on_failure=True  # Romania report non blocca la pipeline globale
+    ),
 ]
 
 # Conditional steps (run after main pipeline based on day of week)
