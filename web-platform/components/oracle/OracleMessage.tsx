@@ -31,7 +31,10 @@ const INTENT_COLORS: Record<string, string> = {
 // generate this string naturally (unlike `[[1]]` which could appear in code samples).
 
 function preprocessCitations(text: string, offset: number): string {
-  return text.replace(/\[(\d+)\]/g, (_, n) => `\`__CITE__${parseInt(n, 10) + offset}__\``);
+  // Separate adjacent citations [1][6] → [1] [6] before wrapping in backtick markers,
+  // otherwise consecutive `` `...``...` `` spans merge and break the markdown parser.
+  const spaced = text.replace(/\]\[(\d+)\]/g, '] [$1]');
+  return spaced.replace(/\[(\d+)\]/g, (_, n) => `\`__CITE__${parseInt(n, 10) + offset}__\``);
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
