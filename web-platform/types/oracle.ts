@@ -52,6 +52,8 @@ export interface OracleChatMessage {
   content: string;
   timestamp: string;
   sources?: OracleSource[];
+  /** Global offset into the accumulated sources list for this message's [1]-based citations. */
+  sourceOffset?: number;
   query_plan?: QueryPlan;
   metadata?: Record<string, unknown>;
 }

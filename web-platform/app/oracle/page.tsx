@@ -15,6 +15,7 @@ import { OracleSourcesSidebar } from '@/components/oracle/OracleSourcesSidebar';
 export default function OraclePage() {
   const {
     messages,
+    allSources,
     isLoading,
     error,
     sendMessage,
@@ -154,7 +155,7 @@ export default function OraclePage() {
         </div>
 
         <OracleSourcesSidebar
-          message={lastAssistantMessage}
+          sources={allSources}
           highlightedSource={highlightedSource}
           isVisible={true}
         />
@@ -168,7 +169,7 @@ export default function OraclePage() {
         className="bg-[#0d1d35]"
       >
         <OracleSourcesSidebar
-          message={lastAssistantMessage}
+          sources={allSources}
           highlightedSource={highlightedSource}
           isVisible={true}
           embedded={true}

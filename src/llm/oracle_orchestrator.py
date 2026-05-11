@@ -236,13 +236,16 @@ Quando hai raccolto abbastanza informazioni, rispondi con questo formato:
 [2-3 frasi con i punti chiave]
 
 ## Analisi Dettagliata
-[Paragrafi densi con dati specifici. Cita le fonti inline usando [Titolo Fonte, Data] o [Report #ID].]
+[Paragrafi densi con dati specifici. Ogni affermazione fattuale deve essere seguita dalla citazione inline `[N]` usando il numero dal REGISTRO FONTI iniettato nel contesto.]
 
 ## Implicazioni Strategiche
 [Implicazioni per decisori]
 </DOCUMENTO>
 
 Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e dichiara onestamente cosa non è stato trovato, con possibili cause (periodo non indicizzato, topic assente nel DB, query troppo specifica).
+
+## REGOLA CITAZIONI OBBLIGATORIA
+Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, eventi, dichiarazioni, date, nomi di attori) DEVE essere seguita dalla citazione inline `[N]` dove N è il numero della fonte nel REGISTRO FONTI. Esempio: "Le truppe hanno attraversato il confine il 3 marzo [2]." Non omettere mai le citazioni su affermazioni specifiche.
 
 ## REGOLE ANTI-ALLUCINAZIONE
 - Basa la risposta ESCLUSIVAMENTE sui dati restituiti dagli strumenti.
@@ -313,6 +316,7 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
         # State tracking
         tool_results_log: List[Tuple[str, ToolResult]] = []
         sources: List[Dict] = []
+        _source_keys: set = set()  # dedup set for (type, id) pairs
         iterations_done = 0
         total_tool_calls = 0
 
@@ -401,22 +405,31 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
 
                 tool_results_log.append((tool_name, result))
 
-                # Collect sources from RAG tool for API response
-                if tool_name == "rag_search" and result.success and result.data and not sources:
+                # Collect sources from ALL RAG calls (additive, deduplicated by type+id)
+                if tool_name == "rag_search" and result.success and result.data:
                     rag_instance = RAGTool(db=self.db)
-                    sources = rag_instance.prepare_sources(
+                    new_sources = rag_instance.prepare_sources(
                         result.data.get("reports", []),
                         result.data.get("chunks", []),
                     )
+                    for src in new_sources:
+                        key = (src.get("type"), src.get("id"))
+                        if key not in _source_keys:
+                            _source_keys.add(key)
+                            sources.append(src)
 
                 # Summarize result for chat history (T5 if too long, verbatim otherwise)
                 tool = self.tool_registry.get_tool(tool_name)
                 history_content = self._summarize_for_history(tool_name, tool.format_for_history(result))
                 tool_result_blocks.append(self._make_fn_response(tool_use_id, history_content))
 
-            # Append tool results as a user message
+            # Append tool results as a user message; include numbered source registry
+            # as a text block so the LLM can cite [N] in its synthesis.
             if tool_result_blocks:
-                messages.append({"role": "user", "content": tool_result_blocks})
+                content: List[Dict] = list(tool_result_blocks)
+                if sources:
+                    content.append({"type": "text", "text": self._build_source_registry(sources)})
+                messages.append({"role": "user", "content": content})
 
             # Hard cap: tools already executed and results appended — now check if we should
             # force synthesis instead of continuing. This ordering ensures every tool_use block
@@ -625,6 +638,21 @@ Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e di
             if hints:
                 msg += f"\n[UI Filters attivi: {', '.join(hints)}]"
         return msg
+
+    @staticmethod
+    def _build_source_registry(sources: List[Dict]) -> str:
+        """Build a numbered source registry injected into tool_result messages.
+
+        Lets Claude cite [N] in the synthesis response with numbers that match
+        the sidebar's sequential display order.
+        """
+        lines = ["REGISTRO FONTI (cita con [N] nella risposta finale):"]
+        for i, src in enumerate(sources, 1):
+            title = src.get("title", "N/A")
+            date = src.get("date_str", "")
+            date_part = f" — {date}" if date else ""
+            lines.append(f"[{i}] {title}{date_part}")
+        return "\n".join(lines)
 
     @staticmethod
     def _build_forced_synthesis_prompt(query: str, tool_results: List[Tuple[str, ToolResult]]) -> str:

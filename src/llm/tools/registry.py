@@ -43,5 +43,10 @@ class ToolRegistry:
         """Return Anthropic tool definitions for all registered tools.
 
         Used by OracleOrchestrator (Claude) to pass tools to messages.create().
+        The last tool carries cache_control so Anthropic caches the entire static
+        tool definitions prefix (system prompt + all 9 tool schemas) across calls.
         """
-        return [tool_class.to_anthropic_tool() for tool_class, _ in self._tools.values()]
+        tools = [tool_class.to_anthropic_tool() for tool_class, _ in self._tools.values()]
+        if tools:
+            tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+        return tools

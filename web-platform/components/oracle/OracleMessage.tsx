@@ -30,8 +30,8 @@ const INTENT_COLORS: Record<string, string> = {
 // intercepts. The marker is deliberately unique and unambiguous — the LLM would never
 // generate this string naturally (unlike `[[1]]` which could appear in code samples).
 
-function preprocessCitations(text: string): string {
-  return text.replace(/\[(\d+)\]/g, (_, n) => `\`__CITE__${n}__\``);
+function preprocessCitations(text: string, offset: number): string {
+  return text.replace(/\[(\d+)\]/g, (_, n) => `\`__CITE__${parseInt(n, 10) + offset}__\``);
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ function CitationBadge({ n, onClick }: { n: number; onClick: () => void }) {
       type="button"
       onClick={onClick}
       className="inline-flex items-center justify-center w-[18px] h-[18px] rounded text-[10px] font-bold bg-[#FF6B35]/20 text-[#FF6B35] border border-[#FF6B35]/40 hover:bg-[#FF6B35]/40 transition-colors cursor-pointer align-super mx-0.5 leading-none flex-shrink-0"
-      title={`Go to source ${n}`}
+      title={`Article ${n}`}
     >
       {n}
     </button>
@@ -159,7 +159,8 @@ export function AssistantBubble({
       ? (msg.metadata.execution_time as number)
       : undefined;
   const sourceCount = msg.sources?.length ?? 0;
-  const processedContent = preprocessCitations(msg.content);
+  const sourceOffset = msg.sourceOffset ?? 0;
+  const processedContent = preprocessCitations(msg.content, sourceOffset);
 
   return (
     <div className="flex justify-start mb-6 max-w-2xl mx-auto w-full">

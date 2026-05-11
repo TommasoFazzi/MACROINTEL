@@ -5,6 +5,7 @@ import type {
   OracleChatMessage,
   OracleActiveFilters,
   OracleResponse,
+  OracleSource,
 } from '../types/oracle';
 
 // Generate a stable session ID per browser session
@@ -21,6 +22,7 @@ function getSessionId(): string {
 
 export function useOracleChat() {
   const [messages, setMessages] = useState<OracleChatMessage[]>([]);
+  const [allSources, setAllSources] = useState<OracleSource[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<OracleActiveFilters>({
@@ -28,6 +30,8 @@ export function useOracleChat() {
     search_type: 'hybrid',
   });
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Stable ref so sendMessage closure always reads current accumulated length
+  const allSourcesLengthRef = useRef(0);
 
   const sendMessage = useCallback(
     async (query: string) => {
@@ -81,12 +85,19 @@ export function useOracleChat() {
         const json = await response.json();
         const data: OracleResponse = json.data;
 
+        // Capture offset before appending new sources
+        const sourceOffset = allSourcesLengthRef.current;
+        const newSources = data.sources ?? [];
+        allSourcesLengthRef.current += newSources.length;
+        setAllSources((prev) => [...prev, ...newSources]);
+
         const assistantMsg: OracleChatMessage = {
           id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + 'a',
           role: 'assistant',
           content: data.answer,
           timestamp: new Date().toISOString(),
-          sources: data.sources,
+          sources: newSources,
+          sourceOffset,
           query_plan: data.query_plan,
           metadata: data.metadata,
         };
@@ -107,6 +118,8 @@ export function useOracleChat() {
 
   const clearMessages = useCallback(() => {
     setMessages([]);
+    setAllSources([]);
+    allSourcesLengthRef.current = 0;
     setError(null);
     _sessionId = null;
   }, []);
@@ -118,6 +131,7 @@ export function useOracleChat() {
 
   return {
     messages,
+    allSources,
     isLoading,
     error,
     sendMessage,

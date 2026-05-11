@@ -222,11 +222,15 @@ class ClaudeClient(BaseLLMClient):
             kwargs["system"] = system
         if top_p is not None:
             kwargs["top_p"] = top_p
-        # Prompt caching: list-form system with cache_control requires beta header
-        if isinstance(system, list) and any(
-            isinstance(block, dict) and block.get("cache_control")
-            for block in system
-        ):
+        # Prompt caching: beta header required when system prompt OR tool definitions
+        # carry cache_control blocks (both are static prefixes cached across calls).
+        has_cached_system = isinstance(system, list) and any(
+            isinstance(block, dict) and block.get("cache_control") for block in system
+        )
+        has_cached_tools = any(
+            isinstance(t, dict) and t.get("cache_control") for t in tools
+        )
+        if has_cached_system or has_cached_tools:
             kwargs["extra_headers"] = {"anthropic-beta": "prompt-caching-2024-07-31"}
 
         # Retry with exponential backoff on rate limit and timeout errors
