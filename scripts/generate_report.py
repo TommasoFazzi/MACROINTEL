@@ -292,8 +292,7 @@ def main():
             report_file = generator.save_report(report, output_dir=args.output_dir)
             logger.info(f"✓ Report saved to files successfully")
         except Exception as e:
-            logger.error(f"Error saving report to files: {e}")
-            return 1
+            logger.warning(f"Could not save report to files (non-fatal): {e}")
 
     # Save report to database (for HITL dashboard)
     try:

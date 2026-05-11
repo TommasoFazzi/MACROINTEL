@@ -3017,10 +3017,10 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         try:
             from .llm_factory import LLMFactory
             t5_model = LLMFactory.get("t5")
-            analysis_text = t5_model.generate_content(
+            analysis_text = t5_model.generate(
                 prompt,
-                generation_config={"temperature": 0.2, "max_output_tokens": 250},
-                request_options={"timeout": 30},
+                temperature=0.2,
+                max_tokens=250,
             )
             if not analysis_text or len(analysis_text.strip()) < 20:
                 raise ValueError("Empty or too-short response")
