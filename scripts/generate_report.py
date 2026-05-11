@@ -111,6 +111,11 @@ def main():
     if args.days is None:
         args.days = 7 if args.report_type == 'romania-weekly' else 1
 
+    # Lower similarity threshold for Romania: Romanian-language articles score lower vs English focus areas
+    if args.report_type.startswith('romania-') and args.min_similarity == 0.30:
+        args.min_similarity = 0.15
+        logger.info("Romania report: min_similarity lowered to 0.15 (multilingual threshold adjustment)")
+
     # Parse and validate time window arguments
     from_time = None
     to_time = None
