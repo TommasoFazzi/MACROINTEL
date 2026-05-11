@@ -25,6 +25,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; \
 RUN python -c "from sentence_transformers import CrossEncoder; \
     CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
+# Pre-trigger OpenBB auto-build as root so .build.lock is writable at runtime
+RUN python -c "from openbb import obb" || true
+
 # Copy application code
 COPY src/ ./src/
 COPY scripts/ ./scripts/

@@ -773,6 +773,48 @@ class OpenBBMarketService:
         '24_7':    1,
     }
 
+    def _fetch_fred_direct(
+        self,
+        fred_series: str,
+        target_date: date,
+        key: str,
+        frequency: str,
+    ) -> Optional[tuple]:
+        """Fetch FRED series via direct REST API — fallback when OpenBB is unavailable."""
+        import requests, os
+        from datetime import date as date_type
+        api_key = os.environ.get("FRED_API_KEY", "")
+        if not api_key:
+            logger.warning(f"[FRED direct] FRED_API_KEY not set — cannot fetch {fred_series}")
+            return None
+        start = str(target_date - timedelta(days=180))
+        url = (
+            f"https://api.stlouisfed.org/fred/series/observations"
+            f"?series_id={fred_series}&api_key={api_key}&file_type=json"
+            f"&observation_start={start}&observation_end={target_date}"
+            f"&sort_order=desc&limit=5"
+        )
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            obs = [o for o in resp.json().get("observations", []) if o.get("value") != "."]
+            if not obs:
+                logger.warning(f"[FRED direct] {fred_series}: no observations")
+                return None
+            latest = obs[0]
+            value = float(latest["value"])
+            data_date = date_type.fromisoformat(latest["date"])
+            staleness_days = (target_date - data_date).days
+            max_staleness = self.MAX_STALENESS_BY_FREQUENCY.get(frequency, 75)
+            if staleness_days > max_staleness:
+                logger.warning(f"[FRED direct] {fred_series}: {staleness_days}d old, exceeds {max_staleness}d limit")
+                return None
+            logger.info(f"[FRED direct] {fred_series}: {value} (data_date={data_date})")
+            return value, data_date, frequency
+        except Exception as e:
+            logger.error(f"[FRED direct] {fred_series} fetch failed: {e}")
+            return None
+
     def _fetch_indicator_openbb_fixed(
         self,
         fred_series: str,
@@ -795,12 +837,8 @@ class OpenBBMarketService:
         try:
             obb = get_obb()
             if not obb:
-                self._upsert_indicator_metadata(
-                    key=key, frequency=frequency, last_updated=None,
-                    last_source='fred', is_stale=True, staleness_days=None,
-                    fetch_attempted=True, fetch_succeeded=False,
-                )
-                return None
+                # Fallback: direct FRED REST API (no OpenBB needed)
+                return self._fetch_fred_direct(fred_series, target_date, key, frequency)
 
             result = obb.economy.fred_series(
                 symbol=fred_series,
@@ -1433,7 +1471,6 @@ class OpenBBMarketService:
         Used by fetch_romania_macro.py and the Romania report pipeline.
         """
         target_date = target_date or date.today()
-        obb = get_obb()
         success_count = 0
 
         for key in self._RO_INDICATOR_KEYS:
@@ -1466,8 +1503,10 @@ class OpenBBMarketService:
                         )
                 elif 'symbol' in config:
                     value = self._fetch_indicator_yfinance(config['symbol'])
-                    if value is None and obb:
-                        value = self._fetch_indicator_openbb(obb, key, config, target_date)
+                    if value is None:
+                        obb = get_obb()
+                        if obb:
+                            value = self._fetch_indicator_openbb(obb, key, config, target_date)
                     if value is not None:
                         self._save_macro_indicator(
                             target_date, key, value,
