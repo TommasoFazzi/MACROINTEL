@@ -28,7 +28,11 @@ from src.storage.database import DatabaseManager
 
 logger = get_logger(__name__)
 
-_RO_KEYS = ["BNR_RATE", "RO_CPI_YOY", "EUR_RON", "RO_DEFICIT_GDP", "RO_10Y_YIELD"]
+_RO_KEYS = [
+    "EUR_RON", "BNR_RATE", "ROBOR_3M",
+    "RO_CPI_YOY", "RO_10Y_YIELD", "RO_CDS_5Y",
+    "RO_DEFICIT_GDP", "BET_INDEX",
+]
 
 
 def _show_ro_context(db: DatabaseManager, target_date: date) -> None:

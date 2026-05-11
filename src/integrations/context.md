@@ -21,7 +21,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
 
 - `openbb_service.py` - OpenBB v4+ integration
   - `OpenBBMarketService` class - Macro and fundamentals
-  - **Macro Indicators** — 34 active indicators (stored daily):
+  - **Macro Indicators** — 34 global + 8 Romania indicators (stored daily):
     - FRED daily: US_10Y_YIELD, US_2Y_YIELD, YIELD_CURVE_10Y_2Y, YIELD_CURVE_10Y_3M (T10Y3M — Fed NY recession indicator), REAL_RATE_10Y, BREAKEVEN_10Y, INFLATION_EXPECTATION_5Y, US_HY_SPREAD
     - FRED weekly: FIN_STRESS_INDEX
     - FRED monthly (structural context): NICKEL, US_CPI, US_UNEMPLOYMENT, US_INDUSTRIAL_PROD, CASS_FREIGHT_INDEX
@@ -32,6 +32,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - **Removed**: TED_SPREAD (LIBOR→SOFR degraded), EPU_GLOBAL (4-6w lag), USD_RUB (bimodal post-sanctions)
     - **Fixed (Phase 1)**: ALUMINUM and WHEAT switched from FRED monthly to daily CME futures; USD_GBP and USD_CNY switched from FRED to yfinance daily
     - **Added (B2)**: TTF_GAS (European energy benchmark, separato da Henry Hub NG=F) and YIELD_CURVE_10Y_3M (Fed NY recession probability indicator). CFETS_RMB deferred to B3 — no public API found.
+    - **Romania vertical (8 indicators, country_code='RO')**: EUR_RON (yfinance), BNR_RATE (BNR web scrape), ROBOR_3M (BNR web scrape), RO_CPI_YOY (FRED CP0000ROM086NEST HICP YoY), RO_10Y_YIELD (World Gov Bonds scrape), RO_CDS_5Y (World Gov Bonds scrape), RO_DEFICIT_GDP (Eurostat gov_10dd_edpt1 REST API), BET_INDEX (yfinance BET.RO)
   - `ensure_daily_macro_data()` - Fetch and persist macro indicators
     - FRED branch now uses `_fetch_indicator_openbb_fixed()` — saves with real `data_date` (not `target_date`). Fixes NICKEL/monthly mislabeling bug.
     - All fetch paths call `_upsert_indicator_metadata()` to track staleness and reliability.
@@ -70,12 +71,16 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
   - `fetch_mode(target_date)` — returns `'normal'` | `'holiday'` | `'skip'` (weekend)
   - Backed by `pandas_market_calendars` NYSE calendar (accurate US holiday schedule)
   - Used by `scripts/fetch_daily_market_data.py` backfill logic and `ensure_daily_macro_data()` for holiday logging
-  - **MACRO_INDICATORS `fetch_category` field**: each of the 34 indicators has a `fetch_category` key:
+  - **MACRO_INDICATORS `fetch_category` field**: each indicator has a `fetch_category` key:
     - `equity_etf` — NYSE/OTC-listed (SP500, VIX, NASDAQ, SRUUF — Sprott Physical Uranium Trust)
     - `commodities` — CME futures that follow NYSE holidays (Oil, Gold, Copper, Gas, Silver)
     - `fred` — Federal Reserve data (available every weekday regardless of holidays)
-    - `fx` — Forex 24/5 (EUR/USD, DXY, RUB, CNH; unaffected by NYSE holidays)
+    - `fx` — Forex 24/5 (EUR/USD, DXY, RUB, CNH; BET_INDEX, EUR_RON via yfinance)
     - `crypto` — Always available (BTC)
+    - `fred_hicp_yoy` — FRED index series with YoY computation (RO_CPI_YOY via `_fetch_fred_hicp_yoy()`)
+    - `bnr_scrape` — BNR website HTML scraping via `_fetch_bnr_scrape()` (BNR_RATE, ROBOR_3M)
+    - `wgb_scrape` — World Government Bonds HTML scraping via `_fetch_wgb()` (RO_10Y_YIELD, RO_CDS_5Y)
+    - `eurostat` — Eurostat REST API JSON via `_fetch_eurostat_fiscal()` (RO_DEFICIT_GDP, annual data)
 
 ## Dependencies
 

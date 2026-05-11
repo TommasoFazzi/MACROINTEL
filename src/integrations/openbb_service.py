@@ -439,7 +439,7 @@ class OpenBBMarketService:
         # CFETS_RMB: deferred to B3 — no public API found (PBOC weekly, scraping non-goal)
 
         # ================================================================
-        # ROMANIA VERTICAL — 5 key indicators (country_code='RO')
+        # ROMANIA VERTICAL — 8 indicators (country_code='RO')
         # ================================================================
         'EUR_RON': {
             'symbol': 'EURRON=X',
@@ -449,36 +449,65 @@ class OpenBBMarketService:
             'fetch_category': 'fx',
             'country_code': 'RO',
         },
-        'RO_10Y_YIELD': {
-            'fred_series': 'IRLTLT01ROM156N',
+        'BNR_RATE': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania 10Y Government Bond Yield (OECD/FRED)',
-            'fetch_category': 'fred',
+            'description': 'BNR Policy Rate — Romania Central Bank',
+            'fetch_category': 'bnr_scrape',
+            'bnr_indicator': 'policy_rate',
             'country_code': 'RO',
+            'frequency': 'monthly',
+        },
+        'ROBOR_3M': {
+            'unit': '%',
+            'category': 'RATES',
+            'description': 'ROBOR 3 luni — rata interbancara Romania',
+            'fetch_category': 'bnr_scrape',
+            'bnr_indicator': 'robor_3m',
+            'country_code': 'RO',
+            'frequency': 'daily',
         },
         'RO_CPI_YOY': {
-            'fred_series': 'ROPCPIROROINMEI',
+            'fred_series': 'CP0000ROM086NEST',
             'unit': '%',
             'category': 'INFLATION',
-            'description': 'Romania CPI YoY (OECD MEI)',
-            'fetch_category': 'fred',
+            'description': 'Romania HICP YoY (Eurostat/FRED, computed from index)',
+            'fetch_category': 'fred_hicp_yoy',
             'country_code': 'RO',
         },
-        'BNR_RATE': {
-            'fred_series': 'IROMDROMRONM',
+        'RO_10Y_YIELD': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'BNR Policy Rate — Romania Central Bank (FRED/OECD)',
-            'fetch_category': 'fred',
+            'description': 'Romania 10Y Government Bond Yield',
+            'fetch_category': 'wgb_scrape',
+            'wgb_indicator': '10y_yield',
             'country_code': 'RO',
+            'frequency': 'daily',
+        },
+        'RO_CDS_5Y': {
+            'unit': 'bps',
+            'category': 'RISK',
+            'description': 'Romania CDS 5Y — richio sovrano (basis points)',
+            'fetch_category': 'wgb_scrape',
+            'wgb_indicator': 'cds_5y',
+            'country_code': 'RO',
+            'frequency': 'daily',
         },
         'RO_DEFICIT_GDP': {
-            'fred_series': 'GGNLBAROUA188N',
             'unit': '% of GDP',
             'category': 'FISCAL',
-            'description': 'Romania Fiscal Balance (% of GDP, IMF/FRED)',
-            'fetch_category': 'fred',
+            'description': 'Romania Fiscal Balance (% of GDP, Eurostat gov_10dd_edpt1)',
+            'fetch_category': 'eurostat',
+            'eurostat_dataset': 'gov_10dd_edpt1',
+            'country_code': 'RO',
+            'frequency': 'annual',
+        },
+        'BET_INDEX': {
+            'symbol': 'BET.RO',
+            'unit': 'points',
+            'category': 'EQUITY',
+            'description': 'BET Index — Bursa de Valori Bucuresti',
+            'fetch_category': 'fx',
             'country_code': 'RO',
         },
     }
@@ -764,6 +793,8 @@ class OpenBBMarketService:
         'UNRATE':            'monthly',
         'INDPRO':            'monthly',
         'FRGSHPUSM649NCIS':  'monthly',
+        # Romania
+        'CP0000ROM086NEST':  'monthly',
     }
 
     MAX_STALENESS_BY_FREQUENCY = {
@@ -813,6 +844,271 @@ class OpenBBMarketService:
             return value, data_date, frequency
         except Exception as e:
             logger.error(f"[FRED direct] {fred_series} fetch failed: {e}")
+            return None
+
+    def _fetch_fred_hicp_yoy(self, fred_series: str, target_date: date) -> Optional[tuple]:
+        """Fetch FRED HICP index series and compute YoY % change.
+
+        Used for RO_CPI_YOY: CP0000ROM086NEST is an index (not % directly).
+        YoY = (index_month / index_month_12m_ago - 1) * 100.
+        """
+        import requests, os
+        from datetime import date as date_type
+        api_key = os.environ.get("FRED_API_KEY", "")
+        if not api_key:
+            logger.warning(f"[HICP YoY] FRED_API_KEY not set")
+            return None
+
+        start = str(target_date - timedelta(days=400))
+        url = (
+            f"https://api.stlouisfed.org/fred/series/observations"
+            f"?series_id={fred_series}&api_key={api_key}&file_type=json"
+            f"&observation_start={start}&observation_end={target_date}"
+            f"&sort_order=desc&limit=15"
+        )
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            obs = [o for o in resp.json().get("observations", []) if o.get("value") != "."]
+            if len(obs) < 13:
+                logger.warning(f"[HICP YoY] {fred_series}: only {len(obs)} obs, need 13 for YoY")
+                return None
+
+            # obs[0] = most recent month, obs[12] = same month 1y ago
+            latest_val = float(obs[0]["value"])
+            prev_val = float(obs[12]["value"])
+            yoy = round((latest_val / prev_val - 1) * 100, 2)
+            data_date = date_type.fromisoformat(obs[0]["date"])
+            staleness = (target_date - data_date).days
+
+            if staleness > 75:
+                logger.warning(f"[HICP YoY] {fred_series}: {staleness}d stale, skipping")
+                return None
+
+            logger.info(f"[HICP YoY] {fred_series}: index={latest_val} YoY={yoy}% (data_date={data_date})")
+            return yoy, data_date, 'monthly'
+        except Exception as e:
+            logger.error(f"[HICP YoY] {fred_series} failed: {e}")
+            return None
+
+    def _fetch_bnr_scrape(self, indicator: str, target_date: date) -> Optional[tuple]:
+        """Scrape BNR website for policy rate or ROBOR rates.
+
+        indicator: 'policy_rate' → BNR dobanda politica monetara
+                   'robor_3m'   → ROBOR 3 luni
+        """
+        import requests
+        from bs4 import BeautifulSoup
+        from datetime import date as date_type
+
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; IntelligenceBot/1.0)"}
+
+        if indicator == 'policy_rate':
+            url = "https://www.bnr.ro/Rata-dobanzii-de-politica-monetara-1544.aspx"
+            try:
+                resp = requests.get(url, timeout=20, headers=headers)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, 'html.parser')
+
+                # BNR page has a table with date and rate columns
+                tables = soup.find_all('table')
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows[1:6]:  # skip header, check first 5 data rows
+                        cells = row.find_all(['td', 'th'])
+                        if len(cells) >= 2:
+                            date_text = cells[0].get_text(strip=True)
+                            rate_text = cells[1].get_text(strip=True).replace(',', '.').replace('%', '').strip()
+                            try:
+                                rate = float(rate_text)
+                                # parse date: BNR uses DD.MM.YYYY or YYYY-MM-DD
+                                for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y'):
+                                    try:
+                                        data_date = datetime.strptime(date_text, fmt).date()
+                                        logger.info(f"[BNR] policy_rate={rate}% data_date={data_date}")
+                                        return rate, data_date, 'monthly'
+                                    except ValueError:
+                                        continue
+                            except (ValueError, IndexError):
+                                continue
+                logger.warning("[BNR] policy_rate: no parseable row found in table")
+                return None
+            except Exception as e:
+                logger.error(f"[BNR] policy_rate scrape failed: {e}")
+                return None
+
+        elif indicator == 'robor_3m':
+            url = "https://www.bnr.ro/Dobanzile-ROBOR-3894.aspx"
+            try:
+                resp = requests.get(url, timeout=20, headers=headers)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, 'html.parser')
+
+                # ROBOR table: columns are typically ON, 1W, 1M, 3M, 6M, 12M
+                tables = soup.find_all('table')
+                for table in tables:
+                    headers_row = table.find('tr')
+                    if not headers_row:
+                        continue
+                    header_cells = [c.get_text(strip=True).upper() for c in headers_row.find_all(['th', 'td'])]
+                    # Find column index for 3M
+                    col_3m = None
+                    for i, h in enumerate(header_cells):
+                        if '3M' in h or '3 LUNI' in h or '3MONTH' in h.replace(' ', ''):
+                            col_3m = i
+                            break
+                    if col_3m is None:
+                        continue
+
+                    data_rows = table.find_all('tr')[1:4]
+                    for row in data_rows:
+                        cells = row.find_all(['td', 'th'])
+                        if len(cells) > col_3m:
+                            rate_text = cells[col_3m].get_text(strip=True).replace(',', '.').replace('%', '').strip()
+                            date_text = cells[0].get_text(strip=True)
+                            try:
+                                rate = float(rate_text)
+                                for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y'):
+                                    try:
+                                        data_date = datetime.strptime(date_text, fmt).date()
+                                        logger.info(f"[BNR] robor_3m={rate}% data_date={data_date}")
+                                        return rate, data_date, 'daily'
+                                    except ValueError:
+                                        continue
+                                # If date not parseable, use target_date
+                                logger.info(f"[BNR] robor_3m={rate}% (date unknown, using target_date)")
+                                return rate, target_date, 'daily'
+                            except (ValueError, IndexError):
+                                continue
+                logger.warning("[BNR] robor_3m: no parseable row found")
+                return None
+            except Exception as e:
+                logger.error(f"[BNR] robor_3m scrape failed: {e}")
+                return None
+
+        logger.warning(f"[BNR] unknown indicator: {indicator}")
+        return None
+
+    def _fetch_wgb(self, indicator: str, target_date: date) -> Optional[tuple]:
+        """Scrape World Government Bonds for Romania 10Y yield and CDS 5Y.
+
+        indicator: '10y_yield' or 'cds_5y'
+        """
+        import requests
+        from bs4 import BeautifulSoup
+
+        url = "https://www.worldgovernmentbonds.com/country/romania/"
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; IntelligenceBot/1.0)"}
+        try:
+            resp = requests.get(url, timeout=20, headers=headers)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            if indicator == '10y_yield':
+                # Page contains "10 Years Bond" yield prominently
+                for tag in soup.find_all(['span', 'td', 'div', 'strong']):
+                    text = tag.get_text(strip=True)
+                    # Look for pattern like "6.85%" near "10Y" or "10 Year"
+                    if '%' in text and len(text) < 10:
+                        try:
+                            val = float(text.replace('%', '').replace(',', '.').strip())
+                            if 0.0 < val < 30.0:
+                                # Check if contextually near a 10Y label
+                                parent_text = tag.parent.get_text(' ', strip=True) if tag.parent else ''
+                                if any(k in parent_text.upper() for k in ['10Y', '10 Y', '10-Y', '10 YEAR']):
+                                    logger.info(f"[WGB] 10y_yield={val}%")
+                                    return val, target_date, 'daily'
+                        except ValueError:
+                            continue
+
+                # Broader fallback: first percentage-like value in the main table
+                tables = soup.find_all('table')
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all(['td', 'th'])
+                        row_text = row.get_text(' ').upper()
+                        if '10' in row_text and ('YEAR' in row_text or 'Y' in row_text):
+                            for cell in cells:
+                                ct = cell.get_text(strip=True).replace(',', '.').replace('%', '')
+                                try:
+                                    val = float(ct)
+                                    if 0.0 < val < 30.0:
+                                        logger.info(f"[WGB] 10y_yield={val}% (table fallback)")
+                                        return val, target_date, 'daily'
+                                except ValueError:
+                                    continue
+
+            elif indicator == 'cds_5y':
+                # CDS 5Y typically shown as basis points on the page
+                page_text = soup.get_text(' ')
+                import re
+                # Pattern: "CDS" followed by a number (bps)
+                patterns = [
+                    r'CDS\s*5\s*[Yy](?:ears?)?\s*[:\s]+(\d+(?:[.,]\d+)?)',
+                    r'Credit\s+Default\s+Swap.*?(\d{2,4}(?:[.,]\d+)?)\s*(?:bp|bps)',
+                    r'(\d{2,4})\s*(?:bp|bps)',
+                ]
+                for pattern in patterns:
+                    m = re.search(pattern, page_text, re.IGNORECASE)
+                    if m:
+                        try:
+                            val = float(m.group(1).replace(',', '.'))
+                            if 10 < val < 5000:
+                                logger.info(f"[WGB] cds_5y={val} bps")
+                                return val, target_date, 'daily'
+                        except ValueError:
+                            continue
+
+            logger.warning(f"[WGB] could not parse indicator={indicator}")
+            return None
+        except Exception as e:
+            logger.error(f"[WGB] {indicator} scrape failed: {e}")
+            return None
+
+    def _fetch_eurostat_fiscal(self, target_date: date) -> Optional[tuple]:
+        """Fetch Romania fiscal balance (% of GDP) from Eurostat REST API.
+
+        Dataset: gov_10dd_edpt1 — government deficit/surplus
+        No API key required. Returns most recent annual value.
+        """
+        import requests
+        from datetime import date as date_type
+
+        url = (
+            "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/gov_10dd_edpt1"
+            "?geo=RO&na_item=B9&unit=PC_GDP&sector=S13&format=JSON"
+        )
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+
+            time_dim = data.get('dimension', {}).get('time', {}).get('category', {}).get('index', {})
+            values = data.get('value', {})
+
+            if not time_dim or not values:
+                logger.warning("[Eurostat] gov_10dd_edpt1: empty response")
+                return None
+
+            # time_dim maps year string → positional index
+            sorted_years = sorted(time_dim.items(), key=lambda x: x[1], reverse=True)
+            for year_str, pos in sorted_years:
+                val = values.get(str(pos))
+                if val is not None:
+                    year = int(year_str)
+                    data_date = date_type(year, 12, 31)
+                    staleness = (target_date - data_date).days
+                    if staleness > 550:
+                        logger.warning(f"[Eurostat] fiscal data for {year} is {staleness}d old, skipping")
+                        continue
+                    logger.info(f"[Eurostat] RO fiscal balance={val}% GDP (year={year})")
+                    return float(val), data_date, 'annual'
+
+            logger.warning("[Eurostat] gov_10dd_edpt1: no usable values found")
+            return None
+        except Exception as e:
+            logger.error(f"[Eurostat] fiscal fetch failed: {e}")
             return None
 
     def _fetch_indicator_openbb_fixed(
@@ -1462,13 +1758,24 @@ class OpenBBMarketService:
             logger.debug(f"Error checking macro data: {e}")
             return False
 
-    _RO_INDICATOR_KEYS = ["BNR_RATE", "RO_CPI_YOY", "EUR_RON", "RO_DEFICIT_GDP", "RO_10Y_YIELD"]
+    _RO_INDICATOR_KEYS = [
+        "EUR_RON", "BNR_RATE", "ROBOR_3M",
+        "RO_CPI_YOY", "RO_10Y_YIELD", "RO_CDS_5Y",
+        "RO_DEFICIT_GDP", "BET_INDEX",
+    ]
 
     def fetch_ro_indicators(self, target_date: Optional[date] = None) -> bool:
-        """Fetch only the 5 Romania macro indicators, bypassing the global has_data check.
+        """Fetch all 8 Romania macro indicators, bypassing the global has_data check.
 
         Safe to call even when global US indicators already exist for today.
         Used by fetch_romania_macro.py and the Romania report pipeline.
+
+        fetch_category dispatch:
+          fx           → yfinance symbol
+          fred_hicp_yoy→ FRED index series → YoY computation
+          bnr_scrape   → BNR website scraping (policy rate, ROBOR)
+          wgb_scrape   → World Government Bonds scraping (10Y yield, CDS)
+          eurostat     → Eurostat REST API (fiscal balance)
         """
         target_date = target_date or date.today()
         success_count = 0
@@ -1478,51 +1785,67 @@ class OpenBBMarketService:
             if not config:
                 logger.warning(f"[RO fetch] Unknown indicator key: {key}")
                 continue
+
+            fetch_cat = config.get('fetch_category', '')
+            result = None
+            source = 'unknown'
+
             try:
-                if 'fred_series' in config:
-                    result = self._fetch_indicator_openbb_fixed(config['fred_series'], target_date)
-                    if result is not None:
-                        value, data_date, frequency = result
-                        self._save_macro_indicator(
-                            data_date, key, value,
-                            config['unit'], config['category'],
-                            country_code='RO',
-                        )
-                        self._upsert_indicator_metadata(
-                            key=key, frequency=frequency, last_updated=data_date,
-                            last_source='fred', is_stale=False,
-                            staleness_days=(target_date - data_date).days,
-                            fetch_attempted=True, fetch_succeeded=True,
-                        )
-                        success_count += 1
-                        logger.info(f"  [RO] {key}: {value} (data_date={data_date}, freq={frequency})")
-                    else:
-                        logger.warning(f"  [RO] {key}: no data from FRED")
-                        self._upsert_indicator_metadata(
-                            key=key, fetch_attempted=True, fetch_succeeded=False,
-                        )
-                elif 'symbol' in config:
+                if fetch_cat == 'fx':
                     value = self._fetch_indicator_yfinance(config['symbol'])
-                    if value is None:
-                        obb = get_obb()
-                        if obb:
-                            value = self._fetch_indicator_openbb(obb, key, config, target_date)
                     if value is not None:
-                        self._save_macro_indicator(
-                            target_date, key, value,
-                            config['unit'], config['category'],
-                            country_code='RO',
-                        )
-                        frequency = config.get('frequency', 'daily')
-                        self._upsert_indicator_metadata(
-                            key=key, frequency=frequency, last_updated=target_date,
-                            last_source='yfinance', is_stale=False, staleness_days=0,
-                            fetch_attempted=True, fetch_succeeded=True,
-                        )
-                        success_count += 1
-                        logger.info(f"  [RO] {key}: {value} (yfinance)")
-                    else:
-                        logger.warning(f"  [RO] {key}: no data from yfinance/OpenBB")
+                        result = (value, target_date, config.get('frequency', 'daily'))
+                        source = 'yfinance'
+
+                elif fetch_cat == 'fred_hicp_yoy':
+                    result = self._fetch_fred_hicp_yoy(config['fred_series'], target_date)
+                    source = 'fred_hicp'
+
+                elif fetch_cat == 'bnr_scrape':
+                    result = self._fetch_bnr_scrape(config['bnr_indicator'], target_date)
+                    source = 'bnr'
+
+                elif fetch_cat == 'wgb_scrape':
+                    result = self._fetch_wgb(config['wgb_indicator'], target_date)
+                    source = 'wgb'
+
+                elif fetch_cat == 'eurostat':
+                    result = self._fetch_eurostat_fiscal(target_date)
+                    source = 'eurostat'
+
+                else:
+                    logger.warning(f"  [RO] {key}: unknown fetch_category '{fetch_cat}'")
+                    continue
+
+                if result is not None:
+                    value, data_date, frequency = result
+                    self._save_macro_indicator(
+                        data_date, key, value,
+                        config['unit'], config['category'],
+                        country_code='RO',
+                    )
+                    staleness = (target_date - data_date).days
+                    self._upsert_indicator_metadata(
+                        key=key, frequency=frequency, last_updated=data_date,
+                        last_source=source, is_stale=staleness > self.MAX_STALENESS_BY_FREQUENCY.get(frequency, 75),
+                        staleness_days=staleness,
+                        fetch_attempted=True, fetch_succeeded=True,
+                    )
+                    success_count += 1
+                    logger.info(f"  [RO] {key}: {value} (source={source}, data_date={data_date})")
+                else:
+                    logger.warning(f"  [RO] {key}: no data from {source}")
+                    self._upsert_indicator_metadata(
+                        key=key,
+                        frequency=config.get('frequency', 'monthly'),
+                        last_updated=None,
+                        last_source=source,
+                        is_stale=True,
+                        staleness_days=None,
+                        fetch_attempted=True,
+                        fetch_succeeded=False,
+                    )
+
             except Exception as e:
                 logger.error(f"  [RO] {key} fetch error: {e}")
 
