@@ -2,12 +2,20 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+# BuildKit cache mount: keeps npm package cache across builds (fast even with --no-cache)
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps
 
 # Stage 2: Build application
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+
+# DEPLOY_SHA changes on every deploy → busts Docker layer cache from here onward,
+# guaranteeing COPY and npm run build always execute with the latest source.
+ARG DEPLOY_SHA=unknown
+RUN echo "Deploy SHA: $DEPLOY_SHA"
+
 COPY . .
 
 # Build-time env vars (NEXT_PUBLIC_* only — baked into JS bundle)
