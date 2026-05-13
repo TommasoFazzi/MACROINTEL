@@ -1,7 +1,7 @@
 """Romania Vertical API router.
 
 Endpoints:
-    GET /api/v1/romania/macro              — 5 RO macro indicators (latest + 90-day series)
+    GET /api/v1/romania/macro              — 9 RO macro indicators (latest + 90-day series)
     GET /api/v1/romania/briefings          — List saved Romania reports (?type=daily|weekly&limit=N)
     GET /api/v1/romania/briefings/{id}     — Single Romania report content + metadata
 """
@@ -38,13 +38,32 @@ def get_db() -> DatabaseManager:
     return DatabaseManager()
 
 
-_RO_INDICATOR_KEYS = ["BNR_RATE", "RO_CPI_YOY", "EUR_RON", "RO_DEFICIT_GDP", "RO_10Y_YIELD"]
+_RO_INDICATOR_KEYS = [
+    "EUR_RON", "BNR_RATE", "ROBOR_3M",
+    "RO_CPI_YOY", "RO_10Y_YIELD", "RO_10Y_DE_SPREAD",
+    "RO_CDS_5Y", "RO_DEFICIT_GDP", "BET_INDEX",
+]
 _RO_INDICATOR_LABELS = {
-    "BNR_RATE": "BNR Policy Rate",
-    "RO_CPI_YOY": "CPI YoY",
-    "EUR_RON": "EUR/RON",
-    "RO_DEFICIT_GDP": "Deficit/PIL",
-    "RO_10Y_YIELD": "10Y RON Yield",
+    "EUR_RON":           "EUR/RON",
+    "BNR_RATE":          "BNR Rate",
+    "ROBOR_3M":          "ROBOR 3M",
+    "RO_CPI_YOY":        "Inflazione YoY",
+    "RO_10Y_YIELD":      "BTP 10Y",
+    "RO_10Y_DE_SPREAD":  "Spread vs DE",
+    "RO_CDS_5Y":         "CDS 5Y",
+    "RO_DEFICIT_GDP":    "Deficit/PIL",
+    "BET_INDEX":         "BET Index",
+}
+_RO_INDICATOR_CATEGORIES = {
+    "EUR_RON":           "FX",
+    "BNR_RATE":          "RATES",
+    "ROBOR_3M":          "RATES",
+    "RO_CPI_YOY":        "INFLATION",
+    "RO_10Y_YIELD":      "RATES",
+    "RO_10Y_DE_SPREAD":  "RISK",
+    "RO_CDS_5Y":         "RISK",
+    "RO_DEFICIT_GDP":    "FISCAL",
+    "BET_INDEX":         "EQUITY",
 }
 
 
@@ -55,7 +74,7 @@ _RO_INDICATOR_LABELS = {
 @limiter.limit("30/minute")
 async def get_romania_macro(request: Request):
     """
-    Return latest values and 90-day series for 5 Romanian macro indicators.
+    Return latest values and 90-day series for 9 Romanian macro indicators.
     """
     cache_key = "romania_macro"
     cached = _get_cached(cache_key)
@@ -83,8 +102,10 @@ async def get_romania_macro(request: Request):
                     FROM macro_indicator_metadata
                     WHERE key = ANY(%s)
                 """, [_RO_INDICATOR_KEYS])
-                meta_map = {r[0]: {"expected_frequency": r[1], "is_stale": r[2], "staleness_days": r[3]}
-                            for r in cur.fetchall()}
+                meta_map = {
+                    r[0]: {"expected_frequency": r[1], "is_stale": r[2], "staleness_days": r[3]}
+                    for r in cur.fetchall()
+                }
     except Exception as e:
         logger.error(f"[Romania macro] DB error: {e}")
         raise HTTPException(status_code=500, detail="Database error")
@@ -100,6 +121,7 @@ async def get_romania_macro(request: Request):
                 "key": key,
                 "label": _RO_INDICATOR_LABELS.get(key, key),
                 "unit": unit,
+                "category": _RO_INDICATOR_CATEGORIES.get(key, "OTHER"),
                 "latest": None,
                 "series": [],
                 "expected_frequency": meta.get("expected_frequency", "monthly"),

@@ -32,7 +32,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - **Removed**: TED_SPREAD (LIBOR→SOFR degraded), EPU_GLOBAL (4-6w lag), USD_RUB (bimodal post-sanctions)
     - **Fixed (Phase 1)**: ALUMINUM and WHEAT switched from FRED monthly to daily CME futures; USD_GBP and USD_CNY switched from FRED to yfinance daily
     - **Added (B2)**: TTF_GAS (European energy benchmark, separato da Henry Hub NG=F) and YIELD_CURVE_10Y_3M (Fed NY recession probability indicator). CFETS_RMB deferred to B3 — no public API found.
-    - **Romania vertical (8 indicators, country_code='RO')**: EUR_RON (yfinance), BNR_RATE (BNR web scrape), ROBOR_3M (BNR web scrape), RO_CPI_YOY (FRED CP0000ROM086NEST HICP YoY), RO_10Y_YIELD (World Gov Bonds scrape), RO_CDS_5Y (World Gov Bonds scrape), RO_DEFICIT_GDP (Eurostat gov_10dd_edpt1 REST API), BET_INDEX (yfinance BET.RO)
+    - **Romania vertical (9 indicators, country_code='RO')**: EUR_RON (yfinance daily), BNR_RATE (OECD MEI_FIN IRSTCI, monthly), ROBOR_3M (OECD MEI_FIN IR3TIB, monthly), RO_CPI_YOY (FRED CP0000ROM086NEST HICP YoY, monthly), RO_10Y_YIELD (DBnomics Eurostat irt_lt_mcby_d D.MCBY.RO, **daily** lag ~2d), RO_10Y_DE_SPREAD (derived: RO_10Y − DE_10Y via same DBnomics endpoint, **bps daily**), RO_CDS_5Y (WGB via scrapling StealthyFetcher, graceful None), RO_DEFICIT_GDP (Eurostat gov_10dd_edpt1, annual), BET_INDEX (Stooq ^bet CSV, **daily**)
   - `ensure_daily_macro_data()` - Fetch and persist macro indicators
     - FRED branch now uses `_fetch_indicator_openbb_fixed()` — saves with real `data_date` (not `target_date`). Fixes NICKEL/monthly mislabeling bug.
     - All fetch paths call `_upsert_indicator_metadata()` to track staleness and reliability.
@@ -75,11 +75,14 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - `equity_etf` — NYSE/OTC-listed (SP500, VIX, NASDAQ, SRUUF — Sprott Physical Uranium Trust)
     - `commodities` — CME futures that follow NYSE holidays (Oil, Gold, Copper, Gas, Silver)
     - `fred` — Federal Reserve data (available every weekday regardless of holidays)
-    - `fx` — Forex 24/5 (EUR/USD, DXY, RUB, CNH; BET_INDEX, EUR_RON via yfinance)
+    - `fx` — Forex 24/5 (EUR/USD, DXY, CNH; EUR_RON via yfinance)
     - `crypto` — Always available (BTC)
     - `fred_hicp_yoy` — FRED index series with YoY computation (RO_CPI_YOY via `_fetch_fred_hicp_yoy()`)
-    - `bnr_scrape` — BNR website HTML scraping via `_fetch_bnr_scrape()` (BNR_RATE, ROBOR_3M)
-    - `wgb_scrape` — World Government Bonds HTML scraping via `_fetch_wgb()` (RO_10Y_YIELD, RO_CDS_5Y)
+    - `oecd` — OECD MEI_FIN SDMX-JSON API via `_fetch_oecd_mei_fin(measure)` (BNR_RATE=IRSTCI, ROBOR_3M=IR3TIB). No API key. Filters by Romania (area_idx dynamic lookup) + PA unit + measure.
+    - `dbnomics_daily` — DBnomics REST API via `_fetch_dbnomics_daily(provider, dataset, series_code)`. No API key. RO_10Y_YIELD=Eurostat/irt_lt_mcby_d/D.MCBY.RO (daily, lag ~2d).
+    - `derived_spread` — computed inline in `fetch_ro_indicators()`: fetches both D.MCBY.RO and D.MCBY.DE from DBnomics, subtracts, converts to bps. RO_10Y_DE_SPREAD.
+    - `stooq` — Stooq CSV endpoint via `_fetch_stooq(symbol)`. No API key. BET_INDEX=^bet (daily).
+    - `wgb_cds` — World Government Bonds CDS 5Y via scrapling StealthyFetcher; gracefully returns None if Chromium unavailable
     - `eurostat` — Eurostat REST API JSON via `_fetch_eurostat_fiscal()` (RO_DEFICIT_GDP, annual data)
 
 ## Dependencies

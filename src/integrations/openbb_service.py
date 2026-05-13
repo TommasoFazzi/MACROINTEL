@@ -452,20 +452,20 @@ class OpenBBMarketService:
         'BNR_RATE': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'BNR Policy Rate — Romania Central Bank',
-            'fetch_category': 'bnr_scrape',
-            'bnr_indicator': 'policy_rate',
+            'description': 'Romania overnight interbank rate / BNR policy rate proxy (OECD IRSTCI)',
+            'fetch_category': 'oecd',
+            'oecd_measure': 'IRSTCI',
             'country_code': 'RO',
             'frequency': 'monthly',
         },
         'ROBOR_3M': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'ROBOR 3 luni — rata interbancara Romania',
-            'fetch_category': 'bnr_scrape',
-            'bnr_indicator': 'robor_3m',
+            'description': 'Romania 3M interbank rate / ROBOR 3M proxy (OECD IR3TIB)',
+            'fetch_category': 'oecd',
+            'oecd_measure': 'IR3TIB',
             'country_code': 'RO',
-            'frequency': 'daily',
+            'frequency': 'monthly',
         },
         'RO_CPI_YOY': {
             'fred_series': 'CP0000ROM086NEST',
@@ -478,18 +478,27 @@ class OpenBBMarketService:
         'RO_10Y_YIELD': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania 10Y Government Bond Yield',
-            'fetch_category': 'wgb_scrape',
-            'wgb_indicator': '10y_yield',
+            'description': 'Romania 10Y Gov Bond Yield (Eurostat EMU convergence daily, lag ~2d)',
+            'fetch_category': 'dbnomics_daily',
+            'dbnomics_provider': 'Eurostat',
+            'dbnomics_dataset': 'irt_lt_mcby_d',
+            'dbnomics_series': 'D.MCBY.RO',
+            'country_code': 'RO',
+            'frequency': 'daily',
+        },
+        'RO_10Y_DE_SPREAD': {
+            'unit': 'bps',
+            'category': 'RISK',
+            'description': 'Romania 10Y spread vs Germania — rischio sovrano (bps)',
+            'fetch_category': 'derived_spread',
             'country_code': 'RO',
             'frequency': 'daily',
         },
         'RO_CDS_5Y': {
             'unit': 'bps',
             'category': 'RISK',
-            'description': 'Romania CDS 5Y — richio sovrano (basis points)',
-            'fetch_category': 'wgb_scrape',
-            'wgb_indicator': 'cds_5y',
+            'description': 'Romania CDS 5Y — rischio sovrano (WGB, richiede JS rendering)',
+            'fetch_category': 'wgb_cds',
             'country_code': 'RO',
             'frequency': 'daily',
         },
@@ -503,12 +512,13 @@ class OpenBBMarketService:
             'frequency': 'annual',
         },
         'BET_INDEX': {
-            'symbol': 'BET.RO',
             'unit': 'points',
             'category': 'EQUITY',
-            'description': 'BET Index — Bursa de Valori Bucuresti',
-            'fetch_category': 'fx',
+            'description': 'BET Index — Bursa de Valori Bucuresti (Stooq)',
+            'fetch_category': 'stooq',
+            'stooq_symbol': '^bet',
             'country_code': 'RO',
+            'frequency': 'daily',
         },
     }
 
@@ -859,12 +869,12 @@ class OpenBBMarketService:
             logger.warning(f"[HICP YoY] FRED_API_KEY not set")
             return None
 
-        start = str(target_date - timedelta(days=400))
+        start = str(target_date - timedelta(days=450))
         url = (
             f"https://api.stlouisfed.org/fred/series/observations"
             f"?series_id={fred_series}&api_key={api_key}&file_type=json"
             f"&observation_start={start}&observation_end={target_date}"
-            f"&sort_order=desc&limit=15"
+            f"&sort_order=desc&limit=25"
         )
         try:
             resp = requests.get(url, timeout=15)
@@ -874,7 +884,7 @@ class OpenBBMarketService:
                 logger.warning(f"[HICP YoY] {fred_series}: only {len(obs)} obs, need 13 for YoY")
                 return None
 
-            # obs[0] = most recent month, obs[12] = same month 1y ago
+            # obs[0] = most recent month, obs[12] = same month 1y ago (exact YoY)
             latest_val = float(obs[0]["value"])
             prev_val = float(obs[12]["value"])
             yoy = round((latest_val / prev_val - 1) * 100, 2)
@@ -891,180 +901,127 @@ class OpenBBMarketService:
             logger.error(f"[HICP YoY] {fred_series} failed: {e}")
             return None
 
-    def _fetch_bnr_scrape(self, indicator: str, target_date: date) -> Optional[tuple]:
-        """Scrape BNR website for policy rate or ROBOR rates.
+    def _fetch_oecd_mei_fin(self, measure: str, target_date: date) -> Optional[tuple]:
+        """Fetch Romania interest rate indicator from OECD MEI_FIN dataset (SDMX-JSON v2).
 
-        indicator: 'policy_rate' → BNR dobanda politica monetara
-                   'robor_3m'   → ROBOR 3 luni
+        measure: 'IRLT'   → long-term 10Y government bond yield
+                 'IRSTCI' → short-term overnight rate (proxy for BNR policy rate)
+                 'IR3TIB' → 3-month interbank rate (proxy for ROBOR 3M)
+        No API key required. Returns (value, data_date, 'monthly').
         """
-        import requests
-        from bs4 import BeautifulSoup
+        import requests, calendar
         from datetime import date as date_type
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; IntelligenceBot/1.0)"}
+        start = str(target_date - timedelta(days=180))
+        url = (
+            f"https://stats.oecd.org/sdmx-json/data/MEI_FIN/ROU.M.{measure}.PA"
+            f"?startTime={start}&endTime={target_date}"
+        )
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            d = resp.json()
 
-        if indicator == 'policy_rate':
-            url = "https://www.bnr.ro/Rata-dobanzii-de-politica-monetara-1544.aspx"
-            try:
-                resp = requests.get(url, timeout=20, headers=headers)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, 'html.parser')
+            structs = d['data']['structures'][0]
+            times = structs['dimensions']['observation'][0]['values']
+            areas = structs['dimensions']['series'][0]['values']
+            measures = structs['dimensions']['series'][2]['values']
+            units = structs['dimensions']['series'][3]['values']
 
-                # BNR page has a table with date and rate columns
-                tables = soup.find_all('table')
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows[1:6]:  # skip header, check first 5 data rows
-                        cells = row.find_all(['td', 'th'])
-                        if len(cells) >= 2:
-                            date_text = cells[0].get_text(strip=True)
-                            rate_text = cells[1].get_text(strip=True).replace(',', '.').replace('%', '').strip()
-                            try:
-                                rate = float(rate_text)
-                                # parse date: BNR uses DD.MM.YYYY or YYYY-MM-DD
-                                for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y'):
-                                    try:
-                                        data_date = datetime.strptime(date_text, fmt).date()
-                                        logger.info(f"[BNR] policy_rate={rate}% data_date={data_date}")
-                                        return rate, data_date, 'monthly'
-                                    except ValueError:
-                                        continue
-                            except (ValueError, IndexError):
-                                continue
-                logger.warning("[BNR] policy_rate: no parseable row found in table")
-                return None
-            except Exception as e:
-                logger.error(f"[BNR] policy_rate scrape failed: {e}")
+            rou_idx = next((i for i, v in enumerate(areas) if v['id'] == 'ROU'), None)
+            meas_idx = next((i for i, v in enumerate(measures) if v['id'] == measure), None)
+            pa_idx = next((i for i, v in enumerate(units) if v['id'] == 'PA'), None)
+
+            if rou_idx is None or meas_idx is None:
+                logger.warning(f"[OECD] Romania or {measure} not in dimension values")
                 return None
 
-        elif indicator == 'robor_3m':
-            url = "https://www.bnr.ro/Dobanzile-ROBOR-3894.aspx"
-            try:
-                resp = requests.get(url, timeout=20, headers=headers)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, 'html.parser')
+            all_obs = {}
+            for sk, sv in d['data']['dataSets'][0]['series'].items():
+                parts = [int(x) for x in sk.split(':')]
+                if parts[0] == rou_idx and parts[2] == meas_idx and (pa_idx is None or parts[3] == pa_idx):
+                    for t_str, obs_vals in sv.get('observations', {}).items():
+                        t_idx = int(t_str)
+                        if obs_vals and obs_vals[0] is not None:
+                            all_obs[t_idx] = obs_vals[0]
 
-                # ROBOR table: columns are typically ON, 1W, 1M, 3M, 6M, 12M
-                tables = soup.find_all('table')
-                for table in tables:
-                    headers_row = table.find('tr')
-                    if not headers_row:
-                        continue
-                    header_cells = [c.get_text(strip=True).upper() for c in headers_row.find_all(['th', 'td'])]
-                    # Find column index for 3M
-                    col_3m = None
-                    for i, h in enumerate(header_cells):
-                        if '3M' in h or '3 LUNI' in h or '3MONTH' in h.replace(' ', ''):
-                            col_3m = i
-                            break
-                    if col_3m is None:
-                        continue
-
-                    data_rows = table.find_all('tr')[1:4]
-                    for row in data_rows:
-                        cells = row.find_all(['td', 'th'])
-                        if len(cells) > col_3m:
-                            rate_text = cells[col_3m].get_text(strip=True).replace(',', '.').replace('%', '').strip()
-                            date_text = cells[0].get_text(strip=True)
-                            try:
-                                rate = float(rate_text)
-                                for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y'):
-                                    try:
-                                        data_date = datetime.strptime(date_text, fmt).date()
-                                        logger.info(f"[BNR] robor_3m={rate}% data_date={data_date}")
-                                        return rate, data_date, 'daily'
-                                    except ValueError:
-                                        continue
-                                # If date not parseable, use target_date
-                                logger.info(f"[BNR] robor_3m={rate}% (date unknown, using target_date)")
-                                return rate, target_date, 'daily'
-                            except (ValueError, IndexError):
-                                continue
-                logger.warning("[BNR] robor_3m: no parseable row found")
-                return None
-            except Exception as e:
-                logger.error(f"[BNR] robor_3m scrape failed: {e}")
+            if not all_obs:
+                logger.warning(f"[OECD] {measure} ROU: no observations found")
                 return None
 
-        logger.warning(f"[BNR] unknown indicator: {indicator}")
-        return None
+            latest_idx = max(all_obs.keys())
+            value = float(all_obs[latest_idx])
+            time_id = times[latest_idx]['id']  # '2026-02' or '2025-Q3'
 
-    def _fetch_wgb(self, indicator: str, target_date: date) -> Optional[tuple]:
-        """Scrape World Government Bonds for Romania 10Y yield and CDS 5Y.
+            if 'Q' in time_id:
+                year, q = time_id.split('-Q')
+                last_month = int(q) * 3
+                last_day = calendar.monthrange(int(year), last_month)[1]
+                data_date = date_type(int(year), last_month, last_day)
+            else:
+                year, month = map(int, time_id.split('-'))
+                last_day = calendar.monthrange(year, month)[1]
+                data_date = date_type(year, month, last_day)
 
-        indicator: '10y_yield' or 'cds_5y'
+            staleness = (target_date - data_date).days
+            if staleness > 120:
+                logger.warning(f"[OECD] {measure} ROU: {staleness}d stale (data_date={data_date}), skipping")
+                return None
+
+            logger.info(f"[OECD] {measure} ROU: {value}% (data_date={data_date}, staleness={staleness}d)")
+            return value, data_date, 'monthly'
+        except Exception as e:
+            logger.error(f"[OECD] {measure} ROU fetch failed: {e}")
+            return None
+
+    def _fetch_wgb_cds(self, target_date: date) -> Optional[tuple]:
+        """Fetch Romania CDS 5Y from World Government Bonds using scrapling StealthyFetcher.
+
+        WGB uses JavaScript to render data, so standard requests returns placeholder values.
+        Uses scrapling StealthyFetcher (Chromium) when available; gracefully returns None if not.
         """
-        import requests
+        import re
         from bs4 import BeautifulSoup
 
         url = "https://www.worldgovernmentbonds.com/country/romania/"
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; IntelligenceBot/1.0)"}
+        html = None
+
         try:
-            resp = requests.get(url, timeout=20, headers=headers)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-            if indicator == '10y_yield':
-                # Page contains "10 Years Bond" yield prominently
-                for tag in soup.find_all(['span', 'td', 'div', 'strong']):
-                    text = tag.get_text(strip=True)
-                    # Look for pattern like "6.85%" near "10Y" or "10 Year"
-                    if '%' in text and len(text) < 10:
-                        try:
-                            val = float(text.replace('%', '').replace(',', '.').strip())
-                            if 0.0 < val < 30.0:
-                                # Check if contextually near a 10Y label
-                                parent_text = tag.parent.get_text(' ', strip=True) if tag.parent else ''
-                                if any(k in parent_text.upper() for k in ['10Y', '10 Y', '10-Y', '10 YEAR']):
-                                    logger.info(f"[WGB] 10y_yield={val}%")
-                                    return val, target_date, 'daily'
-                        except ValueError:
-                            continue
-
-                # Broader fallback: first percentage-like value in the main table
-                tables = soup.find_all('table')
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows:
-                        cells = row.find_all(['td', 'th'])
-                        row_text = row.get_text(' ').upper()
-                        if '10' in row_text and ('YEAR' in row_text or 'Y' in row_text):
-                            for cell in cells:
-                                ct = cell.get_text(strip=True).replace(',', '.').replace('%', '')
-                                try:
-                                    val = float(ct)
-                                    if 0.0 < val < 30.0:
-                                        logger.info(f"[WGB] 10y_yield={val}% (table fallback)")
-                                        return val, target_date, 'daily'
-                                except ValueError:
-                                    continue
-
-            elif indicator == 'cds_5y':
-                # CDS 5Y typically shown as basis points on the page
-                page_text = soup.get_text(' ')
-                import re
-                # Pattern: "CDS" followed by a number (bps)
-                patterns = [
-                    r'CDS\s*5\s*[Yy](?:ears?)?\s*[:\s]+(\d+(?:[.,]\d+)?)',
-                    r'Credit\s+Default\s+Swap.*?(\d{2,4}(?:[.,]\d+)?)\s*(?:bp|bps)',
-                    r'(\d{2,4})\s*(?:bp|bps)',
-                ]
-                for pattern in patterns:
-                    m = re.search(pattern, page_text, re.IGNORECASE)
-                    if m:
-                        try:
-                            val = float(m.group(1).replace(',', '.'))
-                            if 10 < val < 5000:
-                                logger.info(f"[WGB] cds_5y={val} bps")
-                                return val, target_date, 'daily'
-                        except ValueError:
-                            continue
-
-            logger.warning(f"[WGB] could not parse indicator={indicator}")
+            from scrapling.fetchers import StealthyFetcher
+            page = StealthyFetcher.get(url, headless=True, disable_resources=True)
+            html = page.content if hasattr(page, 'content') else str(page)
+        except ImportError:
+            logger.warning("[WGB CDS] scrapling.StealthyFetcher not available — skip CDS 5Y")
             return None
         except Exception as e:
-            logger.error(f"[WGB] {indicator} scrape failed: {e}")
+            logger.warning(f"[WGB CDS] StealthyFetcher failed: {e}")
             return None
+
+        if not html:
+            return None
+
+        soup = BeautifulSoup(html, 'html.parser')
+        text = soup.get_text(' ')
+
+        # WGB shows CDS as "Romania 5Y CDS: XXX bp"
+        patterns = [
+            r'5[\s\-]?Y(?:ear)?(?:\s+CDS)?[:\s]+(\d{2,4}(?:[.,]\d+)?)',
+            r'CDS.*?(\d{2,4}(?:[.,]\d+)?)\s*(?:bp|bps|basis)',
+            r'Credit\s+Default\s+Swap.*?(\d{2,4}(?:[.,]\d+)?)',
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                try:
+                    val = float(m.group(1).replace(',', '.'))
+                    if 10 < val < 5000:
+                        logger.info(f"[WGB CDS] cds_5y={val} bps")
+                        return val, target_date, 'daily'
+                except ValueError:
+                    continue
+
+        logger.warning("[WGB CDS] could not parse CDS 5Y value from rendered page")
+        return None
 
     def _fetch_eurostat_fiscal(self, target_date: date) -> Optional[tuple]:
         """Fetch Romania fiscal balance (% of GDP) from Eurostat REST API.
@@ -1109,6 +1066,90 @@ class OpenBBMarketService:
             return None
         except Exception as e:
             logger.error(f"[Eurostat] fiscal fetch failed: {e}")
+            return None
+
+    def _fetch_dbnomics_daily(
+        self, provider: str, dataset: str, series_code: str, target_date: date
+    ) -> Optional[tuple]:
+        """Fetch a daily time series from DBnomics (no API key required).
+
+        Used for RO_10Y_YIELD and DE_10Y_YIELD (Eurostat irt_lt_mcby_d).
+        Returns (value, data_date, 'daily') or None.
+        """
+        import requests
+        from datetime import date as date_type
+
+        url = (
+            f"https://api.db.nomics.world/v22/series/{provider}/{dataset}/{series_code}"
+            f"?observations=1&lastNObservations=10"
+        )
+        try:
+            resp = requests.get(url, timeout=20)
+            resp.raise_for_status()
+            d = resp.json()
+            docs = d.get('series', {}).get('docs', [])
+            if not docs:
+                logger.warning(f"[DBnomics] {series_code}: no docs in response")
+                return None
+            doc = docs[0]
+            periods = doc.get('period', [])
+            values = doc.get('value', [])
+            if not periods or not values:
+                return None
+            for period, value in zip(reversed(periods), reversed(values)):
+                if value is not None:
+                    data_date = date_type.fromisoformat(period)
+                    staleness = (target_date - data_date).days
+                    if staleness > 10:
+                        logger.warning(f"[DBnomics] {series_code}: {staleness}d stale, skipping")
+                        return None
+                    logger.info(f"[DBnomics] {series_code}: {value} (data_date={data_date}, staleness={staleness}d)")
+                    return float(value), data_date, 'daily'
+            logger.warning(f"[DBnomics] {series_code}: all observations null")
+            return None
+        except Exception as e:
+            logger.error(f"[DBnomics] {provider}/{dataset}/{series_code} failed: {e}")
+            return None
+
+    def _fetch_stooq(self, symbol: str, target_date: date) -> Optional[tuple]:
+        """Fetch latest close from Stooq CSV endpoint.
+
+        Used for BET_INDEX (^bet). No API key or extra library required.
+        Returns (value, data_date, 'daily') or None.
+        """
+        import requests
+        import csv
+        from io import StringIO
+        from datetime import date as date_type
+
+        url = f"https://stooq.com/q/l/?s={symbol.lower()}&f=sd2ohlcv&h&e=csv"
+        try:
+            resp = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if not text or 'No data' in text or len(text) < 20:
+                logger.warning(f"[Stooq] {symbol}: no data returned")
+                return None
+            reader = csv.DictReader(StringIO(text))
+            rows = list(reader)
+            if not rows:
+                return None
+            latest = rows[0]
+            close = latest.get('Close') or latest.get('close')
+            date_str = latest.get('Date') or latest.get('date')
+            if not close or close in ('N/D', 'N/A', ''):
+                logger.warning(f"[Stooq] {symbol}: close value is N/D")
+                return None
+            data_date = date_type.fromisoformat(date_str)
+            staleness = (target_date - data_date).days
+            if staleness > 7:
+                logger.warning(f"[Stooq] {symbol}: {staleness}d stale, skipping")
+                return None
+            value = float(close)
+            logger.info(f"[Stooq] {symbol}: {value} (data_date={data_date})")
+            return value, data_date, 'daily'
+        except Exception as e:
+            logger.error(f"[Stooq] {symbol} failed: {e}")
             return None
 
     def _fetch_indicator_openbb_fixed(
@@ -1485,34 +1526,47 @@ class OpenBBMarketService:
         category_emojis = {
             'RATES': '',
             'CREDIT_RISK': '',
+            'RISK': '⚠️',
             'INFLATION': '',
+            'FISCAL': '📊',
             'SHIPPING': '',
             'COMMODITIES': '',
             'FX': '',
             'VOLATILITY': '',
-            'INDICES': ''
+            'INDICES': '',
+            'EQUITY': '📈',
+            'CRYPTO': '',
         }
 
-        # Add freshness header per category
         freshness_by_category = {
             'RATES': 'FRED daily: current',
             'CREDIT_RISK': 'FRED daily: current',
+            'RISK': 'daily: current',
             'INFLATION': 'NICKEL: Feb 2026 (structural); others: current',
+            'FISCAL': 'Eurostat annual',
             'SHIPPING': 'Cass Freight: monthly structural',
             'COMMODITIES': 'Daily CME futures: current',
             'FX': 'yfinance: current',
             'VOLATILITY': 'VIX daily: current',
-            'INDICES': 'Daily: current'
+            'INDICES': 'Daily: current',
+            'EQUITY': 'daily: current',
+            'CRYPTO': 'daily: current',
         }
 
-        for category in ['RATES', 'CREDIT_RISK', 'INFLATION', 'SHIPPING', 'COMMODITIES', 'FX', 'VOLATILITY', 'INDICES']:
-            if category in by_category:
-                emoji = category_emojis.get(category, '')
-                lines.append(f"{emoji} {category}: [{freshness_by_category.get(category, 'current')}]")
-                for ind in by_category[category]:
-                    key = ind['indicator_key'].replace('_', ' ')
-                    lines.append(f"  - {key}: {format_value(ind)}")
-                lines.append("")
+        # Priority order — any category not in this list is appended at the end
+        _CATEGORY_ORDER = [
+            'RATES', 'CREDIT_RISK', 'RISK', 'INFLATION', 'FISCAL',
+            'SHIPPING', 'COMMODITIES', 'FX', 'VOLATILITY', 'INDICES', 'EQUITY', 'CRYPTO',
+        ]
+        ordered = [c for c in _CATEGORY_ORDER if c in by_category]
+        remaining = sorted(c for c in by_category if c not in _CATEGORY_ORDER)
+        for category in ordered + remaining:
+            emoji = category_emojis.get(category, '')
+            lines.append(f"{emoji} {category}: [{freshness_by_category.get(category, 'current')}]")
+            for ind in by_category[category]:
+                key = ind['indicator_key'].replace('_', ' ')
+                lines.append(f"  - {key}: {format_value(ind)}")
+            lines.append("")
 
         lines.extend([
             "INSTRUCTIONS:",
@@ -1760,8 +1814,8 @@ class OpenBBMarketService:
 
     _RO_INDICATOR_KEYS = [
         "EUR_RON", "BNR_RATE", "ROBOR_3M",
-        "RO_CPI_YOY", "RO_10Y_YIELD", "RO_CDS_5Y",
-        "RO_DEFICIT_GDP", "BET_INDEX",
+        "RO_CPI_YOY", "RO_10Y_YIELD", "RO_10Y_DE_SPREAD",
+        "RO_CDS_5Y", "RO_DEFICIT_GDP", "BET_INDEX",
     ]
 
     def fetch_ro_indicators(self, target_date: Optional[date] = None) -> bool:
@@ -1773,8 +1827,8 @@ class OpenBBMarketService:
         fetch_category dispatch:
           fx           → yfinance symbol
           fred_hicp_yoy→ FRED index series → YoY computation
-          bnr_scrape   → BNR website scraping (policy rate, ROBOR)
-          wgb_scrape   → World Government Bonds scraping (10Y yield, CDS)
+          oecd         → OECD MEI_FIN SDMX-JSON (BNR_RATE, ROBOR_3M, RO_10Y_YIELD)
+          wgb_cds      → World Government Bonds CDS via scrapling StealthyFetcher
           eurostat     → Eurostat REST API (fiscal balance)
         """
         target_date = target_date or date.today()
@@ -1801,12 +1855,36 @@ class OpenBBMarketService:
                     result = self._fetch_fred_hicp_yoy(config['fred_series'], target_date)
                     source = 'fred_hicp'
 
-                elif fetch_cat == 'bnr_scrape':
-                    result = self._fetch_bnr_scrape(config['bnr_indicator'], target_date)
-                    source = 'bnr'
+                elif fetch_cat == 'oecd':
+                    result = self._fetch_oecd_mei_fin(config['oecd_measure'], target_date)
+                    source = 'oecd'
 
-                elif fetch_cat == 'wgb_scrape':
-                    result = self._fetch_wgb(config['wgb_indicator'], target_date)
+                elif fetch_cat == 'dbnomics_daily':
+                    result = self._fetch_dbnomics_daily(
+                        config['dbnomics_provider'],
+                        config['dbnomics_dataset'],
+                        config['dbnomics_series'],
+                        target_date,
+                    )
+                    source = 'dbnomics'
+
+                elif fetch_cat == 'derived_spread':
+                    # RO_10Y_DE_SPREAD = (RO_10Y - DE_10Y) * 100 in bps
+                    ro_result = self._fetch_dbnomics_daily('Eurostat', 'irt_lt_mcby_d', 'D.MCBY.RO', target_date)
+                    de_result = self._fetch_dbnomics_daily('Eurostat', 'irt_lt_mcby_d', 'D.MCBY.DE', target_date)
+                    if ro_result and de_result:
+                        ro_val, ro_date, _ = ro_result
+                        de_val, de_date, _ = de_result
+                        spread_bps = round((ro_val - de_val) * 100, 1)
+                        result = (spread_bps, min(ro_date, de_date), 'daily')
+                    source = 'dbnomics_derived'
+
+                elif fetch_cat == 'stooq':
+                    result = self._fetch_stooq(config['stooq_symbol'], target_date)
+                    source = 'stooq'
+
+                elif fetch_cat == 'wgb_cds':
+                    result = self._fetch_wgb_cds(target_date)
                     source = 'wgb'
 
                 elif fetch_cat == 'eurostat':

@@ -10,6 +10,11 @@ WORKFLOW="pipeline.yml"
 REF="main"
 LOG_PREFIX="[$(date -u '+%Y-%m-%d %H:%M:%S UTC')]"
 
+ENV_FILE="/opt/intelligence-ita/repo/.env.production"
+if [ -z "${GITHUB_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
+  GITHUB_TOKEN=$(grep ^GITHUB_TOKEN "$ENV_FILE" | cut -d= -f2)
+fi
+
 if [ -z "${GITHUB_TOKEN:-}" ]; then
   echo "$LOG_PREFIX ERROR: GITHUB_TOKEN is not set" >&2
   exit 1
