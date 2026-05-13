@@ -1081,7 +1081,7 @@ class OpenBBMarketService:
 
         url = (
             f"https://api.db.nomics.world/v22/series/{provider}/{dataset}/{series_code}"
-            f"?observations=1&lastNObservations=10"
+            f"?observations=1&last_n_observations=30"
         )
         try:
             resp = requests.get(url, timeout=20)
