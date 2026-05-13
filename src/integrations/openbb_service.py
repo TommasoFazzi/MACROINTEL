@@ -478,21 +478,19 @@ class OpenBBMarketService:
         'RO_10Y_YIELD': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania 10Y Gov Bond Yield (Eurostat EMU convergence daily, lag ~2d)',
-            'fetch_category': 'dbnomics_daily',
-            'dbnomics_provider': 'Eurostat',
-            'dbnomics_dataset': 'irt_lt_mcby_d',
-            'dbnomics_series': 'D.MCBY.RO',
+            'description': 'Romania 10Y Gov Bond Yield (OECD MEI_FIN IRLT, monthly)',
+            'fetch_category': 'oecd',
+            'oecd_measure': 'IRLT',
             'country_code': 'RO',
-            'frequency': 'daily',
+            'frequency': 'monthly',
         },
         'RO_10Y_DE_SPREAD': {
             'unit': 'bps',
             'category': 'RISK',
-            'description': 'Romania 10Y spread vs Germania — rischio sovrano (bps)',
-            'fetch_category': 'derived_spread',
+            'description': 'Romania 10Y spread vs Germania — rischio sovrano (OECD IRLT, bps, monthly)',
+            'fetch_category': 'derived_oecd_spread',
             'country_code': 'RO',
-            'frequency': 'daily',
+            'frequency': 'monthly',
         },
         'RO_CDS_5Y': {
             'unit': 'bps',
@@ -901,12 +899,13 @@ class OpenBBMarketService:
             logger.error(f"[HICP YoY] {fred_series} failed: {e}")
             return None
 
-    def _fetch_oecd_mei_fin(self, measure: str, target_date: date) -> Optional[tuple]:
-        """Fetch Romania interest rate indicator from OECD MEI_FIN dataset (SDMX-JSON v2).
+    def _fetch_oecd_mei_fin(self, measure: str, target_date: date, country: str = 'ROU') -> Optional[tuple]:
+        """Fetch interest rate indicator from OECD MEI_FIN dataset (SDMX-JSON v2).
 
-        measure: 'IRLT'   → long-term 10Y government bond yield
-                 'IRSTCI' → short-term overnight rate (proxy for BNR policy rate)
-                 'IR3TIB' → 3-month interbank rate (proxy for ROBOR 3M)
+        measure:  'IRLT'   → long-term 10Y government bond yield
+                  'IRSTCI' → short-term overnight rate
+                  'IR3TIB' → 3-month interbank rate
+        country:  OECD 3-letter code, e.g. 'ROU' (Romania), 'DEU' (Germany)
         No API key required. Returns (value, data_date, 'monthly').
         """
         import requests, calendar
@@ -914,7 +913,7 @@ class OpenBBMarketService:
 
         start = str(target_date - timedelta(days=180))
         url = (
-            f"https://stats.oecd.org/sdmx-json/data/MEI_FIN/ROU.M.{measure}.PA"
+            f"https://stats.oecd.org/sdmx-json/data/MEI_FIN/{country}.M.{measure}.PA"
             f"?startTime={start}&endTime={target_date}"
         )
         try:
@@ -928,18 +927,18 @@ class OpenBBMarketService:
             measures = structs['dimensions']['series'][2]['values']
             units = structs['dimensions']['series'][3]['values']
 
-            rou_idx = next((i for i, v in enumerate(areas) if v['id'] == 'ROU'), None)
+            area_idx = next((i for i, v in enumerate(areas) if v['id'] == country), None)
             meas_idx = next((i for i, v in enumerate(measures) if v['id'] == measure), None)
             pa_idx = next((i for i, v in enumerate(units) if v['id'] == 'PA'), None)
 
-            if rou_idx is None or meas_idx is None:
-                logger.warning(f"[OECD] Romania or {measure} not in dimension values")
+            if area_idx is None or meas_idx is None:
+                logger.warning(f"[OECD] {country} or {measure} not in dimension values")
                 return None
 
             all_obs = {}
             for sk, sv in d['data']['dataSets'][0]['series'].items():
                 parts = [int(x) for x in sk.split(':')]
-                if parts[0] == rou_idx and parts[2] == meas_idx and (pa_idx is None or parts[3] == pa_idx):
+                if parts[0] == area_idx and parts[2] == meas_idx and (pa_idx is None or parts[3] == pa_idx):
                     for t_str, obs_vals in sv.get('observations', {}).items():
                         t_idx = int(t_str)
                         if obs_vals and obs_vals[0] is not None:
@@ -965,10 +964,10 @@ class OpenBBMarketService:
 
             staleness = (target_date - data_date).days
             if staleness > 120:
-                logger.warning(f"[OECD] {measure} ROU: {staleness}d stale (data_date={data_date}), skipping")
+                logger.warning(f"[OECD] {measure} {country}: {staleness}d stale (data_date={data_date}), skipping")
                 return None
 
-            logger.info(f"[OECD] {measure} ROU: {value}% (data_date={data_date}, staleness={staleness}d)")
+            logger.info(f"[OECD] {measure} {country}: {value}% (data_date={data_date}, staleness={staleness}d)")
             return value, data_date, 'monthly'
         except Exception as e:
             logger.error(f"[OECD] {measure} ROU fetch failed: {e}")
@@ -1868,16 +1867,16 @@ class OpenBBMarketService:
                     )
                     source = 'dbnomics'
 
-                elif fetch_cat == 'derived_spread':
-                    # RO_10Y_DE_SPREAD = (RO_10Y - DE_10Y) * 100 in bps
-                    ro_result = self._fetch_dbnomics_daily('Eurostat', 'irt_lt_mcby_d', 'D.MCBY.RO', target_date)
-                    de_result = self._fetch_dbnomics_daily('Eurostat', 'irt_lt_mcby_d', 'D.MCBY.DE', target_date)
+                elif fetch_cat == 'derived_oecd_spread':
+                    # RO_10Y_DE_SPREAD = (RO_10Y - DE_10Y) * 100 in bps, via OECD IRLT
+                    ro_result = self._fetch_oecd_mei_fin('IRLT', target_date, country='ROU')
+                    de_result = self._fetch_oecd_mei_fin('IRLT', target_date, country='DEU')
                     if ro_result and de_result:
                         ro_val, ro_date, _ = ro_result
                         de_val, de_date, _ = de_result
                         spread_bps = round((ro_val - de_val) * 100, 1)
-                        result = (spread_bps, min(ro_date, de_date), 'daily')
-                    source = 'dbnomics_derived'
+                        result = (spread_bps, min(ro_date, de_date), 'monthly')
+                    source = 'oecd_derived'
 
                 elif fetch_cat == 'stooq':
                     result = self._fetch_stooq(config['stooq_symbol'], target_date)
