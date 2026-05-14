@@ -1226,31 +1226,28 @@ class OpenBBMarketService:
             logger.error(f"[cursbnr] ROBOR 3M fetch failed: {e}")
             return None
 
-    # English month names for Trading Economics date parsing
-    _EN_MONTHS = {
-        'January': 1, 'February': 2, 'March': 3, 'April': 4,
-        'May': 5, 'June': 6, 'July': 7, 'August': 8,
-        'September': 9, 'October': 10, 'November': 11, 'December': 12,
-    }
-
     def _fetch_trading_economics(self, te_path: str, value_type: str, target_date: date) -> Optional[tuple]:
-        """Fetch a Romania macro indicator from Trading Economics via cloudscraper.
+        """Fetch a Romania macro indicator from Trading Economics via cloudscraper + DOM parsing.
+
+        Parses table#calendar > tr.an-estimate-row — stable HTML structure, not editorial text.
+        Each row: [release_date | GMT | event | reference | actual | previous | ...]
+        Takes the last row where td[id=actual] is non-empty.
 
         value_type: 'policy_rate' | 'cpi_yoy'
-          - policy_rate: extracts 'last recorded at X percent'; date from TELastUpdate
-          - cpi_yoy:     extracts 'increased/decreased to X percent in MONTH'; year from 'of YEAR'
+          - policy_rate: data_date = release date (board decision date)
+          - cpi_yoy:     data_date = release date (publication date of reference month)
+            Both use the same DOM extraction path — value_type only controls frequency label.
 
-        Falls back gracefully if cloudscraper is not installed or page structure changes.
+        Falls back gracefully if cloudscraper not installed or table structure changes.
         Returns (value, data_date, frequency) or None.
         """
-        import re
-        import calendar as cal_module
         from datetime import date as date_type
 
         try:
             import cloudscraper
-        except ImportError:
-            logger.warning("[TradingEcon] cloudscraper not installed — skipping")
+            from bs4 import BeautifulSoup
+        except ImportError as e:
+            logger.warning(f"[TradingEcon] missing dependency: {e} — skipping")
             return None
 
         url = f"https://tradingeconomics.com/{te_path}"
@@ -1258,60 +1255,52 @@ class OpenBBMarketService:
             scraper = cloudscraper.create_scraper()
             resp = scraper.get(url, timeout=25)
             resp.raise_for_status()
-            text = resp.text
+            soup = BeautifulSoup(resp.text, 'html.parser')
         except Exception as e:
             logger.error(f"[TradingEcon] {te_path} fetch failed: {e}")
             return None
 
         try:
-            if value_type == 'policy_rate':
-                m_val = re.search(r'last recorded at ([\d.,]+) percent', text, re.I)
-                if not m_val:
-                    logger.warning(f"[TradingEcon] {te_path}: value pattern not found")
-                    return None
-                value = float(m_val.group(1).replace(',', '.'))
-
-                # Use TELastUpdate (yyyymmddHHMMSS) as data date
-                m_date = re.search(r'TELastUpdate\s*=\s*[\'\"]([\d]{8})', text)
-                if m_date:
-                    ds = m_date.group(1)
-                    data_date = date_type(int(ds[:4]), int(ds[4:6]), int(ds[6:8]))
-                else:
-                    data_date = target_date
-
-                frequency = 'irregular'
-
-            elif value_type == 'cpi_yoy':
-                # e.g. "increased to 10.70 percent in April from 9.90 percent in March of 2026"
-                m_val = re.search(
-                    r'(?:increased|decreased|rose|fell) to ([\d.,]+) percent in (\w+).*?of (\d{4})',
-                    text, re.I
-                )
-                if not m_val:
-                    logger.warning(f"[TradingEcon] {te_path}: CPI pattern not found")
-                    return None
-                value = float(m_val.group(1).replace(',', '.'))
-                month_str = m_val.group(2)
-                year = int(m_val.group(3))
-                month_num = self._EN_MONTHS.get(month_str)
-                if month_num is None:
-                    logger.warning(f"[TradingEcon] {te_path}: unknown month '{month_str}'")
-                    return None
-                last_day = cal_module.monthrange(year, month_num)[1]
-                data_date = date_type(year, month_num, last_day)
-                frequency = 'monthly'
-
-            else:
-                logger.warning(f"[TradingEcon] unknown value_type '{value_type}'")
+            cal_table = soup.find('table', id='calendar')
+            if cal_table is None:
+                logger.warning(f"[TradingEcon] {te_path}: table#calendar not found")
                 return None
+
+            rows = cal_table.find_all('tr', class_='an-estimate-row')
+            if not rows:
+                logger.warning(f"[TradingEcon] {te_path}: no data rows in calendar table")
+                return None
+
+            # Walk rows backwards to find the latest with a non-empty actual value
+            latest_row = None
+            for row in reversed(rows):
+                actual_td = row.find('td', id='actual')
+                if actual_td and actual_td.get_text(strip=True):
+                    latest_row = row
+                    break
+
+            if latest_row is None:
+                logger.warning(f"[TradingEcon] {te_path}: no row with actual value found")
+                return None
+
+            # Extract value from actual td (e.g. "10.7%" or "6.5%")
+            actual_text = latest_row.find('td', id='actual').get_text(strip=True)
+            value = float(actual_text.replace('%', '').replace(',', '.').strip())
+
+            # Extract release date from first td (ISO format: "2026-05-13")
+            tds = latest_row.find_all('td')
+            release_date_str = tds[0].get_text(strip=True)
+            data_date = date_type.fromisoformat(release_date_str)
+
+            frequency = 'irregular' if value_type == 'policy_rate' else 'monthly'
 
             staleness = (target_date - data_date).days
             max_stale = self.MAX_STALENESS_BY_FREQUENCY.get(frequency, 75)
             if staleness > max_stale * 2:
-                logger.warning(f"[TradingEcon] {te_path}: {staleness}d stale, skipping")
+                logger.warning(f"[TradingEcon] {te_path}: {staleness}d stale ({data_date}), skipping")
                 return None
 
-            logger.info(f"[TradingEcon] {te_path}: {value} (data_date={data_date}, staleness={staleness}d)")
+            logger.info(f"[TradingEcon] {te_path}: {value} (release_date={data_date}, staleness={staleness}d)")
             return value, data_date, frequency
 
         except Exception as e:
