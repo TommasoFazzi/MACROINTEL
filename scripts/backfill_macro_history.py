@@ -23,7 +23,7 @@ from typing import Optional
 
 sys.path.insert(0, '.')
 
-from src.storage.database import get_db_manager
+from src.storage.database import DatabaseManager
 from src.integrations.openbb_service import OpenBBMarketService
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -280,7 +280,7 @@ def main():
     if args.dry_run:
         logger.info("DRY-RUN mode — no DB modifications")
 
-    db = get_db_manager()
+    db = DatabaseManager()
     service = OpenBBMarketService(db)
 
     if run_seed:
