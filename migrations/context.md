@@ -119,6 +119,13 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - **Deployment order**: apply migration 038 BEFORE deploying Task 3 code; if column missing, the UPDATE in Step 2 rolls back the entire transaction (including the INSERT)
   - Rollback: `ALTER TABLE macro_indicators DROP COLUMN IF EXISTS ma_7d, ma_30d, std_30d, pct_change_7d, pct_change_30d, percentile_rank_30d`
 
+- `039_macro_pct_change_12m.sql` — Adds frequency-appropriate YoY change column to `macro_indicators`:
+  - `pct_change_12m` — % change vs 12th prior observation (`LIMIT 1 OFFSET 11`), NULLABLE
+  - Semantic meaning by frequency: **monthly → true YoY** (12 months), **weekly → ~quarterly** (12 weeks), daily → 12 days (computed but not displayed)
+  - Displayed in `get_macro_context_text()` as `Δ12m(YoY)` for monthly, `Δ12w` for weekly; hidden for daily
+  - Replaces `Δ30d/w/m` for non-daily indicators (YoY is the standard economic metric; 30 observations = 2.5 years for monthly is non-standard)
+  - Backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -129,7 +136,8 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 035: **Applied** (2026-04-14)
 - 036: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/036_add_previous_value_macro_indicators.sql`
 - 037: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/037_romania_vertical.sql`
-- 038: **Not yet applied** — apply BEFORE deploying updated `openbb_service.py` (Task 3 code): `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/038_macro_historical_context.sql`. Then run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py`
+- 038: **Applied** (2026-05-14) — historical context columns. Backfill run: 378 rows seeded, 2413 rows updated.
+- 039: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/039_macro_pct_change_12m.sql`. Then re-run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
 
 ## Execution Order
 
@@ -147,6 +155,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 036 (Strategic Intelligence Layer Phase 3 fix — no external dependencies)
   → 037 (Romania Vertical PoC — no external dependencies)
   → 038 (Historical Context Columns — requires 037 applied first for country_code column)
+  → 039 (pct_change_12m YoY column — no external dependencies, requires 038)
 ```
 
 Run a single migration:

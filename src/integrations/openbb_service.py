@@ -1712,6 +1712,7 @@ class OpenBBMarketService:
             std  = ind.get('std_30d')
             d7   = ind.get('pct_change_7d')
             d30  = ind.get('pct_change_30d')
+            d12  = ind.get('pct_change_12m')
             p30  = ind.get('percentile_rank_30d')
 
             def _fv(v) -> Optional[str]:
@@ -1735,8 +1736,17 @@ class OpenBBMarketService:
                 hist_parts.append(f"σ:{float(std):.3f}")
             if d7   is not None:
                 hist_parts.append(f"Δ7{freq_suffix}:{float(d7):+.1f}%")
-            if d30  is not None:
-                hist_parts.append(f"Δ30{freq_suffix}:{float(d30):+.1f}%")
+            # Frequency-appropriate change window:
+            #   daily  → Δ30d (standard 1-month market window)
+            #   weekly → Δ12w (~quarterly proxy, 12 weeks)
+            #   monthly → Δ12m (true YoY — the standard economic metric)
+            if freq_suffix == 'd':
+                if d30 is not None:
+                    hist_parts.append(f"Δ30d:{float(d30):+.1f}%")
+            else:
+                if d12 is not None:
+                    label = "Δ12m(YoY)" if freq_suffix == 'm' else f"Δ12{freq_suffix}"
+                    hist_parts.append(f"{label}:{float(d12):+.1f}%")
             if p30  is not None:
                 p = float(p30)
                 alert = "⚠️H" if p >= 90 else ("⚠️L" if p <= 10 else "")
@@ -2326,6 +2336,17 @@ class OpenBBMarketService:
                                       AND date <= mi.date
                                     ORDER BY date DESC LIMIT 30
                                 ) h
+                            ),
+                            pct_change_12m = (
+                                SELECT CASE WHEN v12 IS NOT NULL AND v12 != 0
+                                       THEN ROUND(((mi.value - v12) / ABS(v12) * 100)::NUMERIC, 4)
+                                       ELSE NULL END
+                                FROM (
+                                    SELECT value AS v12 FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date < mi.date
+                                    ORDER BY date DESC LIMIT 1 OFFSET 11
+                                ) s
                             )
                         WHERE date = %s AND indicator_key = %s
                     """, (target_date, key))
@@ -2343,7 +2364,8 @@ class OpenBBMarketService:
                     cur.execute("""
                         SELECT indicator_key, value, unit, category,
                                ma_7d, ma_30d, std_30d,
-                               pct_change_7d, pct_change_30d, percentile_rank_30d
+                               pct_change_7d, pct_change_30d, percentile_rank_30d,
+                               pct_change_12m
                         FROM macro_indicators
                         WHERE date = %s
                           AND country_code = %s
@@ -2362,6 +2384,7 @@ class OpenBBMarketService:
                             'pct_change_7d': row[7],
                             'pct_change_30d': row[8],
                             'percentile_rank_30d': row[9],
+                            'pct_change_12m': row[10],
                         }
                         for row in cur.fetchall()
                     ]

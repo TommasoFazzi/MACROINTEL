@@ -1217,7 +1217,8 @@ Respond with JSON analysis following the full schema above:"""
                     cur.execute("""
                         SELECT indicator_key, value, previous_value, category,
                                ma_7d, ma_30d, std_30d,
-                               pct_change_7d, pct_change_30d, percentile_rank_30d
+                               pct_change_7d, pct_change_30d, percentile_rank_30d,
+                               pct_change_12m
                         FROM macro_indicators
                         WHERE date = %s
                     """, (target_date,))
@@ -1236,6 +1237,7 @@ Respond with JSON analysis following the full schema above:"""
                     'pct_change_7d': row[7],
                     'pct_change_30d': row[8],
                     'percentile_rank_30d': row[9],
+                    'pct_change_12m': row[10],
                 }
                 for row in rows
             ]
@@ -2960,7 +2962,8 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                             COALESCE(meta.expected_frequency, 'monthly') AS freq,
                             COALESCE(meta.staleness_days, 0) AS staleness_days,
                             mi.ma_7d, mi.ma_30d, mi.std_30d,
-                            mi.pct_change_7d, mi.pct_change_30d, mi.percentile_rank_30d
+                            mi.pct_change_7d, mi.pct_change_30d, mi.percentile_rank_30d,
+                            mi.pct_change_12m
                         FROM macro_indicators mi
                         LEFT JOIN macro_indicator_metadata meta ON meta.key = mi.indicator_key
                         WHERE mi.country_code = 'RO'
@@ -2981,20 +2984,27 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
             if key not in rows:
                 lines.append(f"- {label}: n/d (nessun dato)")
                 continue
-            value, unit, data_date, freq, staleness_days, ma7, ma30, std30, pct7, pct30, p30 = rows[key]
+            value, unit, data_date, freq, staleness_days, ma7, ma30, std30, pct7, pct30, p30, d12 = rows[key]
             max_stale = _FREQ_STALE.get(freq, 75)
             is_stale = data_date < today - timedelta(days=max_stale)
             stale_note = f" [dato di {data_date}, {staleness_days}gg fa]" if is_stale else f" [aggiornato {data_date}]"
             formatted = f"{float(value):.2f}{'%' if unit in ('%', '% of GDP', 'Rate') else ''}"
 
             # Build trend context from pre-computed derived columns
+            # Use freq-appropriate change window: daily=Δ7d+Δ30d, monthly=Δ7m+Δ12m(YoY)
+            freq_s = {'daily': 'd', 'weekly': 'w', 'monthly': 'm', '24_7': 'd'}.get(freq, 'm')
             trend_parts = []
             if pct7  is not None:
-                trend_parts.append(f"Δ7m: {float(pct7):+.1f}%")
-            if pct30 is not None:
-                trend_parts.append(f"Δ30m: {float(pct30):+.1f}%")
+                trend_parts.append(f"Δ7{freq_s}: {float(pct7):+.1f}%")
+            if freq_s == 'd':
+                if pct30 is not None:
+                    trend_parts.append(f"Δ30d: {float(pct30):+.1f}%")
+            else:
+                if d12 is not None:
+                    label = "Δ12m(YoY)" if freq_s == 'm' else f"Δ12{freq_s}"
+                    trend_parts.append(f"{label}: {float(d12):+.1f}%")
             if ma30  is not None:
-                trend_parts.append(f"MA30m: {float(ma30):.3f}")
+                trend_parts.append(f"MA30{freq_s}: {float(ma30):.3f}")
             if p30   is not None:
                 p = float(p30)
                 if p >= 85:

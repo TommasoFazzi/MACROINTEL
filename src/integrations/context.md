@@ -41,7 +41,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - Freshness headers per category ("NICKEL: Feb 2026 (structural)", etc.)
     - ⚠️ warning for USD_CNH (restricted reliability, PBoC fixing)
     - Loads `macro_indicator_metadata` table for staleness + frequency context
-    - **Historical context suffix** (migration 038): each indicator line appends `MA7d:X | MA30d:X | σ:X | Δ7d:+X% | Δ30d:+X% | P30:NN°[⚠️H/⚠️L]` when data is available. Label suffix (`d`/`w`/`m`) reflects indicator frequency so LLM disambiguates "Δ7m" (monthly) from "Δ7d" (daily). `P30 >= 90` → `⚠️H`, `P30 <= 10` → `⚠️L`. `std_30d` shown only when > 0.001 (filters STDDEV_POP=0 for N=1). All parts omitted when NULL (graceful degradation for new indicators).
+    - **Historical context suffix** (migrations 038+039): each indicator line appends `MA7d:X | MA30d:X | σ:X | Δ7d:+X% | Δ30d:+X% | P30:NN°[⚠️H/⚠️L]` when data is available. Label suffix (`d`/`w`/`m`) reflects indicator frequency. **Frequency-appropriate change window**: daily → `Δ7d` + `Δ30d`; weekly → `Δ7w` + `Δ12w` (~quarterly); monthly → `Δ7m` + `Δ12m(YoY)` — the standard economic comparison. `pct_change_30d` is NOT shown for non-daily (2.5yr window is non-standard; replaced by YoY). `P30 >= 90` → `⚠️H`, `P30 <= 10` → `⚠️L`. `std_30d` shown only when > 0.001. All parts omitted when NULL (graceful degradation).
   - **New methods (Phase 1)**:
     - `_fetch_indicator_openbb_fixed(fred_series, target_date)` → `(value, data_date, frequency) | None` — extracts real FRED data date; staleness check before saving
     - `_upsert_indicator_metadata(key, frequency, last_updated, ...)` — writes to `macro_indicator_metadata` table (migration 035)
@@ -50,9 +50,9 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - `_last_date_with_fresh_data(key, before)` → `Optional[date]` — queries `macro_indicator_metadata` for most recent non-stale date
   - **Phase 3 fix (migration 036)**:
     - `_save_macro_indicator()` updated to populate `previous_value` column inline via scalar subquery — no extra round-trip. ON CONFLICT also updates `previous_value`. Prerequisite for Phase 3 indicator delta calculation (`_get_macro_indicators_for_screening`).
-  - **Migration 038 — Historical context columns**:
-    - `_save_macro_indicator()` now runs a second `cur.execute()` in the same transaction (Step 2) that computes `ma_7d`, `ma_30d`, `std_30d`, `pct_change_7d`, `pct_change_30d`, `percentile_rank_30d` via correlated subqueries bounded to LIMIT 7/30. ~10ms overhead per indicator. **Deployment order**: migration 038 must be applied BEFORE this code is deployed — missing column causes full transaction rollback (INSERT + UPDATE).
-    - `_get_macro_indicators()` now SELECTs all 6 new columns and includes them in the returned dicts (nullable; `None` when NULL in DB).
+  - **Migrations 038+039 — Historical context columns**:
+    - `_save_macro_indicator()` runs a second `cur.execute()` in the same transaction (Step 2) computing 7 derived columns: `ma_7d`, `ma_30d`, `std_30d`, `pct_change_7d`, `pct_change_30d`, `percentile_rank_30d`, `pct_change_12m` via correlated subqueries bounded to LIMIT 7/30. ~10ms overhead per indicator. **Deployment order**: migrations 038+039 must be applied BEFORE this code runs — missing columns cause full transaction rollback.
+    - `_get_macro_indicators()` SELECTs all 7 new columns and includes them in the returned dicts (nullable; `None` when NULL in DB).
     - `get_macro_context_text()` inner `format_value()` appends historical context suffix (see above).
   - **Class-level constants**:
     - `FRED_SERIES_FREQUENCY` — maps FRED series ID to frequency (daily/weekly/monthly)

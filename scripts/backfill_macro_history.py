@@ -89,6 +89,17 @@ SET
               AND date <= mi.date
             ORDER BY date DESC LIMIT 30
         ) h
+    ),
+    pct_change_12m = (
+        SELECT CASE WHEN v12 IS NOT NULL AND v12 != 0
+               THEN ROUND(((mi.value - v12) / ABS(v12) * 100)::NUMERIC, 4)
+               ELSE NULL END
+        FROM (
+            SELECT value AS v12 FROM macro_indicators
+            WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+              AND date < mi.date
+            ORDER BY date DESC LIMIT 1 OFFSET 11
+        ) s
     )
 WHERE indicator_key = %s
 """
