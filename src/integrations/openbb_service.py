@@ -452,11 +452,13 @@ class OpenBBMarketService:
         'BNR_RATE': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania overnight interbank rate / BNR policy rate proxy (OECD IRSTCI)',
-            'fetch_category': 'oecd',
+            'description': 'Romania BNR Policy Rate ufficiale (Trading Economics, fallback OECD IRSTCI)',
+            'fetch_category': 'trading_economics',
+            'te_path': 'romania/interest-rate',
+            'te_value_type': 'policy_rate',
             'oecd_measure': 'IRSTCI',
             'country_code': 'RO',
-            'frequency': 'monthly',
+            'frequency': 'irregular',
         },
         'ROBOR_3M': {
             'unit': '%',
@@ -470,9 +472,12 @@ class OpenBBMarketService:
             'fred_series': 'CP0000ROM086NEST',
             'unit': '%',
             'category': 'INFLATION',
-            'description': 'Romania HICP YoY (Eurostat/FRED, computed from index)',
-            'fetch_category': 'fred_hicp_yoy',
+            'description': 'Romania CPI YoY (Trading Economics, 1-2d lag; fallback FRED HICP)',
+            'fetch_category': 'trading_economics',
+            'te_path': 'romania/inflation-cpi',
+            'te_value_type': 'cpi_yoy',
             'country_code': 'RO',
+            'frequency': 'monthly',
         },
         'RO_10Y_YIELD': {
             'unit': '%',
@@ -1221,6 +1226,98 @@ class OpenBBMarketService:
             logger.error(f"[cursbnr] ROBOR 3M fetch failed: {e}")
             return None
 
+    # English month names for Trading Economics date parsing
+    _EN_MONTHS = {
+        'January': 1, 'February': 2, 'March': 3, 'April': 4,
+        'May': 5, 'June': 6, 'July': 7, 'August': 8,
+        'September': 9, 'October': 10, 'November': 11, 'December': 12,
+    }
+
+    def _fetch_trading_economics(self, te_path: str, value_type: str, target_date: date) -> Optional[tuple]:
+        """Fetch a Romania macro indicator from Trading Economics via cloudscraper.
+
+        value_type: 'policy_rate' | 'cpi_yoy'
+          - policy_rate: extracts 'last recorded at X percent'; date from TELastUpdate
+          - cpi_yoy:     extracts 'increased/decreased to X percent in MONTH'; year from 'of YEAR'
+
+        Falls back gracefully if cloudscraper is not installed or page structure changes.
+        Returns (value, data_date, frequency) or None.
+        """
+        import re
+        import calendar as cal_module
+        from datetime import date as date_type
+
+        try:
+            import cloudscraper
+        except ImportError:
+            logger.warning("[TradingEcon] cloudscraper not installed — skipping")
+            return None
+
+        url = f"https://tradingeconomics.com/{te_path}"
+        try:
+            scraper = cloudscraper.create_scraper()
+            resp = scraper.get(url, timeout=25)
+            resp.raise_for_status()
+            text = resp.text
+        except Exception as e:
+            logger.error(f"[TradingEcon] {te_path} fetch failed: {e}")
+            return None
+
+        try:
+            if value_type == 'policy_rate':
+                m_val = re.search(r'last recorded at ([\d.,]+) percent', text, re.I)
+                if not m_val:
+                    logger.warning(f"[TradingEcon] {te_path}: value pattern not found")
+                    return None
+                value = float(m_val.group(1).replace(',', '.'))
+
+                # Use TELastUpdate (yyyymmddHHMMSS) as data date
+                m_date = re.search(r'TELastUpdate\s*=\s*[\'\"]([\d]{8})', text)
+                if m_date:
+                    ds = m_date.group(1)
+                    data_date = date_type(int(ds[:4]), int(ds[4:6]), int(ds[6:8]))
+                else:
+                    data_date = target_date
+
+                frequency = 'irregular'
+
+            elif value_type == 'cpi_yoy':
+                # e.g. "increased to 10.70 percent in April from 9.90 percent in March of 2026"
+                m_val = re.search(
+                    r'(?:increased|decreased|rose|fell) to ([\d.,]+) percent in (\w+).*?of (\d{4})',
+                    text, re.I
+                )
+                if not m_val:
+                    logger.warning(f"[TradingEcon] {te_path}: CPI pattern not found")
+                    return None
+                value = float(m_val.group(1).replace(',', '.'))
+                month_str = m_val.group(2)
+                year = int(m_val.group(3))
+                month_num = self._EN_MONTHS.get(month_str)
+                if month_num is None:
+                    logger.warning(f"[TradingEcon] {te_path}: unknown month '{month_str}'")
+                    return None
+                last_day = cal_module.monthrange(year, month_num)[1]
+                data_date = date_type(year, month_num, last_day)
+                frequency = 'monthly'
+
+            else:
+                logger.warning(f"[TradingEcon] unknown value_type '{value_type}'")
+                return None
+
+            staleness = (target_date - data_date).days
+            max_stale = self.MAX_STALENESS_BY_FREQUENCY.get(frequency, 75)
+            if staleness > max_stale * 2:
+                logger.warning(f"[TradingEcon] {te_path}: {staleness}d stale, skipping")
+                return None
+
+            logger.info(f"[TradingEcon] {te_path}: {value} (data_date={data_date}, staleness={staleness}d)")
+            return value, data_date, frequency
+
+        except Exception as e:
+            logger.error(f"[TradingEcon] {te_path} parse failed: {e}")
+            return None
+
     def _fetch_tradingview(self, symbol: str, exchange: str, target_date: date) -> Optional[tuple]:
         """Fetch latest daily close from TradingView via tvdatafeed (rongardF fork).
 
@@ -1935,7 +2032,8 @@ class OpenBBMarketService:
         fetch_category dispatch:
           fx                  → yfinance symbol
           fred_hicp_yoy       → FRED index series → YoY computation
-          oecd                → OECD MEI_FIN SDMX-JSON (BNR_RATE)
+          trading_economics   → Trading Economics via cloudscraper (BNR_RATE=policy_rate, RO_CPI_YOY=cpi_yoy; fallback to oecd/fred)
+          oecd                → OECD MEI_FIN SDMX-JSON (BNR_RATE fallback only)
           cursbnr             → cursbnr.ro HTML table (ROBOR_3M, daily)
           tradingview         → TVC via tvDatafeed (RO_10Y_YIELD, daily; OECD fallback)
           derived_tradingview → TVC RO10Y-DE10Y spread (RO_10Y_DE_SPREAD, daily; OECD fallback)
@@ -1961,6 +2059,23 @@ class OpenBBMarketService:
                     if value is not None:
                         result = (value, target_date, config.get('frequency', 'daily'))
                         source = 'yfinance'
+
+                elif fetch_cat == 'trading_economics':
+                    result = self._fetch_trading_economics(
+                        config['te_path'], config['te_value_type'], target_date
+                    )
+                    source = 'trading_economics'
+                    if result is None:
+                        # Fallback: BNR_RATE → OECD IRSTCI; RO_CPI_YOY → FRED HICP
+                        logger.info(f"  [RO] {key}: TE failed, using fallback")
+                        if config.get('oecd_measure'):
+                            result = self._fetch_oecd_mei_fin(config['oecd_measure'], target_date)
+                            if result:
+                                source = 'oecd_fallback'
+                        elif config.get('fred_series'):
+                            result = self._fetch_fred_hicp_yoy(config['fred_series'], target_date)
+                            if result:
+                                source = 'fred_hicp_fallback'
 
                 elif fetch_cat == 'fred_hicp_yoy':
                     result = self._fetch_fred_hicp_yoy(config['fred_series'], target_date)
