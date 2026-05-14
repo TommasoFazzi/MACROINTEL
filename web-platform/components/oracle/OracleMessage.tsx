@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { OracleChatMessage, QueryPlan } from '../../types/oracle';
 
@@ -180,6 +181,7 @@ export function AssistantBubble({
         {/* Answer text */}
         <div className="text-white/90 text-sm leading-relaxed">
           <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
             components={{
               p: ({ children }) => (
                 <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
@@ -229,6 +231,28 @@ export function AssistantBubble({
                 <blockquote className="border-l-2 border-[#FF6B35] pl-3 text-gray-400 italic my-3">
                   {children}
                 </blockquote>
+              ),
+              table: ({ children }) => (
+                <div className="overflow-x-auto my-4 rounded-lg border border-white/10">
+                  <table className="min-w-full border-collapse text-sm">{children}</table>
+                </div>
+              ),
+              thead: ({ children }) => (
+                <thead className="bg-white/5 border-b border-white/15">{children}</thead>
+              ),
+              tbody: ({ children }) => (
+                <tbody className="divide-y divide-white/8">{children}</tbody>
+              ),
+              tr: ({ children }) => (
+                <tr className="hover:bg-white/3 transition-colors">{children}</tr>
+              ),
+              th: ({ children }) => (
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-[#FF6B35] whitespace-nowrap">
+                  {children}
+                </th>
+              ),
+              td: ({ children }) => (
+                <td className="px-4 py-2.5 text-gray-300 align-top">{children}</td>
               ),
             }}
           >

@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Calendar, ArrowLeft, Globe } from 'lucide-react';
 import { Navbar } from '@/components/landing';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 
 const BASE = process.env.INTELLIGENCE_API_URL || 'http://localhost:8000';
 
@@ -111,9 +112,12 @@ export default async function RomaniaBriefingPage({
             </div>
           )}
 
-          {/* Content — rendered as pre-formatted markdown text */}
-          <article className="prose prose-invert prose-sm max-w-none text-gray-200 leading-relaxed whitespace-pre-wrap">
-            {briefing.content || 'Contenuto non disponibile.'}
+          {/* Content */}
+          <article className="max-w-none text-gray-200">
+            {briefing.content
+              ? <MarkdownContent content={briefing.content} className="text-gray-200" />
+              : <p className="text-gray-500">Contenuto non disponibile.</p>
+            }
           </article>
 
         </div>

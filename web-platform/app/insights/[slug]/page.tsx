@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Calendar, ArrowLeft, Lock, ArrowRight } from 'lucide-react';
 import { Navbar } from '@/components/landing';
 import WaitlistInline from '@/components/insights/WaitlistInline';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 
 const BASE = process.env.INTELLIGENCE_API_URL || 'http://localhost:8000';
 
@@ -145,17 +146,13 @@ export default async function InsightPage({
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#FF6B35] mb-3">
               Executive Summary
             </h2>
-            <div className="prose prose-invert prose-sm max-w-none text-gray-300 leading-relaxed whitespace-pre-wrap">
-              {insight.executive_summary}
-            </div>
+            <MarkdownContent content={insight.executive_summary} className="text-gray-300" />
           </section>
 
           {/* Content preview (first half of body) */}
           {insight.content_preview && (
             <section className="mb-8">
-              <div className="prose prose-invert prose-sm max-w-none text-gray-400 leading-relaxed whitespace-pre-wrap">
-                {insight.content_preview}
-              </div>
+              <MarkdownContent content={insight.content_preview} className="text-gray-400" />
             </section>
           )}
 

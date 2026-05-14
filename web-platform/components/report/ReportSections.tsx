@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChevronDown } from 'lucide-react';
 import type { ReportSection, TOCEntry, ParsedReport } from '@/lib/parseReport';
 import type { ReportSource } from '@/types/dashboard';
@@ -85,6 +86,7 @@ function SectionContent({
       prose-code:text-[#00A8E8] prose-code:bg-[#00A8E8]/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm
     ">
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           // Intercept <a> elements produced by [Article N](url) links (Phase 2 linkification).
           // If the link text matches "Article N", render the styled badge with hover behavior
@@ -130,6 +132,28 @@ function SectionContent({
               </li>
             );
           },
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-4 rounded-lg border border-white/10">
+              <table className="min-w-full border-collapse text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-white/5 border-b border-white/15">{children}</thead>
+          ),
+          tbody: ({ children }) => (
+            <tbody className="divide-y divide-white/8">{children}</tbody>
+          ),
+          tr: ({ children }) => (
+            <tr className="hover:bg-white/3 transition-colors">{children}</tr>
+          ),
+          th: ({ children }) => (
+            <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-[#FF6B35] whitespace-nowrap">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-4 py-2.5 text-gray-300 align-top">{children}</td>
+          ),
         }}
       >
         {content}
