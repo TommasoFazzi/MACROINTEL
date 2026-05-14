@@ -105,6 +105,20 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - `database.py:save_article()` now populates `geo_focus` at insert time from NLP entity data.
   - Rollback: DROP the four `intelligence_sources` columns + `articles.geo_focus` + `macro_indicators.country_code`.
 
+### Historical Context Columns (2026-05-14)
+
+- `038_macro_historical_context.sql` — Adds 6 pre-computed statistical columns to `macro_indicators`:
+  - `ma_7d`, `ma_30d` — simple moving averages (last 7 / 30 observations per indicator+country_code)
+  - `std_30d` — population std deviation over last 30 observations (`STDDEV_POP`; 0 if N=1, not NULL)
+  - `pct_change_7d`, `pct_change_30d` — % change vs 7th / 30th prior observation (`LIMIT 1 OFFSET 6/29`)
+  - `percentile_rank_30d` — percentile rank of current value within last 30 observations (0–100)
+  - All columns NULLABLE — NULL = insufficient history (graceful degradation)
+  - Populated by `_save_macro_indicator()` in `openbb_service.py` via SQL subqueries at upsert time (same transaction, Step 2)
+  - Backfilled for existing rows by `scripts/backfill_macro_history.py --compute`
+  - FRED daily raw history seeded by `scripts/backfill_macro_history.py --seed-fred`
+  - **Deployment order**: apply migration 038 BEFORE deploying Task 3 code; if column missing, the UPDATE in Step 2 rolls back the entire transaction (including the INSERT)
+  - Rollback: `ALTER TABLE macro_indicators DROP COLUMN IF EXISTS ma_7d, ma_30d, std_30d, pct_change_7d, pct_change_30d, percentile_rank_30d`
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -115,6 +129,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 035: **Applied** (2026-04-14)
 - 036: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/036_add_previous_value_macro_indicators.sql`
 - 037: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/037_romania_vertical.sql`
+- 038: **Not yet applied** — apply BEFORE deploying updated `openbb_service.py` (Task 3 code): `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/038_macro_historical_context.sql`. Then run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py`
 
 ## Execution Order
 
@@ -131,6 +146,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 035 (Strategic Intelligence Layer — no external dependencies)
   → 036 (Strategic Intelligence Layer Phase 3 fix — no external dependencies)
   → 037 (Romania Vertical PoC — no external dependencies)
+  → 038 (Historical Context Columns — requires 037 applied first for country_code column)
 ```
 
 Run a single migration:

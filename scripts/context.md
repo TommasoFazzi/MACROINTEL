@@ -58,6 +58,12 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 - `fetch_romania_macro.py` - **Romania macro fetch**: calls `ensure_daily_macro_data()` (idempotent), then shows RO-specific indicator preview with staleness info. Flags: `--date YYYY-MM-DD`, `--force` (deletes existing RO rows for date before re-fetching). Used as standalone verification or pipeline pre-step.
 - `backfill_sruuf.py` - **One-shot ticker switch recovery**: deletes all URANIUM rows (URA history), downloads SRUUF daily closes via yfinance (last 90 days), reinserts with correct `previous_value` chain, and flags today's report as `draft` so it doesn't enter the knowledge base. Idempotent. Run after any equity/ETF ticker substitution in `MACRO_INDICATORS`.
 - `backfill_new_indicators_b2.py` - **B2 expansion backfill**: fetches 60 calendar days of history for TTF_GAS (yfinance `TTF=F`) and YIELD_CURVE_10Y_3M (FRED REST API `T10Y3M`) and inserts with correct `previous_value` chain. Run once after deploying the B2 indicator additions. Requires `DATABASE_URL` and `FRED_API_KEY`. Idempotent.
+- `backfill_macro_history.py` - **Historical context backfill**: two-step script that seeds raw FRED daily history and computes the 6 derived columns added by migration 038 (`ma_7d`, `ma_30d`, `std_30d`, `pct_change_7d`, `pct_change_30d`, `percentile_rank_30d`).
+  - Flags: `--seed-fred` (step 1 only), `--compute` (step 2 only), `--indicator KEY` (limit to one key, repeatable), `--days N` (history window, default 90), `--dry-run`
+  - Default (no flag): runs both steps
+  - Step 1 (`--seed-fred`): iterates all FRED daily observations in 90-day window via `obb.economy.fred_series()`, inserts with `ON CONFLICT DO NOTHING`; monthly FRED skipped (too few observations)
+  - Step 2 (`--compute`): issues per-key `UPDATE macro_indicators` with 6 correlated subqueries (LIMIT 7/30, bounded by index); commits per-key to avoid lock timeout. ~2200 UPDATEs < 5 min.
+  - Requires migration 038 applied before running. Safe to re-run (idempotent).
 
 ### Entity Management
 - `extract_entities.py` - Run NER extraction on articles

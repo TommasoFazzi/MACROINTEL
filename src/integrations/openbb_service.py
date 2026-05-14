@@ -1701,7 +1701,51 @@ class OpenBBMarketService:
                 formatted = f"{value:.4f}{change_str}"
 
             # Add delta_type annotation and freshness/warning notes
-            return f"{formatted} ({delta_type}){freshness_note}{warning_marker}"
+            result = f"{formatted} ({delta_type}){freshness_note}{warning_marker}"
+
+            # --- Historical context suffix ---
+            # freq_suffix disambiguates label semantics: "Δ7d" vs "Δ7m" vs "Δ7w"
+            freq_suffix = {'daily': 'd', 'weekly': 'w', 'monthly': 'm', '24_7': 'd'}.get(freq, 'd')
+
+            ma7  = ind.get('ma_7d')
+            ma30 = ind.get('ma_30d')
+            std  = ind.get('std_30d')
+            d7   = ind.get('pct_change_7d')
+            d30  = ind.get('pct_change_30d')
+            p30  = ind.get('percentile_rank_30d')
+
+            def _fv(v) -> Optional[str]:
+                if v is None:
+                    return None
+                v = float(v)
+                if unit == '%':
+                    return f"{v:.2f}%"
+                if unit == 'USD':
+                    return f"${v:,.2f}"
+                if unit == 'Points':
+                    return f"{v:,.1f}"
+                return f"{v:.4f}"
+
+            hist_parts = []
+            if ma7  is not None:
+                hist_parts.append(f"MA7{freq_suffix}:{_fv(ma7)}")
+            if ma30 is not None:
+                hist_parts.append(f"MA30{freq_suffix}:{_fv(ma30)}")
+            if std  is not None and float(std) > 0.001:
+                hist_parts.append(f"σ:{float(std):.3f}")
+            if d7   is not None:
+                hist_parts.append(f"Δ7{freq_suffix}:{float(d7):+.1f}%")
+            if d30  is not None:
+                hist_parts.append(f"Δ30{freq_suffix}:{float(d30):+.1f}%")
+            if p30  is not None:
+                p = float(p30)
+                alert = "⚠️H" if p >= 90 else ("⚠️L" if p <= 10 else "")
+                hist_parts.append(f"P30:{p:.0f}°{alert}")
+
+            if hist_parts:
+                result += " | " + " | ".join(hist_parts)
+
+            return result
 
         # Group by category
         by_category = {}
@@ -2196,10 +2240,16 @@ class OpenBBMarketService:
         category: str,
         country_code: str = 'US',
     ) -> bool:
-        """Save macro indicator with upsert, populating previous_value inline."""
+        """Save macro indicator with upsert, populating previous_value and derived context columns.
+
+        DEPLOYMENT NOTE: requires migration 038 to be applied first.
+        If ma_7d column doesn't exist, the UPDATE will fail and roll back the entire
+        transaction (including the INSERT). Apply migration 038 before deploying this code.
+        """
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # Step 1: upsert with previous_value
                     cur.execute("""
                         INSERT INTO macro_indicators
                             (date, indicator_key, value, unit, category, country_code, previous_value)
@@ -2214,9 +2264,75 @@ class OpenBBMarketService:
                             previous_value = EXCLUDED.previous_value,
                             updated_at = NOW()
                     """, (target_date, key, value, unit, category, country_code, key, target_date))
+
+                    # Step 2: compute historical context columns in-place (same transaction)
+                    # All subqueries are bounded LIMIT 30 and use index on (indicator_key, date DESC)
+                    cur.execute("""
+                        UPDATE macro_indicators mi
+                        SET
+                            ma_7d = (
+                                SELECT AVG(h.value) FROM (
+                                    SELECT value FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date <= mi.date
+                                    ORDER BY date DESC LIMIT 7
+                                ) h
+                            ),
+                            ma_30d = (
+                                SELECT AVG(h.value) FROM (
+                                    SELECT value FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date <= mi.date
+                                    ORDER BY date DESC LIMIT 30
+                                ) h
+                            ),
+                            std_30d = (
+                                SELECT STDDEV_POP(h.value) FROM (
+                                    SELECT value FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date <= mi.date
+                                    ORDER BY date DESC LIMIT 30
+                                ) h
+                            ),
+                            pct_change_7d = (
+                                SELECT CASE WHEN v7 IS NOT NULL AND v7 != 0
+                                       THEN ROUND(((mi.value - v7) / ABS(v7) * 100)::NUMERIC, 4)
+                                       ELSE NULL END
+                                FROM (
+                                    SELECT value AS v7 FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date < mi.date
+                                    ORDER BY date DESC LIMIT 1 OFFSET 6
+                                ) s
+                            ),
+                            pct_change_30d = (
+                                SELECT CASE WHEN v30 IS NOT NULL AND v30 != 0
+                                       THEN ROUND(((mi.value - v30) / ABS(v30) * 100)::NUMERIC, 4)
+                                       ELSE NULL END
+                                FROM (
+                                    SELECT value AS v30 FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date < mi.date
+                                    ORDER BY date DESC LIMIT 1 OFFSET 29
+                                ) s
+                            ),
+                            percentile_rank_30d = (
+                                SELECT ROUND(
+                                    (COUNT(*) FILTER (WHERE h.value <= mi.value)::NUMERIC
+                                     / NULLIF(COUNT(*), 0) * 100)::NUMERIC, 1)
+                                FROM (
+                                    SELECT value FROM macro_indicators
+                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                                      AND date <= mi.date
+                                    ORDER BY date DESC LIMIT 30
+                                ) h
+                            )
+                        WHERE date = %s AND indicator_key = %s
+                    """, (target_date, key))
+
                     return True
         except Exception as e:
-            logger.error(f"Error saving macro indicator: {e}")
+            logger.error(f"Error saving macro indicator {key}: {e}")
             return False
 
     def _get_macro_indicators(self, target_date: date, country_code: str = 'US') -> List[Dict[str, Any]]:
@@ -2225,7 +2341,9 @@ class OpenBBMarketService:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT indicator_key, value, unit, category
+                        SELECT indicator_key, value, unit, category,
+                               ma_7d, ma_30d, std_30d,
+                               pct_change_7d, pct_change_30d, percentile_rank_30d
                         FROM macro_indicators
                         WHERE date = %s
                           AND country_code = %s
@@ -2237,7 +2355,13 @@ class OpenBBMarketService:
                             'indicator_key': row[0],
                             'value': row[1],
                             'unit': row[2],
-                            'category': row[3]
+                            'category': row[3],
+                            'ma_7d': row[4],
+                            'ma_30d': row[5],
+                            'std_30d': row[6],
+                            'pct_change_7d': row[7],
+                            'pct_change_30d': row[8],
+                            'percentile_rank_30d': row[9],
                         }
                         for row in cur.fetchall()
                     ]

@@ -1215,7 +1215,9 @@ Respond with JSON analysis following the full schema above:"""
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT indicator_key, value, previous_value, category
+                        SELECT indicator_key, value, previous_value, category,
+                               ma_7d, ma_30d, std_30d,
+                               pct_change_7d, pct_change_30d, percentile_rank_30d
                         FROM macro_indicators
                         WHERE date = %s
                     """, (target_date,))
@@ -1228,6 +1230,12 @@ Respond with JSON analysis following the full schema above:"""
                     'value': row[1],
                     'previous_value': row[2],
                     'category': row[3],
+                    'ma_7d': row[4],
+                    'ma_30d': row[5],
+                    'std_30d': row[6],
+                    'pct_change_7d': row[7],
+                    'pct_change_30d': row[8],
+                    'percentile_rank_30d': row[9],
                 }
                 for row in rows
             ]
@@ -2950,7 +2958,9 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                         SELECT DISTINCT ON (mi.indicator_key)
                             mi.indicator_key, mi.value, mi.unit, mi.date,
                             COALESCE(meta.expected_frequency, 'monthly') AS freq,
-                            COALESCE(meta.staleness_days, 0) AS staleness_days
+                            COALESCE(meta.staleness_days, 0) AS staleness_days,
+                            mi.ma_7d, mi.ma_30d, mi.std_30d,
+                            mi.pct_change_7d, mi.pct_change_30d, mi.percentile_rank_30d
                         FROM macro_indicators mi
                         LEFT JOIN macro_indicator_metadata meta ON meta.key = mi.indicator_key
                         WHERE mi.country_code = 'RO'
@@ -2958,17 +2968,6 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                         ORDER BY mi.indicator_key, mi.date DESC
                     """, [list(_LABELS.keys())])
                     rows = {r[0]: r[1:] for r in cur.fetchall()}
-
-                    # Fetch 60-day series for trend context
-                    cur.execute("""
-                        SELECT indicator_key, value, date
-                        FROM macro_indicators
-                        WHERE country_code = 'RO'
-                          AND indicator_key = ANY(%s)
-                          AND date >= CURRENT_DATE - INTERVAL '60 days'
-                        ORDER BY indicator_key, date DESC
-                    """, [list(_LABELS.keys())])
-                    series_rows = cur.fetchall()
         except Exception as e:
             logger.warning(f"[RO macro analysis] DB query failed: {e}")
             return self._format_romania_macro_header()
@@ -2976,29 +2975,33 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
         if not rows:
             return self._format_romania_macro_header()
 
-        # Build series map: key → list of (date, value) newest-first
-        series_map: dict = {}
-        for key, val, dt in series_rows:
-            series_map.setdefault(key, []).append((dt, float(val)))
-
         today = _date.today()
         lines = []
         for key, label in _LABELS.items():
             if key not in rows:
                 lines.append(f"- {label}: n/d (nessun dato)")
                 continue
-            value, unit, data_date, freq, staleness_days = rows[key]
+            value, unit, data_date, freq, staleness_days, ma7, ma30, std30, pct7, pct30, p30 = rows[key]
             max_stale = _FREQ_STALE.get(freq, 75)
             is_stale = data_date < today - timedelta(days=max_stale)
             stale_note = f" [dato di {data_date}, {staleness_days}gg fa]" if is_stale else f" [aggiornato {data_date}]"
             formatted = f"{float(value):.2f}{'%' if unit in ('%', '% of GDP', 'Rate') else ''}"
 
-            # Compute trend from series
-            s = series_map.get(key, [])
-            trend_note = ""
-            if len(s) >= 2:
-                delta = float(s[0][1]) - float(s[-1][1])
-                trend_note = f", trend {'↑' if delta > 0 else '↓'} {abs(delta):.3f} ultimi {len(s)} dati"
+            # Build trend context from pre-computed derived columns
+            trend_parts = []
+            if pct7  is not None:
+                trend_parts.append(f"Δ7m: {float(pct7):+.1f}%")
+            if pct30 is not None:
+                trend_parts.append(f"Δ30m: {float(pct30):+.1f}%")
+            if ma30  is not None:
+                trend_parts.append(f"MA30m: {float(ma30):.3f}")
+            if p30   is not None:
+                p = float(p30)
+                if p >= 85:
+                    trend_parts.append("P30: HIGH ⚠️")
+                elif p <= 15:
+                    trend_parts.append("P30: LOW ⚠️")
+            trend_note = f" | {', '.join(trend_parts)}" if trend_parts else ""
 
             lines.append(f"- {label}: {formatted}{stale_note}{trend_note}")
 
