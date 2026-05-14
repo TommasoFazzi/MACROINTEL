@@ -48,7 +48,7 @@ _RO_INDICATOR_LABELS = {
     "BNR_RATE":          "BNR Rate",
     "ROBOR_3M":          "ROBOR 3M",
     "RO_CPI_YOY":        "Inflazione YoY",
-    "RO_10Y_YIELD":      "BTP 10Y",
+    "RO_10Y_YIELD":      "RO 10Y",
     "RO_10Y_DE_SPREAD":  "Spread vs DE",
     "RO_CDS_5Y":         "CDS 5Y",
     "RO_DEFICIT_GDP":    "Deficit/PIL",
@@ -86,12 +86,14 @@ async def get_romania_macro(request: Request):
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 # Fetch series data
+                # 730-day window: covers annual data (Eurostat fiscal saves Dec 31 of prior year,
+                # ~499 days back) while keeping sparkline history for daily/monthly indicators.
                 cur.execute("""
                     SELECT indicator_key, value, unit, date
                     FROM macro_indicators
                     WHERE country_code = 'RO'
                       AND indicator_key = ANY(%s)
-                      AND date >= CURRENT_DATE - INTERVAL '90 days'
+                      AND date >= CURRENT_DATE - INTERVAL '730 days'
                     ORDER BY indicator_key, date DESC
                 """, [_RO_INDICATOR_KEYS])
                 rows = cur.fetchall()

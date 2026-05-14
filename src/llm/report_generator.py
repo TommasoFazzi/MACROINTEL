@@ -2946,11 +2946,14 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
 
         _FREQ_STALE = {"daily": 3, "24_7": 2, "weekly": 14, "monthly": 75, "quarterly": 120, "annual": 400}
         _LABELS = {
-            "BNR_RATE": "BNR Policy Rate",
-            "RO_CPI_YOY": "CPI YoY",
-            "EUR_RON": "EUR/RON",
-            "RO_DEFICIT_GDP": "Deficit/PIL",
-            "RO_10Y_YIELD": "10Y RON Yield",
+            "BNR_RATE":          "BNR Policy Rate",
+            "RO_CPI_YOY":        "CPI YoY",
+            "EUR_RON":           "EUR/RON",
+            "RO_DEFICIT_GDP":    "Deficit/PIL",
+            "RO_10Y_YIELD":      "10Y RON Yield",
+            "ROBOR_3M":          "ROBOR 3M",
+            "RO_10Y_DE_SPREAD":  "Spread vs DE",
+            "BET_INDEX":         "BET Index",
         }
 
         try:
@@ -3001,8 +3004,8 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                     trend_parts.append(f"Δ30d: {float(pct30):+.1f}%")
             else:
                 if d12 is not None:
-                    label = "Δ12m(YoY)" if freq_s == 'm' else f"Δ12{freq_s}"
-                    trend_parts.append(f"{label}: {float(d12):+.1f}%")
+                    delta_label = "Δ12m(YoY)" if freq_s == 'm' else f"Δ12{freq_s}"
+                    trend_parts.append(f"{delta_label}: {float(d12):+.1f}%")
             if ma30  is not None:
                 trend_parts.append(f"MA30{freq_s}: {float(ma30):.3f}")
             if p30   is not None:

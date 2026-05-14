@@ -1498,6 +1498,8 @@ class OpenBBMarketService:
                             %s, %s, %s, %s, %s, %s, %s, NOW()
                         )
                         ON CONFLICT (key) DO UPDATE SET
+                            expected_frequency = EXCLUDED.expected_frequency,
+                            expected_gap_days  = EXCLUDED.expected_gap_days,
                             last_updated       = EXCLUDED.last_updated,
                             last_source        = EXCLUDED.last_source,
                             staleness_days     = EXCLUDED.staleness_days,
