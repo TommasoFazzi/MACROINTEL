@@ -461,11 +461,10 @@ class OpenBBMarketService:
         'ROBOR_3M': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania 3M interbank rate / ROBOR 3M proxy (OECD IR3TIB)',
-            'fetch_category': 'oecd',
-            'oecd_measure': 'IR3TIB',
+            'description': 'Romania ROBOR 3M interbank rate (cursbnr.ro, daily)',
+            'fetch_category': 'cursbnr',
             'country_code': 'RO',
-            'frequency': 'monthly',
+            'frequency': 'daily',
         },
         'RO_CPI_YOY': {
             'fred_series': 'CP0000ROM086NEST',
@@ -478,19 +477,21 @@ class OpenBBMarketService:
         'RO_10Y_YIELD': {
             'unit': '%',
             'category': 'RATES',
-            'description': 'Romania 10Y Gov Bond Yield (OECD MEI_FIN IRLT, monthly)',
-            'fetch_category': 'oecd',
+            'description': 'Romania 10Y Gov Bond Yield (TVC:RO10Y via TradingView, daily; fallback OECD IRLT)',
+            'fetch_category': 'tradingview',
+            'tv_symbol': 'RO10Y',
+            'tv_exchange': 'TVC',
             'oecd_measure': 'IRLT',
             'country_code': 'RO',
-            'frequency': 'monthly',
+            'frequency': 'daily',
         },
         'RO_10Y_DE_SPREAD': {
             'unit': 'bps',
             'category': 'RISK',
-            'description': 'Romania 10Y spread vs Germania — rischio sovrano (OECD IRLT, bps, monthly)',
-            'fetch_category': 'derived_oecd_spread',
+            'description': 'Romania 10Y spread vs Germania — rischio sovrano (TVC:RO10Y-DE10Y, daily; fallback OECD)',
+            'fetch_category': 'derived_tradingview',
             'country_code': 'RO',
-            'frequency': 'monthly',
+            'frequency': 'daily',
         },
         'RO_CDS_5Y': {
             'unit': 'bps',
@@ -1149,6 +1150,114 @@ class OpenBBMarketService:
             return value, data_date, 'daily'
         except Exception as e:
             logger.error(f"[Stooq] {symbol} failed: {e}")
+            return None
+
+    # Romanian month names for parsing cursbnr.ro dates
+    _RO_MONTHS = {
+        'Ianuarie': 1, 'Februarie': 2, 'Martie': 3, 'Aprilie': 4,
+        'Mai': 5, 'Iunie': 6, 'Iulie': 7, 'August': 8,
+        'Septembrie': 9, 'Octombrie': 10, 'Noiembrie': 11, 'Decembrie': 12,
+    }
+
+    def _parse_ro_date(self, date_str: str) -> Optional[date]:
+        """Parse Romanian date string like '13 Mai 2026' into a date object."""
+        parts = date_str.strip().split()
+        if len(parts) != 3:
+            return None
+        try:
+            day = int(parts[0])
+            month = self._RO_MONTHS.get(parts[1])
+            year = int(parts[2])
+            if month is None:
+                return None
+            return date(year, month, day)
+        except (ValueError, TypeError):
+            return None
+
+    def _fetch_cursbnr_robor(self, target_date: date) -> Optional[tuple]:
+        """Fetch daily ROBOR 3M from cursbnr.ro HTML table.
+
+        Source: https://www.cursbnr.ro/robor
+        Table columns: Data | ROBOR 3M | Variație
+        Date format: '13 Mai 2026' (Romanian month names)
+        Returns (value, data_date, 'daily') or None.
+        """
+        import pandas as pd
+
+        url = 'https://www.cursbnr.ro/robor'
+        try:
+            tables = pd.read_html(url, encoding='utf-8')
+            if not tables:
+                logger.warning("[cursbnr] No tables found on /robor page")
+                return None
+
+            df = tables[0]
+            # Identify date and ROBOR 3M columns
+            date_col = next((c for c in df.columns if 'Data' in str(c) or 'data' in str(c).lower()), None)
+            rate_col = next((c for c in df.columns if 'ROBOR 3' in str(c) or '3M' in str(c)), None)
+
+            if date_col is None or rate_col is None:
+                logger.warning(f"[cursbnr] Unexpected columns: {list(df.columns)}")
+                return None
+
+            row = df.dropna(subset=[rate_col]).iloc[0]
+            raw_date = str(row[date_col])
+            raw_value = str(row[rate_col]).replace('%', '').replace(',', '.').strip()
+
+            data_date = self._parse_ro_date(raw_date)
+            if data_date is None:
+                logger.warning(f"[cursbnr] Could not parse date: '{raw_date}'")
+                return None
+
+            value = float(raw_value)
+            staleness = (target_date - data_date).days
+            if staleness > 7:
+                logger.warning(f"[cursbnr] ROBOR 3M: {staleness}d stale, skipping")
+                return None
+
+            logger.info(f"[cursbnr] ROBOR 3M: {value}% (data_date={data_date})")
+            return value, data_date, 'daily'
+        except Exception as e:
+            logger.error(f"[cursbnr] ROBOR 3M fetch failed: {e}")
+            return None
+
+    def _fetch_tradingview(self, symbol: str, exchange: str, target_date: date) -> Optional[tuple]:
+        """Fetch latest daily close from TradingView via tvdatafeed (rongardF fork).
+
+        Uses unauthenticated WebSocket connection (nologin).
+        Falls back gracefully if library not installed.
+        Returns (value, data_date, 'daily') or None.
+        """
+        try:
+            from tvDatafeed import TvDatafeed, Interval
+        except ImportError:
+            logger.warning("[TradingView] tvDatafeed not installed — skipping")
+            return None
+
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                tv = TvDatafeed()
+
+            df = tv.get_hist(symbol, exchange, interval=Interval.in_daily, n_bars=5)
+            if df is None or df.empty:
+                logger.warning(f"[TradingView] {exchange}:{symbol}: empty response")
+                return None
+
+            latest = df.iloc[-1]
+            close = float(latest['close'])
+            data_date = latest.name.date() if hasattr(latest.name, 'date') else target_date
+
+            staleness = (target_date - data_date).days
+            if staleness > 7:
+                logger.warning(f"[TradingView] {exchange}:{symbol}: {staleness}d stale, skipping")
+                return None
+
+            logger.info(f"[TradingView] {exchange}:{symbol}: {close} (data_date={data_date})")
+            return close, data_date, 'daily'
+        except Exception as e:
+            logger.error(f"[TradingView] {exchange}:{symbol} failed: {e}")
             return None
 
     def _fetch_indicator_openbb_fixed(
@@ -1824,11 +1933,14 @@ class OpenBBMarketService:
         Used by fetch_romania_macro.py and the Romania report pipeline.
 
         fetch_category dispatch:
-          fx           → yfinance symbol
-          fred_hicp_yoy→ FRED index series → YoY computation
-          oecd         → OECD MEI_FIN SDMX-JSON (BNR_RATE, ROBOR_3M, RO_10Y_YIELD)
-          wgb_cds      → World Government Bonds CDS via scrapling StealthyFetcher
-          eurostat     → Eurostat REST API (fiscal balance)
+          fx                  → yfinance symbol
+          fred_hicp_yoy       → FRED index series → YoY computation
+          oecd                → OECD MEI_FIN SDMX-JSON (BNR_RATE)
+          cursbnr             → cursbnr.ro HTML table (ROBOR_3M, daily)
+          tradingview         → TVC via tvDatafeed (RO_10Y_YIELD, daily; OECD fallback)
+          derived_tradingview → TVC RO10Y-DE10Y spread (RO_10Y_DE_SPREAD, daily; OECD fallback)
+          wgb_cds             → World Government Bonds CDS via scrapling StealthyFetcher
+          eurostat            → Eurostat REST API (fiscal balance)
         """
         target_date = target_date or date.today()
         success_count = 0
@@ -1867,8 +1979,46 @@ class OpenBBMarketService:
                     )
                     source = 'dbnomics'
 
+                elif fetch_cat == 'cursbnr':
+                    result = self._fetch_cursbnr_robor(target_date)
+                    source = 'cursbnr'
+
+                elif fetch_cat == 'tradingview':
+                    result = self._fetch_tradingview(
+                        config['tv_symbol'], config['tv_exchange'], target_date
+                    )
+                    source = 'tradingview'
+                    if result is None:
+                        # Fallback to OECD monthly
+                        logger.info(f"  [RO] {key}: TradingView failed, falling back to OECD")
+                        result = self._fetch_oecd_mei_fin(config['oecd_measure'], target_date)
+                        if result:
+                            source = 'oecd_fallback'
+
+                elif fetch_cat == 'derived_tradingview':
+                    # RO_10Y_DE_SPREAD = (RO10Y - DE10Y) * 100 bps, daily via TradingView
+                    ro_result = self._fetch_tradingview('RO10Y', 'TVC', target_date)
+                    de_result = self._fetch_tradingview('DE10Y', 'TVC', target_date)
+                    if ro_result and de_result:
+                        ro_val, ro_date, _ = ro_result
+                        de_val, de_date, _ = de_result
+                        spread_bps = round((ro_val - de_val) * 100, 1)
+                        result = (spread_bps, min(ro_date, de_date), 'daily')
+                        source = 'tradingview_derived'
+                    else:
+                        # Fallback to OECD monthly spread
+                        logger.info(f"  [RO] {key}: TradingView failed, falling back to OECD spread")
+                        ro_oecd = self._fetch_oecd_mei_fin('IRLT', target_date, country='ROU')
+                        de_oecd = self._fetch_oecd_mei_fin('IRLT', target_date, country='DEU')
+                        if ro_oecd and de_oecd:
+                            ro_val, ro_date, _ = ro_oecd
+                            de_val, de_date, _ = de_oecd
+                            spread_bps = round((ro_val - de_val) * 100, 1)
+                            result = (spread_bps, min(ro_date, de_date), 'monthly')
+                        source = 'oecd_derived_fallback'
+
                 elif fetch_cat == 'derived_oecd_spread':
-                    # RO_10Y_DE_SPREAD = (RO_10Y - DE_10Y) * 100 in bps, via OECD IRLT
+                    # Legacy — kept for backward compat; not used by current MACRO_INDICATORS
                     ro_result = self._fetch_oecd_mei_fin('IRLT', target_date, country='ROU')
                     de_result = self._fetch_oecd_mei_fin('IRLT', target_date, country='DEU')
                     if ro_result and de_result:

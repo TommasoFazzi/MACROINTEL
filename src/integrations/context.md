@@ -32,7 +32,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - **Removed**: TED_SPREAD (LIBOR→SOFR degraded), EPU_GLOBAL (4-6w lag), USD_RUB (bimodal post-sanctions)
     - **Fixed (Phase 1)**: ALUMINUM and WHEAT switched from FRED monthly to daily CME futures; USD_GBP and USD_CNY switched from FRED to yfinance daily
     - **Added (B2)**: TTF_GAS (European energy benchmark, separato da Henry Hub NG=F) and YIELD_CURVE_10Y_3M (Fed NY recession probability indicator). CFETS_RMB deferred to B3 — no public API found.
-    - **Romania vertical (9 indicators, country_code='RO')**: EUR_RON (yfinance daily), BNR_RATE (OECD MEI_FIN IRSTCI, monthly), ROBOR_3M (OECD MEI_FIN IR3TIB, monthly), RO_CPI_YOY (FRED CP0000ROM086NEST HICP YoY, monthly), RO_10Y_YIELD (DBnomics Eurostat irt_lt_mcby_d D.MCBY.RO, **daily** lag ~2d), RO_10Y_DE_SPREAD (derived: RO_10Y − DE_10Y via same DBnomics endpoint, **bps daily**), RO_CDS_5Y (WGB via scrapling StealthyFetcher, graceful None), RO_DEFICIT_GDP (Eurostat gov_10dd_edpt1, annual), BET_INDEX (Stooq ^bet CSV, **daily**)
+    - **Romania vertical (9 indicators, country_code='RO')**: EUR_RON (yfinance daily), BNR_RATE (OECD MEI_FIN IRSTCI, monthly), ROBOR_3M (**cursbnr.ro HTML scrape, daily**), RO_CPI_YOY (FRED CP0000ROM086NEST HICP YoY, monthly), RO_10Y_YIELD (**TVC:RO10Y via tvDatafeed, daily**; OECD IRLT fallback), RO_10Y_DE_SPREAD (**TVC:RO10Y−DE10Y, daily, bps**; OECD fallback), RO_CDS_5Y (WGB via scrapling StealthyFetcher, graceful None), RO_DEFICIT_GDP (Eurostat gov_10dd_edpt1, annual), BET_INDEX (Stooq ^bet CSV, daily)
   - `ensure_daily_macro_data()` - Fetch and persist macro indicators
     - FRED branch now uses `_fetch_indicator_openbb_fixed()` — saves with real `data_date` (not `target_date`). Fixes NICKEL/monthly mislabeling bug.
     - All fetch paths call `_upsert_indicator_metadata()` to track staleness and reliability.
@@ -78,9 +78,10 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - `fx` — Forex 24/5 (EUR/USD, DXY, CNH; EUR_RON via yfinance)
     - `crypto` — Always available (BTC)
     - `fred_hicp_yoy` — FRED index series with YoY computation (RO_CPI_YOY via `_fetch_fred_hicp_yoy()`)
-    - `oecd` — OECD MEI_FIN SDMX-JSON API via `_fetch_oecd_mei_fin(measure)` (BNR_RATE=IRSTCI, ROBOR_3M=IR3TIB). No API key. Filters by Romania (area_idx dynamic lookup) + PA unit + measure.
-    - `dbnomics_daily` — DBnomics REST API via `_fetch_dbnomics_daily(provider, dataset, series_code)`. No API key. RO_10Y_YIELD=Eurostat/irt_lt_mcby_d/D.MCBY.RO (daily, lag ~2d).
-    - `derived_spread` — computed inline in `fetch_ro_indicators()`: fetches both D.MCBY.RO and D.MCBY.DE from DBnomics, subtracts, converts to bps. RO_10Y_DE_SPREAD.
+    - `oecd` — OECD MEI_FIN SDMX-JSON API via `_fetch_oecd_mei_fin(measure, country)`. No API key. BNR_RATE=IRSTCI. Accepts `country` param (ROU/DEU). Dynamic area_idx lookup.
+    - `cursbnr` — cursbnr.ro HTML table via `_fetch_cursbnr_robor()`. No API key. ROBOR_3M (daily). Romanian date parsing via hardcoded `_RO_MONTHS` dict.
+    - `tradingview` — TVC:RO10Y via tvDatafeed (rongardF fork, `git+https://github.com/rongardF/tvdatafeed.git`). Daily. RO_10Y_YIELD. Falls back to OECD IRLT if library unavailable or fetch fails.
+    - `derived_tradingview` — TVC:RO10Y − TVC:DE10Y × 100, computed inline via `_fetch_tradingview()`. Daily, bps. RO_10Y_DE_SPREAD. Falls back to OECD derived spread.
     - `stooq` — Stooq CSV endpoint via `_fetch_stooq(symbol)`. No API key. BET_INDEX=^bet (daily).
     - `wgb_cds` — World Government Bonds CDS 5Y via scrapling StealthyFetcher; gracefully returns None if Chromium unavailable
     - `eurostat` — Eurostat REST API JSON via `_fetch_eurostat_fiscal()` (RO_DEFICIT_GDP, annual data)
@@ -91,8 +92,9 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
 - **External**:
   - `yfinance` (0.2.66+) - Yahoo Finance with curl_cffi
   - `openbb` (v4+) - OpenBB unified API
-  - `pandas` - Data manipulation
+  - `pandas` - Data manipulation (also used for `read_html` on cursbnr.ro)
   - `pandas-market-calendars` (>=4.3) - NYSE holiday calendar
+  - `tvDatafeed` (`git+https://github.com/rongardF/tvdatafeed.git`) - TradingView WebSocket client (rongardF fork; not on PyPI)
   - `python-dotenv` - Environment configuration
 
 ## Data Flow
