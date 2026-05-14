@@ -812,10 +812,12 @@ class OpenBBMarketService:
     }
 
     MAX_STALENESS_BY_FREQUENCY = {
-        'daily':   2,
-        'weekly':  10,
-        'monthly': 75,  # FRED monthly lag can reach 60d+ (Cass Freight, Nickel)
-        '24_7':    1,
+        'daily':      2,
+        'weekly':     10,
+        'monthly':    75,    # FRED monthly lag can reach 60d+ (Cass Freight, Nickel)
+        'irregular':  400,   # Policy rates change ~8x/year; valid until next decision
+        'annual':     400,   # Fiscal/structural data valid for the full year
+        '24_7':       1,
     }
 
     def _fetch_fred_direct(
@@ -1316,6 +1318,8 @@ class OpenBBMarketService:
         """
         try:
             from tvDatafeed import TvDatafeed, Interval
+            import logging as _logging
+            _logging.getLogger('tvDatafeed').propagate = False
         except ImportError:
             logger.warning("[TradingView] tvDatafeed not installed — skipping")
             return None
