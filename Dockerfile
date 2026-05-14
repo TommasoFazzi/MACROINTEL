@@ -3,7 +3,7 @@ FROM python:3.12-slim-bookworm
 # System deps for psycopg2, lxml, spaCy
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libpq-dev libxml2-dev libxslt-dev \
-    curl ca-certificates && \
+    curl ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

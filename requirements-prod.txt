@@ -214,5 +214,6 @@ xlrd==2.0.2
 xmltodict==0.13.0
 xx_ent_wiki_sm @ https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl#sha256=6f3c4b853852ea9e9d2dc76cc950dddb10a7e4c42d813308caefe6c5e8be2f0a
 yarl==1.22.0
+tvDatafeed @ git+https://github.com/rongardF/tvdatafeed.git
 yfinance==0.2.66
 zipp==3.23.0
