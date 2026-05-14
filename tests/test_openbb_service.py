@@ -171,10 +171,11 @@ class TestDatabaseOperations:
         )
 
         assert mock_cursor.execute.called
-        # Verify upsert query structure
-        call_args = mock_cursor.execute.call_args[0][0]
-        assert 'INSERT INTO macro_indicators' in call_args
-        assert 'ON CONFLICT' in call_args
+        # _save_macro_indicator makes two execute() calls: INSERT (step 1) then UPDATE (step 2)
+        all_calls = [c[0][0] for c in mock_cursor.execute.call_args_list]
+        assert any('INSERT INTO macro_indicators' in sql for sql in all_calls)
+        assert any('ON CONFLICT' in sql for sql in all_calls)
+        assert any('UPDATE macro_indicators' in sql for sql in all_calls)
 
 
 # =============================================================================
