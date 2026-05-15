@@ -33,7 +33,7 @@ export default function RomaniaPage() {
               🇷🇴 Intelligence Romania
             </h1>
             <p className="text-gray-400 text-lg max-w-2xl">
-              Briefing quotidiani e settimanali sull&apos;economia rumena, con focus su implicazioni
+              Briefing quotidiani e settimanali sull&apos;economia romena, con focus su implicazioni
               per le imprese italiane — BNR, INSSE, energia e infrastrutture.
             </p>
           </div>
