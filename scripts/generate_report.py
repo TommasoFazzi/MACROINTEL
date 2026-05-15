@@ -104,6 +104,11 @@ def main():
         action='store_true',
         help='With --macro-first, only extract report-level signals (faster, lower cost)'
     )
+    parser.add_argument(
+        '--no-rerank',
+        action='store_true',
+        help='Disable Cross-Encoder reranking (lower RAM usage, ~90MB saved)'
+    )
 
     args = parser.parse_args()
 
@@ -155,7 +160,7 @@ def main():
     # Initialize report generator
     try:
         logger.info(f"\n[STEP 1] Initializing report generator with {args.model}...")
-        generator = ReportGenerator(model_name=args.model)
+        generator = ReportGenerator(model_name=args.model, enable_reranking=not args.no_rerank)
         logger.info("✓ Report generator initialized")
     except Exception as e:
         logger.error(f"Failed to initialize report generator: {e}")
