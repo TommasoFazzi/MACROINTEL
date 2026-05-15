@@ -526,6 +526,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
             success=True,
             user_id=user_id,
             iterations=iterations_done,
+            response=answer,
         )
 
         return {
@@ -702,6 +703,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
         success: bool,
         user_id: Optional[str] = None,
         iterations: int = 0,
+        response: Optional[str] = None,
     ):
         try:
             metadata: Dict[str, Any] = {
@@ -711,6 +713,8 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
             }
             if user_id and user_id != session_id:
                 metadata["user_id"] = user_id
+            if response:
+                metadata["response"] = response
             self.db.log_oracle_query(
                 session_id=session_id,
                 query=query,
