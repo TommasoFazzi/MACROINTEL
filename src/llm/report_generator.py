@@ -1210,21 +1210,19 @@ Respond with JSON analysis following the full schema above:"""
         Fetch macro indicator rows from DB for anomaly screening.
 
         Returns list of dicts with: indicator_key, value, previous_value, category.
+        Includes a weekend fallback: if no data for target_date and it is a weekend,
+        looks back up to 5 days for the most recent trading day record.
         """
-        try:
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT indicator_key, value, previous_value, category,
-                               ma_7d, ma_30d, std_30d,
-                               pct_change_7d, pct_change_30d, percentile_rank_30d,
-                               pct_change_12m
-                        FROM macro_indicators
-                        WHERE date = %s
-                    """, (target_date,))
-                    rows = cur.fetchall()
-                    conn.rollback()
+        _QUERY = """
+            SELECT indicator_key, value, previous_value, category,
+                   ma_7d, ma_30d, std_30d,
+                   pct_change_7d, pct_change_30d, percentile_rank_30d,
+                   pct_change_12m
+            FROM macro_indicators
+            WHERE date = %s
+        """
 
+        def _rows_to_dicts(rows):
             return [
                 {
                     'indicator_key': row[0],
@@ -1241,6 +1239,31 @@ Respond with JSON analysis following the full schema above:"""
                 }
                 for row in rows
             ]
+
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(_QUERY, (target_date,))
+                    rows = cur.fetchall()
+                    conn.rollback()
+
+            if rows:
+                return _rows_to_dicts(rows)
+
+            # No exact match: look back up to 5 days for the most recent available record.
+            # Covers weekends, NYSE holidays, and morning reports before the evening fetch runs.
+            from datetime import timedelta as _td
+            for offset in range(1, 6):
+                fallback = target_date - _td(days=offset)
+                with self.db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(_QUERY, (fallback,))
+                        rows = cur.fetchall()
+                        conn.rollback()
+                if rows:
+                    return _rows_to_dicts(rows)
+
+            return []
         except Exception as e:
             logger.warning(f"Failed to fetch macro indicators for screening: {e}")
             return []
@@ -2348,6 +2371,7 @@ Respond with JSON only:"""
         storylines_xml: str,
         target_date,
         data_quality_flags: list,
+        macro_context_raw: str = "",
     ) -> Dict[str, Any]:
         """
         LLM call #2: 7-section strategic intelligence report.
@@ -2383,6 +2407,7 @@ Respond with JSON only:"""
             articles=adapted_articles,
             target_date=date_str,
             data_quality_flags=data_quality_flags,
+            macro_context_raw=macro_context_raw,
         )
 
         try:
@@ -2705,6 +2730,7 @@ Use them to:
                 storylines_xml=narrative_xml,
                 target_date=today,
                 data_quality_flags=dq_flags,
+                macro_context_raw=macro_context_text,
             )
             if strategic_result.get('success'):
                 report_text = strategic_result['report_text']
