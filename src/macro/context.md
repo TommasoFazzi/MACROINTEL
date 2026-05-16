@@ -41,18 +41,25 @@ Strato intermedio tra `src/integrations/openbb_service.py` (fetch dei dati macro
   - `get_macro_regime_persistence_singleton()` — thread-safe singleton (double-checked locking)
 
 - `macro_analysis_schema.py` — Prompt + schema per LLM call #1
-  - `MACRO_ANALYSIS_SYSTEM_PROMPT` — regole di classificazione regime, convergenza, divergenze, SC signals
+  - `MACRO_ANALYSIS_SYSTEM_PROMPT` — regole di classificazione regime, convergenza, divergenze, SC signals. Include:
+    - **COORDINATE READING RULES**: come interpretare P30 (≤20 oversold, ≥80 overbought), MA7d vs MA30d come trend direction, Δ7d/Δ30d come momentum, pct_change_12m come structural baseline, σ come volatility regime. POSITIONAL AMPLIFICATION: stesso Δ% con P30 diversi → interpretazioni diverse.
+    - **COMPLEX SYSTEM RULES**: mercati sono sistemi complessi multi-direzionali. Ogni ipotesi causale deve usare probability language ("likely >60%", "probable >70%", "high confidence >80%", "uncertain"). Single-cause explanation vietata per movimenti notabili. Reverse causality e intertwined causality devono essere riconosciute esplicitamente.
+  - **New output fields** (call #1 produce ora anche):
+    - `asset_state_map`: lista di `AssetStateEntry` — full coordinate per indicator con materiality ≥ notable. `position_label` derivato da P30 (≤20 → "oversold", ≥80 → "overbought", altrimenti "neutral").
+    - `causal_hypotheses`: lista di `CausalHypothesisEntry` — ≥2 ipotesi pesate per asset (PRIMARY/SECONDARY/STRUCTURAL). `osint_anchor` è un pointer forward-looking che call #2 risolve contro gli articoli OSINT.
+    - `macro_state_narrative`: 150-200 parole, sintesi discorsiva ONTOLOGIA + TREND + EVENTI con probability language. Estende (non sostituisce) `macro_narrative` per maggiore profondità analitica.
   - **7 regime labels (Literal-constrained)**: `risk_off_systemic`, `risk_off_moderate`, `neutral`, `risk_on_moderate`, `risk_on_expansion`, `crisis_acute`, `stagflationary`
   - `CROSS_VALIDATION_BLOCK` — regole cross-validation macro-news per LLM call #2 (Phase 5)
 
 - `strategic_intelligence_prompt.py` — Prompt assembler per LLM call #2 (Phase 5)
-  - `STRATEGIC_INTELLIGENCE_SYSTEM_PROMPT` — system prompt per report strategico 3 orizzonti. ANALYTICAL STANDARDS include il distinguished central bank constraint: (a) orthodox reaction function vs (b) political pressure — entrambi devono essere esplicitati in qualsiasi scenario o EW signal che dipende da rate trajectory.
-  - `CROSS_VALIDATION_BLOCK` — cross-validation rules. Rule #2 (DIVERGENCE FLAG) ora richiede hypothesis fan con ≥2 competing hypotheses in formato `Hypothesis A/B: [cause] → confirmed by [observable]`. Single-cause explanation per una divergenza è vietata.
-  - `build_output_instructions(target_date)` — 7 sezioni output con 5 analytical quality improvements:
-    - **Key Developments**: category headers (### GEOPOLITICS, ENERGY, DEFENSE, CYBERSECURITY, TECH, ECONOMICS), 80-120 words/item, named actors, causal chains, relationship context, macro connection. CYBERSECURITY (attacks/espionage/state ops) distinta da TECH (AI/semiconductors/industrial policy). Header omesso se un solo evento nel dominio.
-    - **Driver Inventory** (internal step — non incluso nell'output): blocco tra Key Developments e Macro Dashboard che elenca tutti i driver causali nominati e li riconcilia se contraddittori o complementari.
-    - **Scenario Analysis**: EXACTLY 3 scenarios (BASE + BEAR + BULL-contrarian). BULL-contrarian è falsificazione esplicita della tesi BASE, non un mirror ottimistico.
-  - `build_strategic_intelligence_prompt(macro_analysis_json, macro_regime_context_xml, storylines_xml, articles, target_date, data_quality_flags)` → `(system_prompt, user_prompt)`
+  - `STRATEGIC_INTELLIGENCE_SYSTEM_PROMPT` — system prompt per report strategico 3 orizzonti. Include:
+    - **PRE-ANALYSIS PROTOCOL**: prima di scrivere qualsiasi sezione, call #2 deve sintetizzare 3 layer internamente: ONTOLOGY (da `causal_hypotheses`), TREND (da `asset_state_map` position_label + direction), EVENTS (articoli OSINT che confermano/negano gli `osint_anchor`). Ogni movimento discusso deve essere fondato su ≥2 layer. Per Scenario Analysis: ogni scenario deve referenziare almeno un elemento da ciascun layer.
+    - **ANALYTICAL STANDARDS** (invariati): central bank constraint (a) orthodox reaction function vs (b) political pressure.
+  - `CROSS_VALIDATION_BLOCK` — cross-validation rules. Regola 7 aggiunta: **COORDINATE-HYPOTHESIS CONSISTENCY** — ogni market move significativo deve referenziare l'`asset_state_map` (position_label + trend direction). Un claim che ignora il contesto posizionale richiede esplicito acknowledgment del layer mancante.
+  - `build_output_instructions(target_date)` — 7 sezioni output (invariato).
+  - `build_strategic_intelligence_prompt(macro_analysis_json, macro_regime_context_xml, storylines_xml, articles, target_date, data_quality_flags, macro_context_raw="")` → `(system_prompt, user_prompt)`. Nuovo parametro `macro_context_raw`: quando non vuoto, aggiunge sezione "RAW INDICATOR COORDINATES" come reference block per call #2. Ordine user_sections aggiornato: [1] data quality → [2] asset state map → [3] causal hypotheses → [4] raw coordinates → [5] regime history → [6] macro analysis → [7] storylines → [8] OSINT → [9] cross-validation → [10] output instructions.
+  - `_build_asset_state_section(asset_state_map)` — helper: tabella compatta per notable asset (ASSET | position_label | direction | Δ7d | Δ30d | Δ12m | P30 | σ).
+  - `_build_causal_hypotheses_section(causal_hypotheses)` — helper: blocchi PRIMARY/SECONDARY/STRUCTURAL con weight, mechanism, trend_context, osint_anchor.
 
 ### Phase 6 (futura)
 - `ew_tracker.py` — Early Warning signal tracking + accuracy feedback loop

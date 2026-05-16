@@ -537,11 +537,63 @@ class DashboardItemV2(BaseModel):
         return v
 
 
+class AssetPositionEntry(BaseModel):
+    value: float
+    p30: int = Field(..., ge=0, le=100)
+    position_label: Literal["oversold", "neutral", "overbought"]
+
+
+class AssetTrendEntry(BaseModel):
+    ma7d: Optional[float] = None
+    ma30d: Optional[float] = None
+    direction: Literal["up", "flat", "down"]
+
+
+class AssetMomentumEntry(BaseModel):
+    delta_7d: Optional[float] = None
+    delta_30d: Optional[float] = None
+    delta_12m: Optional[float] = None
+
+
+class AssetVolatilityEntry(BaseModel):
+    sigma: Optional[float] = None
+
+
+class AssetTodayEntry(BaseModel):
+    delta_pct: float
+    delta_type: str  # "DoD" | "WoW" | "MoM"
+
+
+class AssetStateEntry(BaseModel):
+    key: str
+    position: AssetPositionEntry
+    trend: AssetTrendEntry
+    momentum: AssetMomentumEntry
+    volatility: AssetVolatilityEntry
+    today: AssetTodayEntry
+
+
+class CausalHypothesisItem(BaseModel):
+    type: Literal["PRIMARY", "SECONDARY", "STRUCTURAL"]
+    weight: str  # "likely (>60%)" | "probable (>70%)" | "high confidence (>80%)" | "uncertain"
+    mechanism: str
+    trend_context: str
+    osint_anchor: str
+
+
+class CausalHypothesisEntry(BaseModel):
+    asset: str
+    movement: str
+    hypotheses: List[CausalHypothesisItem]
+
+
 class MacroAnalysisResultV2(BaseModel):
     """
     Output schema for LLM call #1 (macro_analysis_prompt).
     Phase 4: validated via Pydantic in shadow mode before cutover.
     7 regime labels (Literal-constrained) prevent LLM label drift.
+    Extended with asset_state_map, causal_hypotheses, macro_state_narrative
+    for full-coordinate multi-causal reasoning.
     """
     risk_regime: RiskRegimeV2
     active_convergences: List[ActiveConvergenceItemV2] = Field(default_factory=list)
@@ -551,6 +603,9 @@ class MacroAnalysisResultV2(BaseModel):
     dashboard_items: List[DashboardItemV2] = Field(default_factory=list)
     freshness_note: Optional[str] = None
     data_date: str  # ISO YYYY-MM-DD
+    asset_state_map: Optional[List[AssetStateEntry]] = Field(default_factory=list)
+    causal_hypotheses: Optional[List[CausalHypothesisEntry]] = Field(default_factory=list)
+    macro_state_narrative: Optional[str] = None
 
     @model_validator(mode='before')
     @classmethod

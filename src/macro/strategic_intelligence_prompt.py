@@ -30,12 +30,51 @@ You think in three time horizons simultaneously:
   LONG   (3-12 months): What scenarios are plausible, and what confirms or denies them?
 
 You have access to:
-  1. A macro analysis JSON with today's market regime, active convergences,
+  1. An ASSET STATE MAP with the full coordinate for each notable asset
+     (P30 positional rank, MA trend direction, multi-period momentum, σ volatility).
+  2. CAUSAL HYPOTHESES — probabilistic multi-causal explanations for today's
+     notable moves, pre-computed from call #1's coordinate reasoning.
+  3. A macro analysis JSON with today's market regime, active convergences,
      key divergences, and supply chain signals — pre-computed from 33 indicators.
-  2. A 60-day macro regime history showing how the regime has evolved.
-  3. The top active storylines from a narrative clustering engine with momentum scores.
-  4. Today's OSINT articles from 40+ curated sources across geopolitics,
+  4. A 60-day macro regime history showing how the regime has evolved.
+  5. The top active storylines from a narrative clustering engine with momentum scores.
+  6. Today's OSINT articles from 40+ curated sources across geopolitics,
      defense, cybersecurity, energy, supply chain, think tanks, and regional coverage.
+
+=== PRE-ANALYSIS PROTOCOL ===
+Before writing ANY section of the report, perform the following three-layer synthesis
+internally (do not output this synthesis — it informs your writing):
+
+  LAYER 1 — ONTOLOGY (from causal_hypotheses):
+    Read the PRIMARY, SECONDARY, and STRUCTURAL hypotheses for each notable asset.
+    Identify the dominant causal mechanisms (financial theory, cross-asset correlations,
+    structural drivers). Note where reverse causality or intertwined causality is flagged.
+    This is the analytical skeleton: all sections must be consistent with it.
+
+  LAYER 2 — TREND (from asset_state_map):
+    Read each asset's position_label and trend direction before interpreting its move.
+    A P30:90° asset (overbought) dropping is different from a P30:50° asset dropping
+    the same percentage. The positional amplifier changes hypothesis weight.
+    Note which assets are at extremes — these carry higher mean-reversion risk and
+    require different interpretation than mid-range moves.
+
+  LAYER 3 — EVENTS (from OSINT articles):
+    For each osint_anchor in the causal_hypotheses, search the OSINT articles for
+    confirming or denying evidence. An osint_anchor is a hypothesis pointer —
+    resolve it against today's articles and update hypothesis confidence accordingly.
+    CONFIRMED: article provides direct evidence for the hypothesis mechanism.
+    DENIED: article contradicts the expected causal chain.
+    UNRESOLVED: no relevant article found — note the gap explicitly.
+
+SYNTHESIS RULE:
+  Every market movement discussed in the report MUST be grounded in at least 2
+  of the 3 layers (ONTOLOGY + TREND, ONTOLOGY + EVENTS, or all three).
+  A movement explained by only one layer is incomplete — flag the missing layers
+  explicitly (e.g., "no OSINT confirmation found for this hypothesis today").
+
+  For Scenario Analysis specifically: each scenario MUST reference at least one
+  element from each of the three layers (ontological basis, coordinate state,
+  OSINT anchor or absence).
 
 ANALYTICAL STANDARDS:
   - Precision over breadth: 3 sharp insights beat 10 vague ones.
@@ -102,6 +141,21 @@ Apply these rules before writing any section.
    Add caveat where the signal appears, not at the end.
    Example: "NICKEL signals EV battery cost pressure [STRUCTURAL CONTEXT:
    data from Feb 2026 — verify with current LME pricing]"
+
+7. COORDINATE-HYPOTHESIS CONSISTENCY
+   For each significant market move discussed in the report:
+   - Verify it references the asset's coordinate state from the ASSET STATE MAP
+     (position_label + trend direction + multi-period momentum).
+   - A claim about a market move that ignores the asset's positional context
+     is incomplete and requires explicit acknowledgment of the missing layer.
+   - Example of violation: "Copper dropped on demand weakness" — this ignores
+     that Copper may have been at P30:90° (overbought) with trend "up", making
+     positional mean-reversion a stronger primary hypothesis than demand weakness.
+   - Example of correct form: "Copper -3.5% [P30:90° overbought, trend up] —
+     probable (>70%) dollar repricing amplified by overbought positioning.
+     Demand weakness hypothesis likely (>60%) secondary [no OSINT confirmation]."
+   When the positional context amplifies or modifies the move's interpretation,
+   state it explicitly rather than relying on the daily delta alone.
 """.strip()
 
 
@@ -276,6 +330,7 @@ def build_strategic_intelligence_prompt(
     articles: list,
     target_date: str,
     data_quality_flags: list,
+    macro_context_raw: str = "",
 ) -> tuple[str, str]:
     """
     Assembla il prompt completo per la LLM call #2.
@@ -286,15 +341,18 @@ def build_strategic_intelligence_prompt(
 
     Ordine deliberato nel user_prompt:
       [1] Data quality caveat    — orienta il frame critico
-      [2] Regime history 60gg    — contesto strutturale
-      [3] Macro analysis oggi    — segnali del giorno
-      [4] Storylines             — narrative in evoluzione
-      [5] OSINT articles         — fonti primarie
-      [6] Cross-validation rules — come incrociare tutto
-      [7] Output instructions    — cosa produrre
+      [2] Asset state map        — coordinate complete per asset notabili
+      [3] Causal hypotheses      — ipotesi multi-causali da call #1
+      [4] Raw coordinates        — reference block con coordinate grezze
+      [5] Regime history 60gg    — contesto strutturale
+      [6] Macro analysis oggi    — segnali del giorno
+      [7] Storylines             — narrative in evoluzione
+      [8] OSINT articles         — fonti primarie
+      [9] Cross-validation rules — come incrociare tutto
+      [10] Output instructions   — cosa produrre
 
-    Questo ordine massimizza la coerenza del ragionamento LLM:
-    prima il frame e i limiti, poi i dati, poi le istruzioni.
+    Ordine: prima il frame e i limiti (coordinate + ipotesi), poi i dati
+    storici, poi le fonti primarie, poi le istruzioni di output.
     """
 
     user_sections = []
@@ -304,28 +362,45 @@ def build_strategic_intelligence_prompt(
         macro_analysis_json, data_quality_flags
     ))
 
-    # [2] Regime history
+    # [2] Asset state map (full coordinate per notable asset)
+    asset_state_map = macro_analysis_json.get("asset_state_map") or []
+    if asset_state_map:
+        user_sections.append(_build_asset_state_section(asset_state_map))
+
+    # [3] Causal hypotheses (multi-causal weighted from call #1)
+    causal_hypotheses = macro_analysis_json.get("causal_hypotheses") or []
+    if causal_hypotheses:
+        user_sections.append(_build_causal_hypotheses_section(causal_hypotheses))
+
+    # [4] Raw indicator coordinates (reference block for cross-checking)
+    if macro_context_raw:
+        user_sections.append(
+            "=== RAW INDICATOR COORDINATES (reference — cross-check P30/MA/σ values) ===\n" +
+            macro_context_raw
+        )
+
+    # [5] Regime history
     user_sections.append(
         "=== MACRO REGIME CONTEXT (60-day history) ===\n" +
         macro_regime_context_xml
     )
 
-    # [3] Macro analysis today
+    # [6] Macro analysis today
     user_sections.append(_build_macro_analysis_section(macro_analysis_json))
 
-    # [4] Storylines
+    # [7] Storylines
     user_sections.append(
         "=== ACTIVE NARRATIVE STORYLINES (top 10 by momentum) ===\n" +
         storylines_xml
     )
 
-    # [5] OSINT articles
+    # [8] OSINT articles
     user_sections.append(_build_articles_section(articles))
 
-    # [6] Cross-validation rules
+    # [9] Cross-validation rules
     user_sections.append(CROSS_VALIDATION_BLOCK)
 
-    # [7] Output instructions
+    # [10] Output instructions
     user_sections.append(build_output_instructions(target_date))
 
     user_prompt = "\n\n".join(user_sections)
@@ -371,6 +446,72 @@ def _build_data_quality_section(
             "Weight convergence signals proportionally less."
         )
 
+    return "\n".join(lines)
+
+
+def _build_asset_state_section(asset_state_map: list) -> str:
+    lines = ["=== ASSET STATE MAP (full coordinate per notable asset) ==="]
+    lines.append(
+        "Read positional context BEFORE interpreting today's moves. "
+        "P30 shows where an asset sits in its 30-day range; direction shows short-term trend."
+    )
+    lines.append("")
+    lines.append(
+        f"  {'ASSET':<20} {'POSITION':<12} {'DIRECTION':<10} {'Δ7d':>7} {'Δ30d':>7} {'Δ12m':>8} {'P30':>5} {'σ':>6}"
+    )
+    lines.append("  " + "-" * 78)
+    for entry in asset_state_map:
+        key = entry.get("key", "")
+        pos = entry.get("position", {})
+        trend = entry.get("trend", {})
+        mom = entry.get("momentum", {})
+        vol = entry.get("volatility", {})
+        today = entry.get("today", {})
+
+        label = pos.get("position_label", "neutral")
+        p30 = pos.get("p30", "?")
+        direction = trend.get("direction", "?")
+        d7 = mom.get("delta_7d")
+        d30 = mom.get("delta_30d")
+        d12 = mom.get("delta_12m")
+        sigma = vol.get("sigma")
+        delta_pct = today.get("delta_pct", 0)
+        delta_type = today.get("delta_type", "DoD")
+
+        sign = "+" if delta_pct > 0 else ""
+        d7_str = f"{d7:+.1f}%" if d7 is not None else "N/A"
+        d30_str = f"{d30:+.1f}%" if d30 is not None else "N/A"
+        d12_str = f"{d12:+.1f}%" if d12 is not None else "N/A"
+        sigma_str = f"{sigma:.1f}%" if sigma is not None else "N/A"
+
+        lines.append(
+            f"  {key:<20} {label:<12} {direction:<10} "
+            f"{d7_str:>7} {d30_str:>7} {d12_str:>8} {str(p30):>5} {sigma_str:>6}"
+            f"  [{sign}{delta_pct:.1f}% {delta_type}]"
+        )
+    return "\n".join(lines)
+
+
+def _build_causal_hypotheses_section(causal_hypotheses: list) -> str:
+    lines = ["=== CAUSAL HYPOTHESES (from call #1 coordinate reasoning) ==="]
+    lines.append(
+        "These are probabilistic hypotheses formed by analyzing the full coordinate. "
+        "osint_anchor is a forward-looking pointer — resolve it against today's OSINT articles."
+    )
+    for entry in causal_hypotheses:
+        asset = entry.get("asset", "")
+        movement = entry.get("movement", "")
+        lines.append(f"\n── {asset}: {movement}")
+        for h in entry.get("hypotheses", []):
+            h_type = h.get("type", "PRIMARY")
+            weight = h.get("weight", "uncertain")
+            mechanism = h.get("mechanism", "")
+            trend_ctx = h.get("trend_context", "")
+            anchor = h.get("osint_anchor", "")
+            lines.append(f"  [{h_type}] {weight}")
+            lines.append(f"    Mechanism:     {mechanism}")
+            lines.append(f"    Trend context: {trend_ctx}")
+            lines.append(f"    OSINT anchor:  {anchor}")
     return "\n".join(lines)
 
 
@@ -422,10 +563,15 @@ def _build_macro_analysis_section(macro_analysis_json: dict) -> str:
     else:
         lines.append("\nSUPPLY CHAIN SIGNALS: None above threshold today.")
 
-    # Macro narrative (da call #1)
-    narrative = macro_analysis_json.get("macro_narrative", "")
-    if narrative:
-        lines.append(f"\nMACRO NARRATIVE:\n{narrative}")
+    # Macro state narrative (full-coordinate discursive synthesis — preferred)
+    macro_state_narrative = macro_analysis_json.get("macro_state_narrative", "")
+    if macro_state_narrative:
+        lines.append(f"\nMACRO STATE NARRATIVE (full-coordinate synthesis):\n{macro_state_narrative}")
+    else:
+        # Fallback to legacy macro_narrative if macro_state_narrative absent
+        narrative = macro_analysis_json.get("macro_narrative", "")
+        if narrative:
+            lines.append(f"\nMACRO NARRATIVE:\n{narrative}")
 
     # Top movers
     dashboard = [
