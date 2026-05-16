@@ -1,0 +1,40 @@
+# Market data fetch — minimal dependencies
+# Used by .github/workflows/evening_market_fetch.yml
+# Excludes: torch, sentence-transformers, spacy, streamlit, playwright, scikit-learn
+
+# OpenBB core + required extensions
+openbb==4.6.0
+openbb-core==1.6.9
+openbb-economy==1.5.1
+openbb-equity==1.5.1
+openbb-fred==1.5.1
+openbb-yfinance==1.5.2
+openbb-currency==1.5.1
+openbb-commodity==1.4.2
+openbb-fixedincome==1.5.1
+openbb-index==1.5.1
+openbb-oecd==1.5.1
+python-multipart==0.0.27  # openbb-core==1.6.9 requires >=0.0.27,<0.0.28
+
+# Market data
+yfinance==0.2.66
+curl_cffi>=0.15.0
+pandas==2.3.3
+pandas-market-calendars>=4.3
+
+# Database
+psycopg2-binary==2.9.11
+
+# Config / utils
+python-dotenv==1.2.2
+PyYAML==6.0.3
+pydantic==2.12.5
+
+# Romania indicators
+cloudscraper==1.2.71           # Trading Economics (BNR_RATE, RO_CPI_YOY)
+tvDatafeed @ git+https://github.com/rongardF/tvdatafeed.git  # TVC:RO10Y via WebSocket
+websockets==15.0.1
+requests==2.33.0
+beautifulsoup4==4.14.3
+lxml==6.1.0
+# scrapling intentionally omitted — RO_CDS_5Y returns None gracefully without Chromium

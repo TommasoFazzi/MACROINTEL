@@ -19,7 +19,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 
 ### Pipeline Execution
 - `daily_pipeline.py` - **Orchestrator**: runs full pipeline in one command
-  - **6 core steps** (always run unless filtered): 1.ingestion → 2.market_data → 3.nlp_processing → 4.load_to_database → **5.narrative_processing** → 6.generate_report
+  - **5 core steps** (always run unless filtered): 1.ingestion → 2.nlp_processing → 3.load_to_database → **4.narrative_processing** → 5.generate_report (market_data step removed — now handled by evening workflow)
   - **Conditional steps** (run after core pipeline, if not `--skip-weekly`): weekly_report (Sundays only) → monthly_recap (after 4 weekly reports since last recap)
   - Default `generate_report` command: `python scripts/generate_report.py --macro-first --skip-article-signals`
   - `--dry-run` - Validate without executing
@@ -29,7 +29,6 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
   - `--skip-weekly` - Skip weekly/monthly conditional steps even on Sunday
   - **Auto weekly**: Runs on Sundays (after main pipeline succeeds)
   - **Auto monthly**: Runs after 4 weekly reports since last recap (DB-counted)
-  - **market_data** has `continue_on_failure=True` (optional, non-blocking)
   - **narrative_processing** has `continue_on_failure=True` (report generated even if storylines fail)
   - Logs written to `logs/daily_pipeline_{run_id}.log`; old logs auto-cleaned after `PIPELINE_MAX_LOG_DAYS` (default 30)
   - Notifications: macOS `osascript`/`terminal-notifier` locally; SMTP email in production (if `SMTP_HOST` + `NOTIFY_EMAIL` env vars set)
@@ -54,7 +53,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 
 ### Market Data
 - `backfill_market_data.py` - Backfill Yahoo Finance OHLCV data
-- `fetch_daily_market_data.py` - Daily market data fetch (global indicators, country_code='US')
+- `fetch_daily_market_data.py` - Market data fetch (global indicators, country_code='US'). **Not called by daily_pipeline.py** — invoked by `.github/workflows/evening_market_fetch.yml` at 21:30 UTC Mon-Fri (after NYSE close). Morning reports read from the previous evening's DB row via `get_macro_context_text()` fallback. Manual backfill: `--date YYYY-MM-DD --force`.
 - `fetch_romania_macro.py` - **Romania macro fetch**: calls `ensure_daily_macro_data()` (idempotent), then shows RO-specific indicator preview with staleness info. Flags: `--date YYYY-MM-DD`, `--force` (deletes existing RO rows for date before re-fetching). Used as standalone verification or pipeline pre-step.
 - `backfill_sruuf.py` - **One-shot ticker switch recovery**: deletes all URANIUM rows (URA history), downloads SRUUF daily closes via yfinance (last 90 days), reinserts with correct `previous_value` chain, and flags today's report as `draft` so it doesn't enter the knowledge base. Idempotent. Run after any equity/ETF ticker substitution in `MACRO_INDICATORS`.
 - `backfill_new_indicators_b2.py` - **B2 expansion backfill**: fetches 60 calendar days of history for TTF_GAS (yfinance `TTF=F`) and YIELD_CURVE_10Y_3M (FRED REST API `T10Y3M`) and inserts with correct `previous_value` chain. Run once after deploying the B2 indicator additions. Requires `DATABASE_URL` and `FRED_API_KEY`. Idempotent.

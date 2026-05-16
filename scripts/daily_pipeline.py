@@ -94,13 +94,9 @@ DEFAULT_STEPS = [
         timeout_seconds=900,  # 15 min
         continue_on_failure=False
     ),
-    PipelineStep(
-        name="market_data",
-        command="python scripts/fetch_daily_market_data.py",
-        description="Fetch dati di mercato via OpenBB",
-        timeout_seconds=600,  # 10 min — FRED/OpenBB può essere lento su rete Hetzner
-        continue_on_failure=True  # Opzionale, non blocca la pipeline
-    ),
+    # market_data step removed: market data is now fetched by the evening workflow
+    # (.github/workflows/evening_market_fetch.yml) at 21:30 UTC after NYSE close.
+    # Morning report reads from DB (previous evening's data) via get_macro_context_text fallback.
     PipelineStep(
         name="nlp_processing",
         command="python scripts/process_nlp.py",

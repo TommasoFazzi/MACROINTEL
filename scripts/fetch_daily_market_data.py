@@ -53,10 +53,10 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
     if force:
         logger.info("FORCE MODE - Will refresh existing data")
 
-    # Weekend skip: markets closed Sat/Sun — no new data to fetch.
-    # The report step will use the most recent weekday record already in the DB.
+    # Weekends: equity and commodity markets are closed; the evening fetch already captured
+    # the last session close on Friday. Nothing useful to fetch on Saturday or Sunday.
     if target_date.weekday() >= 5:
-        logger.info(f"Skipping fetch for {target_date} (weekend — markets closed)")
+        logger.info(f"Skipping fetch for {target_date} (weekend)")
         return True
 
     # Holiday awareness: log when fetching on a US market holiday.

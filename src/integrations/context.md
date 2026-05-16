@@ -36,7 +36,9 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
   - `ensure_daily_macro_data()` - Fetch and persist macro indicators
     - FRED branch now uses `_fetch_indicator_openbb_fixed()` — saves with real `data_date` (not `target_date`). Fixes NICKEL/monthly mislabeling bug.
     - All fetch paths call `_upsert_indicator_metadata()` to track staleness and reliability.
-  - `get_macro_context_text(date)` - **Phase 2 enhanced + historical context (migration 038)**: Formatted text for LLM prompt injection with:
+    - **Weekend skip**: Both Saturday and Sunday are skipped — market data is fetched by the evening workflow (`.github/workflows/evening_market_fetch.yml`) at 23:00 UTC Mon-Fri. Timing chosen to be after NYSE close (~21:00 UTC), FX NY session close (~22:00 UTC), and FRED US_HY_SPREAD publication (~22:30 UTC). The morning pipeline no longer runs a market fetch step; reports read from the previous evening's DB row via the fallback in `get_macro_context_text()`.
+    - FRED series save with `data_date` (unchanged — already correct). yfinance saves with `store_date`.
+  - `get_macro_context_text(date)` - **Phase 2 enhanced + historical context (migration 038)**. When no data exists for `date`, falls back to the most recent available record (up to 5 days back) and prepends a note: `[No market data for {date} — using most recent available: {fallback_date}]`. Formatted text for LLM prompt injection with:
     - Delta_type annotation (DoD/WoW/MoM) derived from `expected_frequency` in metadata (not gap days)
     - Freshness headers per category ("NICKEL: Feb 2026 (structural)", etc.)
     - ⚠️ warning for USD_CNH (restricted reliability, PBoC fixing)

@@ -561,33 +561,18 @@ class OpenBBMarketService:
         """
         target_date = target_date or date.today()
 
-        # Sunday: Saturday already captured Friday's full close — nothing new to fetch.
-        if target_date.weekday() == 6:
-            logger.info(f"Skipping macro fetch for {target_date} (Sunday — Friday close captured by Saturday run)")
+        # Weekends: equity/commodity markets are closed; evening fetch already captured Friday's
+        # close on Friday. Nothing useful to fetch Sat/Sun.
+        if target_date.weekday() >= 5:
+            logger.info(f"Skipping macro fetch for {target_date} (weekend)")
             return True
 
-        # Saturday: markets closed but Friday's full session is now complete.
-        # Fetch and store with store_date = last trading day (Friday) to capture the complete
-        # session. Friday morning run only had pre-market / early prices; this corrects the record.
-        # Always re-fetch on Saturday (don't skip even if store_date record already exists).
+        # Weekday: skip if data already present (evening fetch ran first).
+        if self._has_macro_data(target_date):
+            logger.info(f"Macro data already present for {target_date}")
+            return True
+
         store_date = target_date
-        if target_date.weekday() == 5:
-            try:
-                from src.integrations.market_calendar import last_nyse_trading_day
-                store_date = last_nyse_trading_day(before=target_date)
-                if store_date is None:
-                    store_date = target_date - timedelta(days=1)
-            except ImportError:
-                store_date = target_date - timedelta(days=1)
-            logger.info(
-                f"Saturday run: capturing Friday full-session close "
-                f"(storing as {store_date} — overrides partial Friday morning fetch)"
-            )
-        else:
-            # Weekday: skip if data already present
-            if self._has_macro_data(target_date):
-                logger.info(f"Macro data already present for {target_date}")
-                return True
 
         # Holiday detection: log when fetching on a US market holiday (weekday, NYSE closed).
         # yfinance already returns last available close via history(period='5d') on holidays,
@@ -655,7 +640,7 @@ class OpenBBMarketService:
 
                     if value is not None:
                         self._save_macro_indicator(
-                            store_date, key, value,
+                            target_date, key, value,
                             config['unit'], config['category'],
                             country_code=config.get('country_code', 'US'),
                         )
@@ -663,7 +648,7 @@ class OpenBBMarketService:
                         self._upsert_indicator_metadata(
                             key=key,
                             frequency=frequency,
-                            last_updated=store_date,
+                            last_updated=target_date,
                             last_source='yfinance',
                             is_stale=False,
                             staleness_days=0,
@@ -1632,18 +1617,19 @@ class OpenBBMarketService:
         indicators = self._get_macro_indicators(target_date, country_code)
         weekend_note = None
 
-        # Weekend fallback: look back up to 5 days for most recent weekday record
-        if not indicators and target_date.weekday() >= 5:
+        # No data for target_date: look back up to 5 days for the most recent available record.
+        # Handles weekends, NYSE holidays, and morning reports before the evening fetch runs.
+        if not indicators:
             for offset in range(1, 6):
                 fallback_date = target_date - _td(days=offset)
                 indicators = self._get_macro_indicators(fallback_date, country_code)
                 if indicators:
                     weekend_note = (
-                        f"[WEEKEND — markets closed. Data reflects last trading day: {fallback_date}. "
-                        "DoD changes are from that session, not today.]"
+                        f"[No market data for {target_date} — using most recent available: {fallback_date}. "
+                        "DoD changes reflect that session.]"
                     )
-                    logger.info(f"Weekend fallback: using macro data from {fallback_date}")
-                    target_date = fallback_date  # use fallback date for DoD calculation
+                    logger.info(f"Data fallback: using macro data from {fallback_date} (requested {target_date})")
+                    target_date = fallback_date
                     break
 
         if not indicators:

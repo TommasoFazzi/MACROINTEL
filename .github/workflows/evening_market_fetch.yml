@@ -1,0 +1,93 @@
+name: Evening Market Data Fetch
+
+# Runs at 23:00 UTC Mon-Fri. Timing rationale:
+#   - NYSE closes 20:00-21:00 UTC  → equity/VIX definitive
+#   - CME energy settlement 19:30-20:30 UTC → commodities definitive
+#   - FX NY session closes ~22:00 UTC → EUR/USD, DXY definitive
+#   - FRED US_HY_SPREAD published by ~22:30 UTC → FRED daily series definitive
+# The morning pipeline (pipeline.yml) reads from DB; this is the authoritative data source.
+#
+# Manual trigger supports optional --date and --force flags for backfill / reruns.
+
+on:
+  schedule:
+    - cron: '0 23 * * 1-5'  # 23:00 UTC — after NYSE close (21:00), FX close (~22:00), FRED US_HY_SPREAD publish (~22:30)
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Target date (YYYY-MM-DD). Leave empty for today.'
+        required: false
+        type: string
+      force:
+        description: 'Force re-fetch even if data already exists for the date'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install market data dependencies
+        run: pip install -r requirements-market.txt
+
+      - name: Setup SSH tunnel to Hetzner DB
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.VPS_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          sudo apt-get install -y -q autossh
+          AUTOSSH_GATETIME=0 autossh -M 0 -fN \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            -o StrictHostKeyChecking=yes \
+            -L 5432:127.0.0.1:5432 \
+            deploy@${{ secrets.VPS_HOST }}
+          sleep 5
+          nc -z 127.0.0.1 5432 || (echo "ERROR: SSH tunnel failed — postgres unreachable on 127.0.0.1:5432" && exit 1)
+          echo "SSH tunnel OK"
+
+      - name: Fetch evening market close
+        env:
+          DATABASE_URL: postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@127.0.0.1:5432/intelligence_ita
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
+          ENVIRONMENT: production
+        run: |
+          mkdir -p logs
+          ARGS=""
+          if [ -n "${{ inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ inputs.date }}"
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          else
+            # Always force on scheduled runs: overwrite the morning fetch (pre-market prices)
+            # with the definitive session close.
+            ARGS="$ARGS --force"
+          fi
+          python scripts/fetch_daily_market_data.py $ARGS
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evening-market-fetch-${{ github.run_id }}
+          path: logs/
+          retention-days: 7
