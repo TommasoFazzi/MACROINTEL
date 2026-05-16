@@ -445,7 +445,7 @@ class OpenBBMarketService:
             'symbol': 'EURRON=X',
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'EUR/RON Exchange Rate (Romania)',
+            'description': 'EUR/RON tasso di cambio — quanti RON per 1 EUR (Romania)',
             'fetch_category': 'fx',
             'country_code': 'RO',
         },
@@ -561,16 +561,33 @@ class OpenBBMarketService:
         """
         target_date = target_date or date.today()
 
-        # Weekend skip: markets are closed Sat/Sun — no new equity/commodity data to fetch.
-        # The report step uses the most recent weekday record via get_macro_context_text fallback.
-        if target_date.weekday() >= 5:
-            logger.info(f"Skipping macro fetch for {target_date} (weekend — markets closed)")
+        # Sunday: Saturday already captured Friday's full close — nothing new to fetch.
+        if target_date.weekday() == 6:
+            logger.info(f"Skipping macro fetch for {target_date} (Sunday — Friday close captured by Saturday run)")
             return True
 
-        # Check if already have data
-        if self._has_macro_data(target_date):
-            logger.info(f"Macro data already present for {target_date}")
-            return True
+        # Saturday: markets closed but Friday's full session is now complete.
+        # Fetch and store with store_date = last trading day (Friday) to capture the complete
+        # session. Friday morning run only had pre-market / early prices; this corrects the record.
+        # Always re-fetch on Saturday (don't skip even if store_date record already exists).
+        store_date = target_date
+        if target_date.weekday() == 5:
+            try:
+                from src.integrations.market_calendar import last_nyse_trading_day
+                store_date = last_nyse_trading_day(before=target_date)
+                if store_date is None:
+                    store_date = target_date - timedelta(days=1)
+            except ImportError:
+                store_date = target_date - timedelta(days=1)
+            logger.info(
+                f"Saturday run: capturing Friday full-session close "
+                f"(storing as {store_date} — overrides partial Friday morning fetch)"
+            )
+        else:
+            # Weekday: skip if data already present
+            if self._has_macro_data(target_date):
+                logger.info(f"Macro data already present for {target_date}")
+                return True
 
         # Holiday detection: log when fetching on a US market holiday (weekday, NYSE closed).
         # yfinance already returns last available close via history(period='5d') on holidays,
@@ -638,7 +655,7 @@ class OpenBBMarketService:
 
                     if value is not None:
                         self._save_macro_indicator(
-                            target_date, key, value,
+                            store_date, key, value,
                             config['unit'], config['category'],
                             country_code=config.get('country_code', 'US'),
                         )
@@ -646,7 +663,7 @@ class OpenBBMarketService:
                         self._upsert_indicator_metadata(
                             key=key,
                             frequency=frequency,
-                            last_updated=target_date,
+                            last_updated=store_date,
                             last_source='yfinance',
                             is_stale=False,
                             staleness_days=0,
@@ -1699,6 +1716,10 @@ class OpenBBMarketService:
                 formatted = f"${value:,.2f}{change_str}"
             elif unit == 'Points':
                 formatted = f"{value:,.1f}{change_str}"
+            elif unit == 'Rate':
+                formatted = f"{value:.4f} (tasso di cambio){change_str}"
+            elif unit == 'bps':
+                formatted = f"{value:.1f} bps{change_str}"
             else:
                 formatted = f"{value:.4f}{change_str}"
 
