@@ -160,6 +160,13 @@ DEFAULT_STEPS = [
         timeout_seconds=600,  # 10 min — no macro-first LLM analysis
         continue_on_failure=True  # Romania report non blocca la pipeline globale
     ),
+    PipelineStep(
+        name="send_report_email",
+        command="python scripts/send_report_email.py",
+        description="Invio report via email (markdown→HTML+PDF → Brevo SMTP)",
+        timeout_seconds=120,  # 2 min
+        continue_on_failure=True  # Email non blocca la pipeline
+    ),
 ]
 
 # Conditional steps (run after main pipeline based on day of week)

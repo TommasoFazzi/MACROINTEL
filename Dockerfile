@@ -1,9 +1,10 @@
 FROM python:3.12-slim-bookworm
 
-# System deps for psycopg2, lxml, spaCy
+# System deps for psycopg2, lxml, spaCy + weasyprint (PDF rendering)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libpq-dev libxml2-dev libxslt-dev \
-    curl ca-certificates git && \
+    curl ca-certificates git \
+    libpango-1.0-0 libcairo2 libgdk-pixbuf2.0-0 libffi-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -33,6 +34,7 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
 COPY migrations/ ./migrations/
+COPY templates/ ./templates/
 COPY deploy/entrypoint.sh ./deploy/entrypoint.sh
 
 # Non-root user
