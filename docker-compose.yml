@@ -75,6 +75,14 @@ services:
       PHOTON_URL: ${PHOTON_URL:-https://photon.komoot.io/api}
       INTELLIGENCE_API_URL: http://backend:8000
       UCDP_API_TOKEN: ${UCDP_API_TOKEN:-}
+      BREVO_SMTP_HOST: ${BREVO_SMTP_HOST:-smtp-relay.brevo.com}
+      BREVO_SMTP_PORT: ${BREVO_SMTP_PORT:-587}
+      BREVO_SMTP_USER: ${BREVO_SMTP_USER:-}
+      BREVO_SMTP_PASS: ${BREVO_SMTP_PASS:-}
+      BREVO_FROM_EMAIL: ${BREVO_FROM_EMAIL:-}
+      BREVO_FROM_NAME: ${BREVO_FROM_NAME:-Intelligence ITA}
+      REPORT_GLOBAL_URL: ${REPORT_GLOBAL_URL:-}
+      REPORT_ROMANIA_URL: ${REPORT_ROMANIA_URL:-}
     volumes:
       - reports:/app/reports
       - ./data:/app/data
