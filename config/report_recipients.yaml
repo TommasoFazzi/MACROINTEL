@@ -3,11 +3,10 @@
 #
 # Formato:
 #   - email: indirizzo@dominio.com
-#     name: Nome Opzionale   # usato nel saluto (opzionale)
+#     name: Nome Opzionale
 
 recipients:
-  # Esempio — sostituire con i destinatari reali:
-   - email: montaale25@gmail.com
-      name: Alessandro 
-   - email: montefabius@gmail.com
-      name: Fabio 
+  - email: montaale25@gmail.com
+    name: Alessandro
+  - email: montefabius@gmail.com
+    name: Fabio
