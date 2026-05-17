@@ -4,7 +4,9 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libpq-dev libxml2-dev libxslt-dev \
     curl ca-certificates git \
-    libpango-1.0-0 libcairo2 libgdk-pixbuf2.0-0 libffi-dev && \
+    libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b \
+    libfontconfig1 libgobject-2.0-0 \
+    libcairo2 libgdk-pixbuf-2.0-0 libffi-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
