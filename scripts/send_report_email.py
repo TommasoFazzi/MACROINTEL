@@ -59,21 +59,28 @@ def load_recipients(config_path: str = "config/report_recipients.yaml") -> list[
 # Database
 # ---------------------------------------------------------------------------
 
-def fetch_today_reports(db: DatabaseManager, target_date: date) -> list[dict]:
-    """Fetch global and romania-daily reports saved for target_date."""
+DEFAULT_REPORT_TYPES = ("daily", "romania-daily")
+WEEKLY_REPORT_TYPES = ("weekly", "recap")
+
+
+def fetch_today_reports(
+    db: DatabaseManager, target_date: date, report_types: tuple[str, ...]
+) -> list[dict]:
+    """Fetch reports of the given types saved for target_date."""
+    placeholders = ",".join(["%s"] * len(report_types))
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT id, report_type, final_content, report_date, slug
                 FROM reports
                 WHERE report_date = %s
-                  AND report_type IN ('daily', 'romania-daily')
+                  AND report_type IN ({placeholders})
                   AND final_content IS NOT NULL
                   AND final_content != ''
                 ORDER BY report_type
                 """,
-                (target_date,),
+                (target_date, *report_types),
             )
             rows = cur.fetchall()
 
@@ -134,19 +141,32 @@ def build_email_html(
     romania_url: str,
     date_slug: str,
     date_display: str,
+    is_weekly: bool = False,
 ) -> str:
-    """Render the HTML email body from templates/email_report.html."""
+    """Render the HTML email body from the appropriate Jinja2 template."""
     from jinja2 import Environment, FileSystemLoader
 
     env = Environment(loader=FileSystemLoader(str(PROJECT_ROOT / "templates")))
-    template = env.get_template("email_report.html")
-
-    global_report = next((r for r in reports if r["report_type"] == "daily"), None)
-    romania_report = next((r for r in reports if r["report_type"] == "romania-daily"), None)
 
     def _build_url(base: str, slug: Optional[str]) -> str:
         return f"{base.rstrip('/')}/{slug}" if slug else base
 
+    if is_weekly:
+        template = env.get_template("email_weekly.html")
+        weekly_report = next((r for r in reports if r["report_type"] == "weekly"), None)
+        recap_report = next((r for r in reports if r["report_type"] == "recap"), None)
+        return template.render(
+            date_str=date_display,
+            weekly_report=weekly_report,
+            recap_report=recap_report,
+            global_url=_build_url(global_url, weekly_report["slug"] if weekly_report else None),
+            weekly_pdf_filename=f"intelligence_report_weekly_{date_slug}.pdf",
+            recap_pdf_filename=f"intelligence_report_recap_{date_slug}.pdf",
+        )
+
+    template = env.get_template("email_report.html")
+    global_report = next((r for r in reports if r["report_type"] == "daily"), None)
+    romania_report = next((r for r in reports if r["report_type"] == "romania-daily"), None)
     return template.render(
         date_str=date_display,
         global_report=global_report,
@@ -230,23 +250,31 @@ def send_email(
 # Main
 # ---------------------------------------------------------------------------
 
+_PDF_FILENAME_MAP = {
+    "daily": "global",
+    "romania-daily": "romania",
+    "weekly": "weekly",
+    "recap": "recap",
+}
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Send daily intelligence report email")
+    parser = argparse.ArgumentParser(description="Send intelligence report email")
+    parser.add_argument("--dry-run", action="store_true", help="Render without sending")
+    parser.add_argument("--date", metavar="YYYY-MM-DD", help="Target date (default: today)")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Render everything but do not send",
-    )
-    parser.add_argument(
-        "--date",
-        metavar="YYYY-MM-DD",
-        help="Target date (default: today)",
+        "--report-types",
+        metavar="TYPES",
+        default=",".join(DEFAULT_REPORT_TYPES),
+        help="Comma-separated report types to include (default: daily,romania-daily)",
     )
     args = parser.parse_args()
 
     target_date = date.fromisoformat(args.date) if args.date else date.today()
     date_slug = target_date.strftime("%Y%m%d")
     date_display = target_date.strftime("%-d %B %Y")
+    report_types = tuple(t.strip() for t in args.report_types.split(",") if t.strip())
+    is_weekly = any(t in WEEKLY_REPORT_TYPES for t in report_types)
 
     recipients = load_recipients()
     if not recipients:
@@ -254,30 +282,36 @@ def main() -> int:
         return 1
 
     db = DatabaseManager()
-    reports = fetch_today_reports(db, target_date)
+    reports = fetch_today_reports(db, target_date, report_types)
     if not reports:
-        logger.error(f"No reports found in DB for {target_date}")
+        logger.error(f"No reports of type {report_types} found in DB for {target_date}")
         return 1
 
     logger.info(f"Reports found: {[r['report_type'] for r in reports]}")
 
-    global_url = os.getenv("REPORT_GLOBAL_URL", "https://intelligence-ita.com/insights")
-    romania_url = os.getenv("REPORT_ROMANIA_URL", "https://intelligence-ita.com/insights")
+    global_url = os.getenv("REPORT_GLOBAL_URL", "")
+    romania_url = os.getenv("REPORT_ROMANIA_URL", "")
 
-    html_body = build_email_html(reports, global_url, romania_url, date_slug, date_display)
+    html_body = build_email_html(
+        reports, global_url, romania_url, date_slug, date_display, is_weekly=is_weekly
+    )
 
     pdf_attachments: list[tuple[str, bytes]] = []
     for report in reports:
         html_fragment = markdown_to_html(report["content"])
         pdf_bytes = render_pdf(html_fragment, report)
         if pdf_bytes:
-            rtype = "global" if report["report_type"] == "daily" else "romania"
+            rtype = _PDF_FILENAME_MAP.get(report["report_type"], report["report_type"])
             pdf_attachments.append((f"intelligence_report_{rtype}_{date_slug}.pdf", pdf_bytes))
 
     if not pdf_attachments:
         logger.warning("No PDFs generated — sending email without attachments")
 
-    subject = f"Report Intelligence ITA — {date_display}"
+    if is_weekly:
+        subject = f"Report Settimanale Intelligence ITA — {date_display}"
+    else:
+        subject = f"Report Intelligence ITA — {date_display}"
+
     success = send_email(
         recipients, html_body, pdf_attachments, subject, dry_run=args.dry_run
     )

@@ -510,6 +510,22 @@ class DailyPipeline:
             else:
                 self.logger.info("")
                 self.logger.info(f"Skipping monthly recap ({weekly_count}/4 weekly reports since last recap)")
+
+            # Step 8: Send weekly/recap email (after all Sunday reports are generated)
+            report_types = "weekly,recap" if should_recap else "weekly"
+            send_weekly_email_step = PipelineStep(
+                name="send_weekly_email",
+                command=f"python scripts/send_report_email.py --report-types {report_types}",
+                description="Invio email settimanale (weekly + recap se disponibile)",
+                timeout_seconds=120,
+                continue_on_failure=True,
+            )
+            self.logger.info("")
+            self.logger.info(f"[STEP 8] {send_weekly_email_step.name}")
+            weekly_email_result = self._execute_step(send_weekly_email_step)
+            step_results.append(weekly_email_result)
+            emoji = "✓" if weekly_email_result.success else "✗"
+            self.logger.info(f"[STEP 8] {emoji} {send_weekly_email_step.name} ({weekly_email_result.duration_seconds:.1f}s)")
         else:
             self.logger.info("")
             self.logger.info("Skipping weekly/monthly reports (not Sunday)")
