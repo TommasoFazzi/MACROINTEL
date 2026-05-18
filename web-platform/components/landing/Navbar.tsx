@@ -15,6 +15,7 @@ type NavbarProps = { solid?: boolean };
 
 export default function Navbar({ solid = false }: NavbarProps) {
   const [scrolled, setScrolled] = useState(solid);
+  const [logoHover, setLogoHover] = useState(false);
 
   useEffect(() => {
     if (solid) return;
@@ -53,9 +54,11 @@ export default function Navbar({ solid = false }: NavbarProps) {
           marginRight: 'auto',
           textDecoration: 'none',
           transition: 'opacity 0.2s ease',
+          opacity: logoHover ? 0.7 : 1,
+          cursor: 'pointer',
         }}
-        onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
-        onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+        onMouseEnter={() => setLogoHover(true)}
+        onMouseLeave={() => setLogoHover(false)}
       >
         <span
           style={{
