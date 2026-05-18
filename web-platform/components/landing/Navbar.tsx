@@ -44,7 +44,19 @@ export default function Navbar({ solid = false }: NavbarProps) {
         WebkitBackdropFilter: scrolled ? 'blur(12px)' : 'none',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 'auto' }}>
+      <Link
+        href="/"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginRight: 'auto',
+          textDecoration: 'none',
+          transition: 'opacity 0.2s ease',
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
+        onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+      >
         <span
           style={{
             fontFamily: 'var(--font-geist-mono), monospace',
@@ -67,7 +79,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
         >
           OSINT PLATFORM
         </span>
-      </div>
+      </Link>
       <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
         {NAV_LINKS.map(([label, href]) => (
           <a
