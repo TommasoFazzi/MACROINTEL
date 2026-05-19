@@ -24,6 +24,7 @@ pandas-market-calendars>=4.3
 
 # Database
 psycopg2-binary==2.9.11
+pgvector==0.3.4
 
 # Config / utils
 python-dotenv==1.2.2
