@@ -327,7 +327,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
                 tools=self._anthropic_tools,
                 system=self._system_for_api,
                 temperature=0.4,
-                max_tokens=4096,
+                max_tokens=6000,
             )
         except Exception as e:
             logger.error(f"Initial Claude API call failed: {e}")
@@ -446,7 +446,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
                         tools=[],  # Empty tools forces text-only response
                         system=self._system_for_api,
                         temperature=0.4,
-                        max_tokens=4096,
+                        max_tokens=6000,
                     )
                 except Exception as e:
                     logger.error(f"Claude API call failed on forced synthesis: {e}")
@@ -459,7 +459,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
                     tools=self._anthropic_tools,
                     system=self._system_for_api,
                     temperature=0.4,
-                    max_tokens=4096,
+                    max_tokens=6000,
                 )
             except Exception as e:
                 logger.error(f"Claude API call failed on iteration {iterations_done}: {e}")
@@ -477,7 +477,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
                     prompt=forced_prompt,
                     system=self._system_for_api,
                     temperature=0.4,
-                    max_tokens=4096,
+                    max_tokens=6000,
                 )
             except Exception as e:
                 logger.error(f"Forced synthesis failed: {e}")

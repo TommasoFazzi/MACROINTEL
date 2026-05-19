@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en" prefix="og: https://ogp.me/ns#">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>About MACROINTEL | Mission, Vision &amp; Strategic Intelligence Platform</title>
+  <meta name="description" content="Learn about MACROINTEL — our mission to make strategic intelligence accessible, our vision for AI-powered geopolitical analysis, and who the platform is built for.">
+  <meta name="keywords" content="MACROINTEL about, strategic intelligence platform, geopolitical intelligence mission, OSINT platform vision, intelligence for analysts">
+  <meta name="robots" content="index, follow">
+  <meta name="author" content="MACROINTEL">
+  <link rel="canonical" href="https://macrointel.net/about">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://macrointel.net/about">
+  <meta property="og:title" content="About MACROINTEL | Mission, Vision &amp; Strategic Intelligence Platform">
+  <meta property="og:description" content="Learn about MACROINTEL — our mission to make strategic intelligence accessible, our vision for AI-powered geopolitical analysis, and who the platform is built for.">
+  <meta property="og:image" content="https://macrointel.net/og-image.jpg">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="MACROINTEL">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="About MACROINTEL | Mission &amp; Vision">
+  <meta name="twitter:description" content="Strategic intelligence platform for geopolitics, geoeconomics, and global security. Built for analysts, researchers, and decision-makers.">
+  <meta name="twitter:image" content="https://macrointel.net/og-image.jpg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    "name": "About MACROINTEL",
+    "url": "https://macrointel.net/about",
+    "description": "MACROINTEL mission, vision, and platform overview",
+    "publisher": {
+      "@type": "Organization",
+      "name": "MACROINTEL",
+      "url": "https://macrointel.net",
+      "logo": "https://macrointel.net/logo.png",
+      "description": "AI-powered OSINT and strategic intelligence platform for geopolitics, geoeconomics, and global security."
+    }
+  }
+  </script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: #0A1628;
+      color: #ededed;
+      font-family: 'Geist', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #0A1628; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #FF6B35; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      padding: 0 40px;
+      background: rgba(10,22,40,0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #FF6B35;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-family: 'Geist', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .btn-primary:hover { background: #e85a24; box-shadow: 0 0 20px rgba(255,107,53,0.35); }
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-family: 'Geist', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.25); color: #ededed; }
+
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #FF6B35;
+      margin-bottom: 16px;
+    }
+    .section-label::before {
+      content: '';
+      display: block;
+      width: 20px;
+      height: 1px;
+      background: #FF6B35;
+    }
+    .card {
+      background: #1a2332;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 32px;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: rgba(255,107,53,0.2); }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #FF6B35 0%, #FF9B35 50%, #00A8E8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 50px 50px;
+    }
+    main { padding-top: 60px; }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <a href="index.html" style="display:flex;align-items:center;gap:8px;text-decoration:none;margin-right:auto;">
+    <span style="font-family:'Geist Mono',monospace;font-weight:700;font-size:16px;letter-spacing:0.05em;color:#ededed;">
+      MACRO<span style="color:#FF6B35;">INTEL</span>
+    </span>
+    <span style="font-family:'Geist Mono',monospace;font-size:9px;color:#64748b;letter-spacing:0.1em;margin-top:2px;">OSINT PLATFORM</span>
+  </a>
+  <div style="display:flex;align-items:center;gap:28px;margin-right:32px;">
+    <a href="index.html#features" style="color:#94a3b8;font-size:13px;font-weight:500;text-decoration:none;">Features</a>
+    <a href="index.html#faq" style="color:#94a3b8;font-size:13px;font-weight:500;text-decoration:none;">FAQ</a>
+    <a href="https://macrointel.net/insights" style="color:#94a3b8;font-size:13px;font-weight:500;text-decoration:none;">Insights</a>
+  </div>
+  <a class="btn-primary" href="https://macrointel.net/dashboard" style="padding:8px 18px;font-size:13px;">
+    Open Platform
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+</nav>
+
+<main>
+
+  <!-- Hero -->
+  <section style="padding:100px 40px 80px;max-width:900px;margin:0 auto;animation:fadeInUp 0.7s ease-out;">
+    <div class="section-label">ABOUT</div>
+    <h1 style="font-size:56px;font-weight:800;letter-spacing:-0.03em;line-height:1.05;margin-bottom:24px;">
+      Intelligence that connects<br><span class="gradient-text">the dots.</span>
+    </h1>
+    <p style="font-size:18px;color:#94a3b8;line-height:1.75;max-width:640px;">
+      MACROINTEL is a strategic intelligence platform for geopolitics, geoeconomics, and global security. It brings together daily briefings, interactive maps, narrative tracking, and an AI research assistant to help users understand how global events, markets, and power dynamics connect.
+    </p>
+  </section>
+
+  <!-- Divider -->
+  <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(255,107,53,0.2),transparent);max-width:1200px;margin:0 auto;"></div>
+
+  <!-- Mission & Vision -->
+  <section style="padding:80px 40px;max-width:1100px;margin:0 auto;" class="grid-bg">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+
+      <!-- Mission -->
+      <article class="card" style="position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#FF6B35;border-radius:0 2px 2px 0;"></div>
+        <div class="section-label" style="margin-left:12px;">MISSION</div>
+        <h2 style="font-size:26px;font-weight:800;letter-spacing:-0.02em;margin-bottom:16px;margin-left:12px;line-height:1.2;">
+          Make strategic intelligence accessible to everyone who needs it.
+        </h2>
+        <p style="font-size:14px;color:#94a3b8;line-height:1.75;margin-left:12px;">
+          The gap between raw information and strategic understanding is where decisions go wrong. MACROINTEL exists to close that gap — processing signals from 40+ sources and turning them into structured, actionable intelligence that anyone can use, not just those with dedicated research teams.
+        </p>
+      </article>
+
+      <!-- Vision -->
+      <article class="card" style="position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#00A8E8;border-radius:0 2px 2px 0;"></div>
+        <div class="section-label" style="margin-left:12px;color:#00A8E8;">
+          <span style="display:block;width:20px;height:1px;background:#00A8E8;"></span>
+          VISION
+        </div>
+        <h2 style="font-size:26px;font-weight:800;letter-spacing:-0.02em;margin-bottom:16px;margin-left:12px;line-height:1.2;">
+          An intelligence layer for the world's most complex decisions.
+        </h2>
+        <p style="font-size:14px;color:#94a3b8;line-height:1.75;margin-left:12px;">
+          We believe the next generation of geopolitical and economic analysis will be AI-native — not AI-assisted. MACROINTEL is building the infrastructure for that future: a continuously updated knowledge graph of the world's strategic landscape, queryable in natural language, navigable visually, and actionable immediately.
+        </p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- Who it's for -->
+  <section style="padding:80px 40px;max-width:1100px;margin:0 auto;">
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:64px;align-items:start;">
+      <div>
+        <div class="section-label">WHO IT'S FOR</div>
+        <h2 style="font-size:32px;font-weight:800;letter-spacing:-0.02em;line-height:1.15;margin-bottom:16px;">
+          Built for people who cannot afford to miss signals.
+        </h2>
+        <p style="font-size:14px;color:#64748b;line-height:1.7;">
+          MACROINTEL is built for analysts, researchers, risk professionals, policy experts, journalists, and decision-makers who need structured strategic context on world affairs.
+        </p>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">◈</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Geopolitical Analysts</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Monitor emerging risks, track narrative evolution, and deliver structured briefings — without spending hours on manual aggregation.</div>
+        </div>
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">◉</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Risk &amp; Security Professionals</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Connect geopolitical escalations to cyber threats, supply chain disruptions, and market signals before they become incidents.</div>
+        </div>
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">◆</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Macro Fund Managers</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Translate geopolitical dynamics into trade signals. Surface early indicators across energy, defense, and emerging markets.</div>
+        </div>
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">◎</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Investigative Journalists</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Find the story behind the story. Narrative tracking reveals how strategic storylines develop across actors, events, and time.</div>
+        </div>
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">●</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Policy Experts &amp; Researchers</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Access a structured knowledge base of geopolitical events, cross-referenced across regions, actors, and timeframes.</div>
+        </div>
+        <div style="background:#1a2332;border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:20px;" onmouseover="this.style.borderColor='rgba(255,107,53,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'">
+          <span style="font-size:16px;color:#FF6B35;display:block;margin-bottom:8px;">◐</span>
+          <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Decision-makers</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6;">Get strategic context fast. Oracle AI answers complex questions about world affairs with full source traceability.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- What MACROINTEL covers -->
+  <section style="padding:80px 40px;max-width:1100px;margin:0 auto;border-top:1px solid rgba(255,255,255,0.06);">
+    <div class="section-label">COVERAGE</div>
+    <h2 style="font-size:32px;font-weight:800;letter-spacing:-0.02em;margin-bottom:40px;">What we cover.</h2>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Great Power Competition</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">US–China rivalry, NATO dynamics, multipolar order</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Middle East &amp; Gulf</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Iran, Israel, Gulf states, Hormuz Strait, energy security</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Indo-Pacific</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Taiwan Strait, South China Sea, QUAD, AUKUS</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">European Security</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Russia-Ukraine, NATO expansion, EU defence policy</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Energy &amp; Commodities</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Oil, gas, critical minerals, supply chain chokepoints</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Defense &amp; Military</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Procurement signals, conflict escalation, force posture</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Technology &amp; Cyber</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">Semiconductor competition, APT activity, dual-use tech</div>
+      </div>
+      <div style="background:#0d1520;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:#ededed;margin-bottom:6px;">Macro &amp; Markets</div>
+        <div style="font-size:11px;color:#64748b;line-height:1.5;font-family:'Geist Mono',monospace;">EM stress, FX signals, sovereign risk, trade flows</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section style="padding:100px 40px;text-align:center;position:relative;overflow:hidden;background:#0d1520;">
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(255,107,53,0.06) 0%,transparent 70%);pointer-events:none;"></div>
+    <div style="position:relative;z-index:1;max-width:600px;margin:0 auto;">
+      <div style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,107,53,0.08);border:1px solid rgba(255,107,53,0.2);border-radius:999px;padding:6px 14px;margin-bottom:28px;">
+        <span style="width:6px;height:6px;border-radius:50%;background:#FF6B35;display:inline-block;animation:pulse-dot 2s ease-in-out infinite;"></span>
+        <span style="font-family:'Geist Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.12em;color:#FF6B35;">FREE ACCESS — NO REGISTRATION REQUIRED</span>
+      </div>
+      <h2 style="font-size:44px;font-weight:800;letter-spacing:-0.03em;line-height:1.1;margin-bottom:16px;">
+        Start exploring <span class="gradient-text">now.</span>
+      </h2>
+      <p style="font-size:15px;color:#64748b;line-height:1.7;margin-bottom:36px;">
+        Access the full platform — dashboard, intelligence map, narrative graph, Oracle AI, and daily briefings. No account needed.
+      </p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <a class="btn-primary" href="https://macrointel.net/dashboard" style="padding:14px 28px;font-size:15px;box-shadow:0 0 24px rgba(255,107,53,0.3);">
+          Open Dashboard
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a class="btn-ghost" href="https://macrointel.net/oracle" style="padding:14px 28px;font-size:15px;">Try Oracle AI</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Footer -->
+<footer style="background:#070e1a;border-top:1px solid rgba(255,255,255,0.06);padding:32px 40px;">
+  <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">
+    <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#374151;">© 2026 MACROINTEL. All rights reserved.</span>
+    <div style="display:flex;gap:24px;">
+      <a href="index.html" style="font-size:13px;color:#64748b;text-decoration:none;">Home</a>
+      <a href="https://macrointel.net/insights" style="font-size:13px;color:#64748b;text-decoration:none;">Insights</a>
+      <a href="https://macrointel.net/dashboard" style="font-size:13px;color:#64748b;text-decoration:none;">Platform</a>
+    </div>
+    <span style="font-family:'Geist Mono',monospace;font-size:10px;color:#374151;">Powered by Next.js · Gemini AI · pgvector</span>
+  </div>
+</footer>
+
+
+
+</body>
+</html>
