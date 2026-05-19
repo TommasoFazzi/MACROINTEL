@@ -55,6 +55,9 @@ export function OracleSourcesSidebar({
                 <span className="text-[10px] text-gray-600 ml-auto">{source.date_str}</span>
               )}
             </div>
+            {source.source && (
+              <p className="text-[10px] text-gray-500 mb-1 font-medium">{source.source}</p>
+            )}
             <p className="text-gray-300 line-clamp-2 leading-snug">{source.title}</p>
             <div className="flex items-center justify-between mt-1.5">
               {source.link ? (
