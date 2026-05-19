@@ -28,9 +28,13 @@ def _real_client_ip(request: Request) -> str:
     chain (browser → nginx → next.js → fastapi) XFF is always present.
     """
     forwarded = request.headers.get("x-forwarded-for", "")
+    fallback = get_remote_address(request)
     if forwarded:
-        return forwarded.split(",")[0].strip()
-    return get_remote_address(request)
+        ip = forwarded.split(",")[0].strip()
+        logger.info(f"[IP DEBUG] X-Forwarded-For: {forwarded} → {ip}")
+        return ip
+    logger.info(f"[IP DEBUG] No X-Forwarded-For, using fallback: {fallback}")
+    return fallback
 
 
 def _is_bypass(request: Request) -> bool:
