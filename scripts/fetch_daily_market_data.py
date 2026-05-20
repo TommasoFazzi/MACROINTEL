@@ -28,6 +28,7 @@ sys.path.insert(0, str(project_root))
 
 from src.utils.logger import get_logger
 from src.storage.database import DatabaseManager
+from src.integrations.market_calendar import get_market_close_date
 
 logger = get_logger(__name__)
 
@@ -218,7 +219,8 @@ def main():
             logger.error(f"Invalid date format: {args.date}. Use YYYY-MM-DD")
             return 1
     else:
-        target_date = date.today()
+        target_date = get_market_close_date()
+        logger.info(f"Auto-detected market close date: {target_date}")
 
     # Run backfill or single-day fetch
     if args.backfill > 0:

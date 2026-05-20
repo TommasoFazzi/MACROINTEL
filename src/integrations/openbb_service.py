@@ -632,31 +632,37 @@ class OpenBBMarketService:
                         failed_indicators.append(key)
                         error_count += 1
                 elif 'symbol' in config:
-                    # Market quotes - prefer yfinance direct for fresh real-time data
-                    value = self._fetch_indicator_yfinance(config['symbol'])
+                    # Market quotes - prefer yfinance direct for fresh data
+                    yf_result = self._fetch_indicator_yfinance(config['symbol'], target_date=target_date)
+                    value, actual_date = (yf_result[0], yf_result[1]) if yf_result else (None, None)
+
                     # Fallback to OpenBB if yfinance fails
                     if value is None and obb:
                         value = self._fetch_indicator_openbb(obb, key, config, target_date)
+                        if value is not None:
+                            actual_date = target_date  # OpenBB respects target_date
 
                     if value is not None:
+                        # Save with actual_date (not target_date), so weekend/holiday data uses correct date
                         self._save_macro_indicator(
-                            target_date, key, value,
+                            actual_date, key, value,
                             config['unit'], config['category'],
                             country_code=config.get('country_code', 'US'),
                         )
                         frequency = config.get('frequency', 'daily')
+                        staleness_days = (target_date - actual_date).days if actual_date else 0
                         self._upsert_indicator_metadata(
                             key=key,
                             frequency=frequency,
-                            last_updated=target_date,
+                            last_updated=actual_date,
                             last_source='yfinance',
-                            is_stale=False,
-                            staleness_days=0,
+                            is_stale=staleness_days > 1,
+                            staleness_days=staleness_days,
                             fetch_attempted=True,
                             fetch_succeeded=True,
                         )
                         success_count += 1
-                        logger.debug(f"  {key}: {value}")
+                        logger.debug(f"  {key}: {value} (actual_date={actual_date})")
                     else:
                         self._upsert_indicator_metadata(
                             key=key,
@@ -758,37 +764,91 @@ class OpenBBMarketService:
             logger.debug(f"OpenBB fetch error for {key}: {e}")
             return None
 
-    def _fetch_indicator_yfinance(self, symbol: str) -> Optional[float]:
-        """Fetch single indicator using yfinance directly (real-time when available)."""
+    def _fetch_indicator_yfinance(self, symbol: str, target_date: Optional[date] = None) -> Optional[tuple]:
+        """
+        Fetch single indicator using yfinance, respecting target_date for past data.
+
+        Args:
+            symbol: Yahoo Finance ticker symbol
+            target_date: Market close date to fetch (optional). If None or future, returns latest available.
+                        If past date, returns close of that exact day or last trading day before it.
+                        NEVER returns intraday/real-time prices when target_date is specified.
+
+        Returns:
+            Tuple of (close_price: float, actual_date: date) or None if fetch failed.
+            actual_date is the date of the data point returned (may differ from target_date if
+            target_date was a weekend/holiday, or if latest data is stale).
+        """
         try:
             import yfinance as yf
+            import pandas as pd
+            from datetime import timedelta
 
             ticker = yf.Ticker(symbol)
 
-            # Try real-time price first via fast_info (uses attribute access, not dict)
+            # If target_date is None or looks like future, return latest real-time
+            if target_date is None:
+                try:
+                    fi = ticker.fast_info
+                    for attr in ['last_price', 'lastPrice', 'regularMarketPrice', 'previous_close']:
+                        if hasattr(fi, attr):
+                            value = getattr(fi, attr)
+                            if value is not None and value > 0:
+                                logger.debug(f"Real-time yfinance value for {symbol}: {value}")
+                                # For real-time, use today as approximate actual_date
+                                return float(value), date.today()
+                except Exception:
+                    pass
+
+            # Fetch historical data: 7 days before target_date to ensure we capture it
+            start_date = (target_date - timedelta(days=7)) if target_date else date.today() - timedelta(days=7)
+            # end is exclusive in yfinance, so we add 1 day to include target_date
+            end_date = (target_date + timedelta(days=1)) if target_date else date.today() + timedelta(days=1)
+
+            hist = ticker.history(start=start_date.isoformat(), end=end_date.isoformat())
+            if hist.empty:
+                logger.warning(f"yfinance {symbol}: no data in range {start_date}..{end_date}")
+                return None
+
+            # Normalize index to timezone-naive dates for comparison
             try:
-                fi = ticker.fast_info
-                # Try multiple attributes in order of preference
-                for attr in ['last_price', 'lastPrice', 'regularMarketPrice', 'previous_close']:
-                    if hasattr(fi, attr):
-                        value = getattr(fi, attr)
-                        if value is not None and value > 0:
-                            logger.debug(f"Real-time yfinance value for {symbol}: {value}")
-                            return float(value)
+                hist.index = pd.to_datetime(hist.index).tz_localize(None).normalize()
             except Exception:
-                pass
+                # Already timezone-naive or can't convert
+                hist.index = pd.to_datetime(hist.index).normalize()
 
-            # Fallback to historical close
-            hist = ticker.history(period='5d')
-            if not hist.empty:
+            if target_date is None:
+                # No specific target: use latest available
+                actual_ts = hist.index[-1]
                 value = float(hist['Close'].iloc[-1])
-                logger.debug(f"Historical yfinance value for {symbol}: {value}")
-                return value
+                actual_date = actual_ts.date()
+                logger.debug(f"yfinance {symbol}: latest available = {actual_date} ({value})")
+                return value, actual_date
 
-            return None
+            # target_date is specified: find exact match or last trading day <= target_date
+            target_ts = pd.Timestamp(target_date)
+            available_before = hist.index[hist.index <= target_ts]
+
+            if len(available_before) == 0:
+                logger.warning(f"yfinance {symbol}: no data on or before {target_date}")
+                return None
+
+            actual_ts = available_before.max()
+            value = float(hist.loc[actual_ts, 'Close'])
+            actual_date = actual_ts.date()
+
+            if actual_date != target_date:
+                logger.info(
+                    f"yfinance {symbol}: requested {target_date}, no trading day → "
+                    f"using last trading day {actual_date}"
+                )
+            else:
+                logger.debug(f"yfinance {symbol}: {actual_date} close = {value}")
+
+            return value, actual_date
 
         except Exception as e:
-            logger.debug(f"yfinance fetch failed for {symbol}: {e}")
+            logger.warning(f"yfinance fetch failed for {symbol}: {e}")
             return None
 
     # =========================================================================
@@ -2111,9 +2171,11 @@ class OpenBBMarketService:
 
             try:
                 if fetch_cat == 'fx':
-                    value = self._fetch_indicator_yfinance(config['symbol'])
-                    if value is not None:
-                        result = (value, target_date, config.get('frequency', 'daily'))
+                    yf_result = self._fetch_indicator_yfinance(config['symbol'], target_date=target_date)
+                    if yf_result is not None:
+                        value, actual_date = yf_result
+                        # Use actual_date (where data comes from), not target_date
+                        result = (value, actual_date, config.get('frequency', 'daily'))
                         source = 'yfinance'
 
                 elif fetch_cat == 'trading_economics':
