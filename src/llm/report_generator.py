@@ -1398,7 +1398,10 @@ Respond with JSON analysis following the full schema above:"""
             if not _indicators_cache:
                 raise ValueError("No indicator data for Phase 3")
 
-            # Build {key: delta_pct} dict from today's indicator data
+            # Build {key: delta_pct} dict from today's indicator data.
+            # Priority: previous_value column (computed at fetch time vs real prior close)
+            # over in-memory cache comparison (unreliable when both caches share the same
+            # fallback date, e.g. morning pipeline before today's market close).
             for ind in _indicators_cache:
                 key = ind.get('indicator_key', '')
                 if not key:
@@ -1407,12 +1410,17 @@ Respond with JSON analysis following the full schema above:"""
                     value = float(ind.get('value', 0))
                     p3.indicator_values[key] = value
                     prev_val = None
-                    for p in _prev_indicators_cache:
-                        if p.get('indicator_key') == key and p.get('value') is not None:
-                            prev_val = float(p['value'])
-                            break
-                    if prev_val is None and ind.get('previous_value') is not None:
+                    # 1. DB column: computed correctly at storage time
+                    if ind.get('previous_value') is not None:
                         prev_val = float(ind['previous_value'])
+                    # 2. In-memory cache: only if DB column missing AND caches differ
+                    if prev_val is None:
+                        for p in _prev_indicators_cache:
+                            if p.get('indicator_key') == key and p.get('value') is not None:
+                                candidate = float(p['value'])
+                                if candidate != value:  # skip same-date fallback
+                                    prev_val = candidate
+                                break
                     if prev_val and prev_val != 0:
                         p3.indicators_delta[key] = ((value - prev_val) / abs(prev_val)) * 100
                 except (ValueError, TypeError):
@@ -2526,7 +2534,7 @@ Respond with JSON only:"""
 
                     # ── Phase 5: v2 regime analysis → feeds LLM call #2 ────────
                     phase3_data = macro_analysis_result.get('_phase3', {}) if macro_analysis_result else {}
-                    if phase3_data.get('indicators_delta') and macro_context_text:
+                    if phase3_data.get('indicator_values') and macro_context_text:
                         try:
                             macro_v2_result = self._generate_macro_analysis_v2(
                                 macro_context_raw=macro_context_text,

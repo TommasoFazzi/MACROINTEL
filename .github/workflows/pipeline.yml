@@ -84,6 +84,10 @@ jobs:
           ENVIRONMENT: production
           PIPELINE_NOTIFY_ON_SUCCESS: "false"
           PIPELINE_NOTIFY_ON_FAILURE: "false"
+          BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
+          BREVO_SMTP_PASS: ${{ secrets.BREVO_SMTP_PASS }}
+          BREVO_FROM_EMAIL: ${{ secrets.BREVO_FROM_EMAIL }}
+          BREVO_FROM_NAME: ${{ secrets.BREVO_FROM_NAME }}
         run: |
           mkdir -p logs reports data
           python scripts/daily_pipeline.py
