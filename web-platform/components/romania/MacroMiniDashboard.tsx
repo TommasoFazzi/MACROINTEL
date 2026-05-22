@@ -22,7 +22,7 @@ const CATEGORY_ORDER = ['FX', 'RATES', 'INFLATION', 'RISK', 'FISCAL', 'EQUITY'];
 const KEY_ORDER = [
   'EUR_RON', 'BNR_RATE', 'ROBOR_3M',
   'RO_CPI_YOY', 'RO_10Y_YIELD', 'RO_10Y_DE_SPREAD',
-  'RO_CDS_5Y', 'RO_DEFICIT_GDP', 'BET_INDEX',
+  'RO_DEFICIT_GDP', 'BET_INDEX',
 ];
 
 function sortIndicators(indicators: Indicator[]): Indicator[] {
@@ -41,7 +41,7 @@ function sortIndicators(indicators: Indicator[]): Indicator[] {
 function SkeletonGrid() {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-      {Array.from({ length: 9 }).map((_, i) => (
+      {Array.from({ length: 8 }).map((_, i) => (
         <div key={i} className="bg-[#1a2332]/50 border border-white/5 rounded-xl p-4 animate-pulse h-[120px]" />
       ))}
     </div>

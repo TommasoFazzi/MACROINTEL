@@ -82,18 +82,31 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
         if force and not dry_run:
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute('DELETE FROM macro_indicators WHERE date = %s', (target_date,))
+                    cur.execute(
+                        "DELETE FROM macro_indicators WHERE date = %s AND country_code = 'US'",
+                        (target_date,)
+                    )
                     deleted = cur.rowcount
                     if deleted > 0:
-                        logger.info(f"  Deleted {deleted} existing indicators")
+                        logger.info(f"  Deleted {deleted} existing US indicators (RO data preserved)")
 
         # Fetch macro indicators (includes SHIPPING_BDI via BDRY ETF)
-        logger.info("\nFetching macro indicators...")
+        logger.info("\nFetching macro indicators (US/global)...")
         if not dry_run:
             macro_success = service.ensure_daily_macro_data(target_date)
         else:
             logger.info("  Would fetch: US_10Y_YIELD, VIX, BRENT_OIL, EUR_USD, GOLD, SP500, SHIPPING_BDI...")
             macro_success = True
+
+        # Fetch Romania indicators (EUR_RON, BNR_RATE, ROBOR_3M, RO_10Y_YIELD, etc.)
+        logger.info("\nFetching macro indicators (Romania)...")
+        if not dry_run:
+            ro_success = service.fetch_ro_indicators(target_date)
+            if not ro_success:
+                logger.warning("Romania macro fetch: partial or failed — check logs above")
+        else:
+            logger.info("  Would fetch: EUR_RON, BNR_RATE, ROBOR_3M, RO_10Y_YIELD, RO_10Y_DE_SPREAD, RO_CPI_YOY, BET_INDEX...")
+            ro_success = True
 
         # Summary
         logger.info("\n" + "=" * 60)
@@ -104,13 +117,13 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
                 # Display what was saved
                 context_text = service.get_macro_context_text(target_date)
                 if context_text:
-                    logger.info("\nMACRO CONTEXT PREVIEW:")
+                    logger.info("\nMACRO CONTEXT PREVIEW (US/global):")
                     logger.info("-" * 40)
                     for line in context_text.split('\n'):
                         logger.info(f"  {line}")
                     logger.info("-" * 40)
         else:
-            logger.warning("PARTIAL SUCCESS: Some indicators may be missing")
+            logger.warning("PARTIAL SUCCESS: Some US/global indicators may be missing")
 
         logger.info("=" * 60)
         return macro_success

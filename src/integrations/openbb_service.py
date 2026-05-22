@@ -498,14 +498,6 @@ class OpenBBMarketService:
             'country_code': 'RO',
             'frequency': 'daily',
         },
-        'RO_CDS_5Y': {
-            'unit': 'bps',
-            'category': 'RISK',
-            'description': 'Romania CDS 5Y — rischio sovrano (WGB, richiede JS rendering)',
-            'fetch_category': 'wgb_cds',
-            'country_code': 'RO',
-            'frequency': 'daily',
-        },
         'RO_DEFICIT_GDP': {
             'unit': '% of GDP',
             'category': 'FISCAL',
@@ -2124,7 +2116,7 @@ class OpenBBMarketService:
                         return count >= 1
                     else:
                         cur.execute(
-                            "SELECT COUNT(*) FROM macro_indicators WHERE date = %s",
+                            "SELECT COUNT(*) FROM macro_indicators WHERE date = %s AND country_code = 'US'",
                             (target_date,)
                         )
                         count = cur.fetchone()[0]
@@ -2136,7 +2128,7 @@ class OpenBBMarketService:
     _RO_INDICATOR_KEYS = [
         "EUR_RON", "BNR_RATE", "ROBOR_3M",
         "RO_CPI_YOY", "RO_10Y_YIELD", "RO_10Y_DE_SPREAD",
-        "RO_CDS_5Y", "RO_DEFICIT_GDP", "BET_INDEX",
+        "RO_DEFICIT_GDP", "BET_INDEX",
     ]
 
     def fetch_ro_indicators(self, target_date: Optional[date] = None) -> bool:
@@ -2264,10 +2256,6 @@ class OpenBBMarketService:
                 elif fetch_cat == 'stooq':
                     result = self._fetch_stooq(config['stooq_symbol'], target_date)
                     source = 'stooq'
-
-                elif fetch_cat == 'wgb_cds':
-                    result = self._fetch_wgb_cds(target_date)
-                    source = 'wgb'
 
                 elif fetch_cat == 'eurostat':
                     result = self._fetch_eurostat_fiscal(target_date)

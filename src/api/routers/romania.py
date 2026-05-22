@@ -1,7 +1,7 @@
 """Romania Vertical API router.
 
 Endpoints:
-    GET /api/v1/romania/macro              — 9 RO macro indicators (latest + 90-day series)
+    GET /api/v1/romania/macro              — 8 RO macro indicators (latest + 90-day series)
     GET /api/v1/romania/briefings          — List saved Romania reports (?type=daily|weekly&limit=N)
     GET /api/v1/romania/briefings/{id}     — Single Romania report content + metadata
 """
@@ -41,7 +41,7 @@ def get_db() -> DatabaseManager:
 _RO_INDICATOR_KEYS = [
     "EUR_RON", "BNR_RATE", "ROBOR_3M",
     "RO_CPI_YOY", "RO_10Y_YIELD", "RO_10Y_DE_SPREAD",
-    "RO_CDS_5Y", "RO_DEFICIT_GDP", "BET_INDEX",
+    "RO_DEFICIT_GDP", "BET_INDEX",
 ]
 _RO_INDICATOR_LABELS = {
     "EUR_RON":           "EUR/RON",
@@ -50,7 +50,6 @@ _RO_INDICATOR_LABELS = {
     "RO_CPI_YOY":        "Inflazione YoY",
     "RO_10Y_YIELD":      "RO 10Y",
     "RO_10Y_DE_SPREAD":  "Spread vs DE",
-    "RO_CDS_5Y":         "CDS 5Y",
     "RO_DEFICIT_GDP":    "Deficit/PIL",
     "BET_INDEX":         "BET Index",
 }
@@ -61,7 +60,6 @@ _RO_INDICATOR_CATEGORIES = {
     "RO_CPI_YOY":        "INFLATION",
     "RO_10Y_YIELD":      "RATES",
     "RO_10Y_DE_SPREAD":  "RISK",
-    "RO_CDS_5Y":         "RISK",
     "RO_DEFICIT_GDP":    "FISCAL",
     "BET_INDEX":         "EQUITY",
 }
@@ -74,7 +72,7 @@ _RO_INDICATOR_CATEGORIES = {
 @limiter.limit("30/minute")
 async def get_romania_macro(request: Request):
     """
-    Return latest values and 90-day series for 9 Romanian macro indicators.
+    Return latest values and 90-day series for 8 Romanian macro indicators.
     """
     cache_key = "romania_macro"
     cached = _get_cached(cache_key)
