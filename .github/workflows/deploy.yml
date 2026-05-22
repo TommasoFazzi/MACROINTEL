@@ -61,4 +61,5 @@ jobs:
             sudo docker compose -p app --env-file .env.production exec -T nginx nginx -s reload
             # Rimuove container fermati (orfani da docker compose run manuali)
             sudo docker container prune -f
+            chmod +x deploy/trigger_pipeline.sh
             echo "Deploy completed at $(date)"
