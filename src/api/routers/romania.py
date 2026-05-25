@@ -64,6 +64,13 @@ _RO_INDICATOR_CATEGORIES = {
     "BET_INDEX":         "EQUITY",
 }
 
+# Guards against legacy rows from source format changes (e.g. RO_CPI_YOY stored as
+# raw HICP index ~106 before the Trading Economics switch to YoY %).
+# Values outside these bounds are skipped when building the series — they stay in DB.
+_VALID_RANGES: dict[str, tuple[float, float]] = {
+    "RO_CPI_YOY": (-30.0, 50.0),  # YoY %: Romania CPI never outside this range
+}
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/romania/macro
@@ -115,6 +122,10 @@ async def get_romania_macro(request: Request):
     # Organise into indicator buckets
     indicators: dict = {}
     for key, value, unit, date in rows:
+        if value is not None and key in _VALID_RANGES:
+            lo, hi = _VALID_RANGES[key]
+            if not (lo <= float(value) <= hi):
+                continue
         if key not in indicators:
             meta = meta_map.get(key, {})
             indicators[key] = {
