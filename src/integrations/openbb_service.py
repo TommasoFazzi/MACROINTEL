@@ -2334,86 +2334,138 @@ class OpenBBMarketService:
                             updated_at = NOW()
                     """, (target_date, key, value, unit, category, country_code, key, target_date))
 
-                    # Step 2: compute historical context columns in-place (same transaction)
-                    # All subqueries are bounded LIMIT 30 and use index on (indicator_key, date DESC)
-                    cur.execute("""
-                        UPDATE macro_indicators mi
-                        SET
-                            ma_7d = (
-                                SELECT AVG(h.value) FROM (
-                                    SELECT value FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date <= mi.date
-                                    ORDER BY date DESC LIMIT 7
-                                ) h
-                            ),
-                            ma_30d = (
-                                SELECT AVG(h.value) FROM (
-                                    SELECT value FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date <= mi.date
-                                    ORDER BY date DESC LIMIT 30
-                                ) h
-                            ),
-                            std_30d = (
-                                SELECT STDDEV_POP(h.value) FROM (
-                                    SELECT value FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date <= mi.date
-                                    ORDER BY date DESC LIMIT 30
-                                ) h
-                            ),
-                            pct_change_7d = (
-                                SELECT CASE WHEN v7 IS NOT NULL AND v7 != 0
-                                       THEN ROUND(((mi.value - v7) / ABS(v7) * 100)::NUMERIC, 4)
-                                       ELSE NULL END
-                                FROM (
-                                    SELECT value AS v7 FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date < mi.date
-                                    ORDER BY date DESC LIMIT 1 OFFSET 6
-                                ) s
-                            ),
-                            pct_change_30d = (
-                                SELECT CASE WHEN v30 IS NOT NULL AND v30 != 0
-                                       THEN ROUND(((mi.value - v30) / ABS(v30) * 100)::NUMERIC, 4)
-                                       ELSE NULL END
-                                FROM (
-                                    SELECT value AS v30 FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date < mi.date
-                                    ORDER BY date DESC LIMIT 1 OFFSET 29
-                                ) s
-                            ),
-                            percentile_rank_30d = (
-                                SELECT ROUND(
-                                    (COUNT(*) FILTER (WHERE h.value <= mi.value)::NUMERIC
-                                     / NULLIF(COUNT(*), 0) * 100)::NUMERIC, 1)
-                                FROM (
-                                    SELECT value FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date <= mi.date
-                                    ORDER BY date DESC LIMIT 30
-                                ) h
-                            ),
-                            pct_change_12m = (
-                                SELECT CASE WHEN v12 IS NOT NULL AND v12 != 0
-                                       THEN ROUND(((mi.value - v12) / ABS(v12) * 100)::NUMERIC, 4)
-                                       ELSE NULL END
-                                FROM (
-                                    SELECT value AS v12 FROM macro_indicators
-                                    WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
-                                      AND date < mi.date
-                                    ORDER BY date DESC LIMIT 1 OFFSET 11
-                                ) s
-                            )
-                        WHERE date = %s AND indicator_key = %s
-                    """, (target_date, key))
+                    # Step 2: recompute previous_value + derived context columns for this row.
+                    # Reuses the shared recompute logic (single source of truth) so a live
+                    # append and a historical/backfill recompute produce identical results.
+                    self._recompute_derived_columns(
+                        cur, indicator_key=key, country_code=country_code, target_date=target_date
+                    )
 
                     return True
         except Exception as e:
             logger.error(f"Error saving macro indicator {key}: {e}")
             return False
+
+    def _recompute_derived_columns(
+        self,
+        cur,
+        indicator_key: Optional[str] = None,
+        country_code: Optional[str] = None,
+        target_date: Optional[date] = None,
+        since: Optional[date] = None,
+    ) -> int:
+        """Recompute previous_value + the 7 derived context columns for rows in scope.
+
+        Single source of truth for the derived-column math. Used both by the live
+        per-row append (scoped to one freshly-inserted row) and by the historical /
+        post-backfill recompute (whole table). Reusing the exact correlated-subquery
+        semantics guarantees identical results in both paths.
+
+        Why a full recompute is needed after backfills: the per-row computation only
+        fixes the inserted row, but inserting a row mid-history shifts the row-based
+        windows (LIMIT 7/30, OFFSET 6/29) of every *subsequent* row and invalidates
+        their previous_value. Only a pass over the affected rows restores consistency.
+
+        Scope filters (all optional, ANDed). Operates on the caller's cursor — the
+        caller owns the transaction. Only derived columns are written; value / date /
+        indicator_key are never modified. Returns the number of rows updated.
+        """
+        where_clauses = []
+        params: List[Any] = []
+        if indicator_key is not None:
+            where_clauses.append("mi.indicator_key = %s")
+            params.append(indicator_key)
+        if country_code is not None:
+            where_clauses.append("mi.country_code = %s")
+            params.append(country_code)
+        if target_date is not None:
+            where_clauses.append("mi.date = %s")
+            params.append(target_date)
+        if since is not None:
+            where_clauses.append("mi.date >= %s")
+            params.append(since)
+        where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        cur.execute(f"""
+            UPDATE macro_indicators mi
+            SET
+                previous_value = (
+                    SELECT p.value FROM macro_indicators p
+                    WHERE p.indicator_key = mi.indicator_key AND p.country_code = mi.country_code
+                      AND p.date < mi.date
+                    ORDER BY p.date DESC LIMIT 1
+                ),
+                ma_7d = (
+                    SELECT AVG(h.value) FROM (
+                        SELECT value FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date <= mi.date
+                        ORDER BY date DESC LIMIT 7
+                    ) h
+                ),
+                ma_30d = (
+                    SELECT AVG(h.value) FROM (
+                        SELECT value FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date <= mi.date
+                        ORDER BY date DESC LIMIT 30
+                    ) h
+                ),
+                std_30d = (
+                    SELECT STDDEV_POP(h.value) FROM (
+                        SELECT value FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date <= mi.date
+                        ORDER BY date DESC LIMIT 30
+                    ) h
+                ),
+                pct_change_7d = (
+                    SELECT CASE WHEN v7 IS NOT NULL AND v7 != 0
+                           THEN ROUND(((mi.value - v7) / ABS(v7) * 100)::NUMERIC, 4)
+                           ELSE NULL END
+                    FROM (
+                        SELECT value AS v7 FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date < mi.date
+                        ORDER BY date DESC LIMIT 1 OFFSET 6
+                    ) s
+                ),
+                pct_change_30d = (
+                    SELECT CASE WHEN v30 IS NOT NULL AND v30 != 0
+                           THEN ROUND(((mi.value - v30) / ABS(v30) * 100)::NUMERIC, 4)
+                           ELSE NULL END
+                    FROM (
+                        SELECT value AS v30 FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date < mi.date
+                        ORDER BY date DESC LIMIT 1 OFFSET 29
+                    ) s
+                ),
+                percentile_rank_30d = (
+                    SELECT ROUND(
+                        (COUNT(*) FILTER (WHERE h.value <= mi.value)::NUMERIC
+                         / NULLIF(COUNT(*), 0) * 100)::NUMERIC, 1)
+                    FROM (
+                        SELECT value FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date <= mi.date
+                        ORDER BY date DESC LIMIT 30
+                    ) h
+                ),
+                pct_change_12m = (
+                    SELECT CASE WHEN v12 IS NOT NULL AND v12 != 0
+                           THEN ROUND(((mi.value - v12) / ABS(v12) * 100)::NUMERIC, 4)
+                           ELSE NULL END
+                    FROM (
+                        SELECT value AS v12 FROM macro_indicators
+                        WHERE indicator_key = mi.indicator_key AND country_code = mi.country_code
+                          AND date < mi.date
+                        ORDER BY date DESC LIMIT 1 OFFSET 11
+                    ) s
+                )
+            WHERE TRUE{where_sql}
+        """, params)
+        return cur.rowcount
 
     def _get_macro_indicators(self, target_date: date, country_code: str = 'US') -> List[Dict[str, Any]]:
         """Get macro indicators for date, filtered by country_code (default 'US' = global)."""
