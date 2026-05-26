@@ -29,10 +29,10 @@ Presentation components consumed by `app/stories/page.tsx`. Uses the same dynami
 ### `GraphDataLoader.tsx` — Graph builder (inside `<SigmaContainer>`)
 - Calls `useSigma()` → `sigma.getGraph()` to access the stable graphology Graph
 - On each `graphData` change (SWR 60s poll): `graph.clear()` + full in-place rebuild
-- **Restores saved node positions** from `localStorage` (`story-graph-layout-v3` — bump the version to force a re-layout after changing FA2 params) before adding nodes — eliminates "explosion" animation on reload. Hash = node-count:edge-count:FNV-1a(sorted ids)
+- **Restores saved node positions** from `localStorage` (`story-graph-layout-v4` — bump the version to force a re-layout after changing FA2 params) before adding nodes — eliminates "explosion" animation on reload. Hash = node-count:edge-count:FNV-1a(sorted ids)
 - Builds nodes with: `label`, `size` (4 + momentum × 12), `color` (from `communityColorMap`), `x/y` (restored or random ±500)
 - Builds edges with: `weight`, `size` (0.4 + weight × 1.4), `color` (`rgba(150,190,220,…)`, alpha 0.04 + weight × 0.10 — kept faint so the graph doesn't read as a bright tangle)
-- **FA2 worker** — tuned to **spread** the hairball, not collapse it: `barnesHutOptimize: true`, `barnesHutTheta: 0.6`, `scalingRatio: 16`, `strongGravityMode: false`, `gravity: 0.05`, `outboundAttractionDistribution: true` (pushes hubs apart), `edgeWeightInfluence: 0.5`, `slowDown: 5`
+- **FA2 worker** — tuned to **spread** the connected core without flinging isolated nodes into an empty halo: `barnesHutOptimize: true`, `barnesHutTheta: 0.6`, `scalingRatio: 14`, `strongGravityMode: false`, `gravity: 0.18` (compacts isolated "lone star" nodes, which have no edges holding them), `outboundAttractionDistribution: true` (pushes hubs apart), `edgeWeightInfluence: 0.5`, `slowDown: 5`
   - **Fallback**: `assign(graph, { iterations: 300 })` sync (same spread settings) if worker path fails in Next.js build
 - Stops worker after **12s**, saves positions to `localStorage`, calls `onOptimizing(false)`
 - **Edge density**: `useGraphNetwork` requests `?min_edge_weight=0.18` (API default 0.10 returned ~18k edges / 11.9 per node → hairball). 0.18 keeps meaningful TF-IDF links; lone high-momentum nodes survive via the server's "lone stars" rule

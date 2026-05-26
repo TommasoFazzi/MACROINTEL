@@ -4,8 +4,8 @@ import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { GraphNetwork } from '@/types/stories';
 
-const LAYOUT_STORAGE_KEY = 'story-graph-layout-v3';
-const LAYOUT_HASH_KEY = 'story-graph-hash-v3';
+const LAYOUT_STORAGE_KEY = 'story-graph-layout-v4';
+const LAYOUT_HASH_KEY = 'story-graph-hash-v4';
 const FA2_DURATION_MS = 12000;
 const LAYOUT_READY_DELAY_MS = 500;
 
@@ -112,9 +112,9 @@ export default function GraphDataLoader({
         ...inferSettings(graph),
         barnesHutOptimize: true,
         barnesHutTheta: 0.6,
-        scalingRatio: 16,
+        scalingRatio: 14,
         strongGravityMode: false,
-        gravity: 0.05,
+        gravity: 0.18, // pull isolated "lone star" nodes inward — kills the empty halo
         outboundAttractionDistribution: true,
         edgeWeightInfluence: 0.5,
         slowDown: 5,
@@ -137,9 +137,9 @@ export default function GraphDataLoader({
             settings: {
               ...inferSettings(graph),
               barnesHutOptimize: true,
-              scalingRatio: 16,
+              scalingRatio: 14,
               strongGravityMode: false,
-              gravity: 0.05,
+              gravity: 0.18,
               outboundAttractionDistribution: true,
               edgeWeightInfluence: 0.5,
             },
