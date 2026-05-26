@@ -111,7 +111,7 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
   const [optimizing, setOptimizing] = useState(false);
 
   // Filters
-  const [minMomentum, setMinMomentum] = useState(0);
+  const [minMomentum, setMinMomentum] = useState(0.2);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [legendExpanded, setLegendExpanded] = useState(false);
   const [selectedEntities, setSelectedEntities] = useState<string[]>([]);

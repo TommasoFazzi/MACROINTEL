@@ -4,8 +4,9 @@ import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { GraphNetwork } from '@/types/stories';
 
-const LAYOUT_STORAGE_KEY = 'story-graph-layout-v1';
-const FA2_DURATION_MS = 8000;
+const LAYOUT_STORAGE_KEY = 'story-graph-layout-v2';
+const LAYOUT_HASH_KEY = 'story-graph-hash-v2';
+const FA2_DURATION_MS = 12000;
 const LAYOUT_READY_DELAY_MS = 500;
 
 interface GraphDataLoaderProps {
@@ -32,11 +33,17 @@ export default function GraphDataLoader({
     const graph = sigma.getGraph();
     graph.clear();
 
+    // Compute a lightweight hash of the current graph data to detect changes
+    const dataHash = `${graphData.nodes.length}:${graphData.links.length}`;
+
     // Attempt to restore saved layout positions from localStorage
     let savedPositions: Record<string, { x: number; y: number }> = {};
+    let layoutMatchesData = false;
     try {
       const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+      const savedHash = localStorage.getItem(LAYOUT_HASH_KEY);
       if (raw) savedPositions = JSON.parse(raw);
+      layoutMatchesData = savedHash === dataHash && Object.keys(savedPositions).length > 0;
     } catch {
       // ignore
     }
@@ -91,31 +98,36 @@ export default function GraphDataLoader({
         ...inferSettings(graph),
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        scalingRatio: 2,
+        scalingRatio: 8,
         strongGravityMode: true,
-        gravity: 0.05,
-        slowDown: 10,
+        gravity: 0.02,
+        slowDown: 5,
       };
 
       fa2Ref.current = new FA2Worker(graph, { settings });
-      fa2Ref.current!.start();
-      workerStarted = true;
-      onOptimizing(true);
+      // Skip FA2 if layout already matches current data — avoids re-randomizing on every reload
+      if (!layoutMatchesData) {
+        fa2Ref.current!.start();
+        workerStarted = true;
+        onOptimizing(true);
+      }
     } catch {
       // FA2 worker failed (path resolution in some Next.js builds) — use sync fallback
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { assign, inferSettings } = require('graphology-layout-forceatlas2');
-        assign(graph, {
-          settings: {
-            ...inferSettings(graph),
-            barnesHutOptimize: true,
-            scalingRatio: 2,
-            strongGravityMode: true,
-            gravity: 0.05,
-          },
-          iterations: 150,
-        });
+        if (!layoutMatchesData) {
+          assign(graph, {
+            settings: {
+              ...inferSettings(graph),
+              barnesHutOptimize: true,
+              scalingRatio: 8,
+              strongGravityMode: true,
+              gravity: 0.02,
+            },
+            iterations: 200,
+          });
+        }
       } catch { /* layout stays random */ }
     }
 
@@ -139,6 +151,7 @@ export default function GraphDataLoader({
             positions[node] = { x: attrs.x as number, y: attrs.y as number };
           });
           localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(positions));
+          localStorage.setItem(LAYOUT_HASH_KEY, dataHash);
         } catch { /* quota exceeded or SSR */ }
       }, FA2_DURATION_MS);
     }
