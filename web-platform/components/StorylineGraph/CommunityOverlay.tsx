@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, MutableRefObject } from 'react';
 import type Sigma from 'sigma';
 import type { StorylineNode } from '@/types/stories';
 
@@ -47,48 +47,60 @@ export default function CommunityOverlay({
   communityLabels,
 }: CommunityOverlayProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const lastUpdateRef = useRef(0);
-  const THROTTLE_MS = 33; // ~30fps
+  // rAF-based throttle with trailing edge so the final frame after a pan/zoom
+  // burst is never dropped (otherwise hulls stay misaligned until the next render).
+  const rafRef = useRef<number | null>(null);
+
+  // Static community → node-id grouping. Node *positions* are read fresh every
+  // frame (they keep moving while FA2 runs), so we only memo the id buckets here.
+  const labelByCid = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const l of communityLabels) m.set(l.cid, l.label);
+    return m;
+  }, [communityLabels]);
 
   useEffect(() => {
     const sigma = sigmaRef.current;
     if (!sigma || !svgRef.current) return;
 
-    // Group node graph-space positions by community
-    const communityPoints = new Map<number, [number, number][]>();
+    // Bucket node ids by community once — cheap and stable across frames.
+    const communityNodeIds = new Map<number, string[]>();
     for (const node of nodes) {
       const cid = node.community_id;
       if (cid == null) continue;
-      try {
-        const attrs = sigma.getGraph().getNodeAttributes(String(node.id));
-        if (attrs.x == null || attrs.y == null) continue;
-        if (!communityPoints.has(cid)) communityPoints.set(cid, []);
-        communityPoints.get(cid)!.push([attrs.x as number, attrs.y as number]);
-      } catch {
-        // node not in graph yet
-      }
+      if (!communityNodeIds.has(cid)) communityNodeIds.set(cid, []);
+      communityNodeIds.get(cid)!.push(String(node.id));
     }
 
-    const updatePositions = () => {
-      if (!sigmaRef.current || !svgRef.current) return;
-      const now = Date.now();
-      if (now - lastUpdateRef.current < THROTTLE_MS) return;
-      lastUpdateRef.current = now;
+    const render = () => {
+      rafRef.current = null;
+      const s = sigmaRef.current;
+      if (!s || !svgRef.current) return;
+      const graph = s.getGraph();
 
       const svg = svgRef.current;
-      // Clear existing children
       while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-      for (const [cid, graphPts] of communityPoints) {
-        if (graphPts.length < 3) continue;
+      for (const [cid, ids] of communityNodeIds) {
+        if (ids.length < 3) continue;
         const color = communityColorMap.get(cid) ?? '#2A3A4A';
-        const label = communityLabels.find((l) => l.cid === cid)?.label ?? '';
+        const label = labelByCid.get(cid) ?? '';
 
-        // Convert graph coords → screen coords
-        const screenPts: [number, number][] = graphPts.map((pt) => {
-          const vp = sigmaRef.current!.graphToViewport({ x: pt[0], y: pt[1] });
-          return [vp.x, vp.y];
-        });
+        // Read CURRENT graph positions each frame, then project to screen space.
+        const screenPts: [number, number][] = [];
+        for (const id of ids) {
+          let x: number, y: number;
+          try {
+            x = graph.getNodeAttribute(id, 'x') as number;
+            y = graph.getNodeAttribute(id, 'y') as number;
+          } catch {
+            continue; // node not in graph yet
+          }
+          if (x == null || y == null) continue;
+          const vp = s.graphToViewport({ x, y });
+          screenPts.push([vp.x, vp.y]);
+        }
+        if (screenPts.length < 3) continue;
 
         const hull = convexHull(screenPts);
         if (hull.length < 3) continue;
@@ -135,15 +147,23 @@ export default function CommunityOverlay({
       }
     };
 
-    sigma.on('afterRender', updatePositions);
-    // Run once immediately so hulls appear before the first interaction
-    updatePositions();
+    // Throttle to one render per animation frame, but always honour the trailing
+    // frame (afterRender fires faster than we want to redraw the SVG).
+    const scheduleRender = () => {
+      if (rafRef.current != null) return;
+      rafRef.current = requestAnimationFrame(render);
+    };
+
+    sigma.on('afterRender', scheduleRender);
+    render(); // draw once immediately so hulls appear before the first interaction
 
     return () => {
-      sigma.off('afterRender', updatePositions);
+      sigma.off('afterRender', scheduleRender);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, communityColorMap, communityLabels]);
+  }, [nodes, communityColorMap, communityLabels, labelByCid]);
 
   return (
     <svg

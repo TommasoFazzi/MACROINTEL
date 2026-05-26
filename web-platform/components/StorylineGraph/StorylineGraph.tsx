@@ -6,20 +6,21 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SigmaContainer, useSigma } from '@react-sigma/core';
 import { UndirectedGraph } from 'graphology';
 import type Sigma from 'sigma';
-import { useGraphNetwork, useEgoNetwork, useTickerList, useTickerThemes } from '@/hooks/useStories';
+import { useGraphNetwork, useEgoNetwork } from '@/hooks/useStories';
 import StorylineDossier from './StorylineDossier';
 import GraphDataLoader from './GraphDataLoader';
 import GraphEvents from './GraphEvents';
 import GraphStyle from './GraphStyle';
 import CommunityOverlay from './CommunityOverlay';
 import { GraphContext } from './GraphContext';
-import type { FilterState } from './GraphContext';
+import type { HoverInfo } from './GraphContext';
+import type { StorylineNode } from '@/types/stories';
+import { useGraphFilters } from './useGraphFilters';
 import { HelpModal } from '@/components/HelpModal';
 import type { HelpSection } from '@/components/HelpModal';
-import { COMMUNITY_PALETTE, COMMUNITY_OTHER } from '@/lib/communityColors';
+import { COMMUNITY_OTHER } from '@/lib/communityColors';
 
 const OTHER_COLOR = COMMUNITY_OTHER;
-const TOP_N = COMMUNITY_PALETTE.length; // 15
 
 // ── SigmaRefBridge ────────────────────────────────────────────────────────────
 // Bridges the sigma instance (only accessible inside SigmaContainer) to a ref
@@ -110,22 +111,31 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
   const [layoutReady, setLayoutReady] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
 
-  // Filters
-  const [minMomentum, setMinMomentum] = useState(0.2);
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
-  const [legendExpanded, setLegendExpanded] = useState(false);
-  const [selectedEntities, setSelectedEntities] = useState<string[]>([]);
-  const [entityQuery, setEntityQuery] = useState('');
-  const [showEntityDropdown, setShowEntityDropdown] = useState(false);
-  const [titleQuery, setTitleQuery] = useState('');
-  const [filterIsolate, setFilterIsolate] = useState(false);
-
-  // hover is a ref — not React state to avoid cascade on enterNode/leaveNode (50+/sec)
+  // hover is a ref — not React state — so nodeReducer can read it without a
+  // React re-render. Tooltip info is separate state, updated only on enter/leave.
   const hoveredNodeRef = useRef<number | null>(null);
+  const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
 
-  // Ticker hooks
-  const { tickers } = useTickerList();
-  const { themes } = useTickerThemes(selectedTicker);
+  // Raw graph data (from SWR)
+  const graphData = graph ?? null;
+
+  // All filter state + derivations live in the hook (business logic)
+  const {
+    minMomentum, setMinMomentum,
+    selectedTicker, setSelectedTicker,
+    legendExpanded, setLegendExpanded,
+    selectedEntities, setSelectedEntities,
+    entityQuery, setEntityQuery,
+    showEntityDropdown, setShowEntityDropdown,
+    titleQuery, setTitleQuery,
+    filterIsolate, setFilterIsolate,
+    showNew, setShowNew,
+    tickers,
+    communityColorMap, communityLabels, othersCount, othersNodes,
+    tickerHighlightIds,
+    filterState,
+    entitySuggestions,
+  } = useGraphFilters(graphData);
 
   // Ego network
   const { egoNetwork } = useEgoNetwork(selectedId, 0.05);
@@ -134,91 +144,63 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
     return new Set([selectedId, ...egoNetwork.neighbors.map((n) => n.id)]);
   }, [egoNetwork, selectedId]);
 
-  // Raw graph data (from SWR)
-  const graphData = graph ?? null;
-
-  // Community rank-based color map
-  const { communityColorMap, communityLabels, othersCount, othersNodes } = useMemo(() => {
-    if (!graphData) return { communityColorMap: new Map<number, string>(), communityLabels: [], othersCount: 0, othersNodes: 0 };
-    const communityMap = new Map<number, { count: number; community_name: string | null }>();
-    for (const node of graphData.nodes) {
-      const cid = node.community_id;
-      if (cid == null) continue;
-      if (!communityMap.has(cid)) communityMap.set(cid, { count: 0, community_name: null });
-      const entry = communityMap.get(cid)!;
-      entry.count++;
-      if (!entry.community_name && node.community_name) entry.community_name = node.community_name;
-    }
-    const allSorted = Array.from(communityMap.entries())
-      .map(([cid, { count, community_name }]) => ({ cid, label: community_name || `Community ${cid}`, count }))
-      .sort((a, b) => b.count - a.count);
-    const colorMap = new Map<number, string>();
-    allSorted.forEach(({ cid }, idx) => {
-      colorMap.set(cid, idx < TOP_N ? COMMUNITY_PALETTE[idx] : OTHER_COLOR);
-    });
-    return {
-      communityColorMap: colorMap,
-      communityLabels: allSorted.slice(0, TOP_N),
-      othersCount: Math.max(0, allSorted.length - TOP_N),
-      othersNodes: allSorted.slice(TOP_N).reduce((sum, c) => sum + c.count, 0),
-    };
+  // O(1) lookup for the hover tooltip (full node payload by id)
+  const nodeById = useMemo(() => {
+    const m = new Map<number, StorylineNode>();
+    if (graphData) for (const n of graphData.nodes) m.set(n.id, n);
+    return m;
   }, [graphData]);
+  const hoveredNode = hoverInfo ? nodeById.get(hoverInfo.id) ?? null : null;
 
-  // Ticker-correlated storylines
-  const tickerHighlightIds = useMemo<Set<number>>(() => {
-    if (!themes?.themes) return new Set();
-    return new Set(themes.themes.map((t) => t.storyline_id));
-  }, [themes]);
-
-  // Entity/title highlight IDs (dim mode)
-  const entityHighlightIds = useMemo<Set<number>>(() => {
-    const hasFilter = selectedEntities.length > 0 || titleQuery.trim();
-    if (!hasFilter || filterIsolate || !graphData) return new Set<number>();
-    return new Set(
-      graphData.nodes
-        .filter((n) => {
-          const entityMatch =
-            selectedEntities.length === 0 ||
-            selectedEntities.some((sel) =>
-              n.key_entities?.some((ke) => ke.toLowerCase().includes(sel.toLowerCase()))
-            );
-          const titleMatch = !titleQuery.trim() || n.title.toLowerCase().includes(titleQuery.trim().toLowerCase());
-          return entityMatch && titleMatch;
-        })
-        .map((n) => n.id)
-    );
-  }, [graphData, selectedEntities, titleQuery, filterIsolate]);
-
-  // Filter state passed into context
-  const filterState = useMemo<FilterState>(() => {
-    const highlightIds =
-      tickerHighlightIds.size > 0 ? tickerHighlightIds : entityHighlightIds;
-    return { momentumMin: minMomentum, isolate: filterIsolate, highlightIds };
-  }, [minMomentum, filterIsolate, tickerHighlightIds, entityHighlightIds]);
-
-  // Entity autocomplete
-  const allEntities = useMemo(
-    () =>
-      [...new Set((graphData?.nodes ?? []).flatMap((n) => n.key_entities || []))]
-        .sort()
-        .filter((e) => e.length > 1),
-    [graphData]
+  // "Why are these connected?" — the edge weight is a Jaccard over key_entities,
+  // so the intersection of the two nodes' entity lists is the connection reason.
+  // Computed client-side from data already present (no API/edge column needed).
+  const getSharedEntities = useCallback(
+    (otherId: number): string[] => {
+      if (selectedId == null || otherId === selectedId) return [];
+      const a = nodeById.get(selectedId)?.key_entities;
+      const b = nodeById.get(otherId)?.key_entities;
+      if (!a?.length || !b?.length) return [];
+      const setB = new Set(b.map((e) => e.toLowerCase()));
+      return a.filter((e) => setB.has(e.toLowerCase()));
+    },
+    [selectedId, nodeById]
   );
-  const entitySuggestions = useMemo(
-    () =>
-      entityQuery.length >= 2
-        ? allEntities
-            .filter((e) => e.toLowerCase().includes(entityQuery.toLowerCase()))
-            .filter((e) => !selectedEntities.includes(e))
-            .slice(0, 15)
-        : [],
-    [allEntities, entityQuery, selectedEntities]
-  );
+
+  // Shared entities to show in the tooltip when hovering a neighbor in ego mode
+  const hoverShared =
+    hoverInfo && selectedId != null && hoverInfo.id !== selectedId
+      ? getSharedEntities(hoverInfo.id)
+      : [];
+
+  // Navigation trail — the chain of storylines visited node→neighbor→neighbor.
+  // Lets the analyst back-track without losing the starting point. Derived from
+  // selectedId changes: re-visiting a node in the trail truncates back to it;
+  // clearing the selection (click on empty stage) resets the trail.
+  const [navHistory, setNavHistory] = useState<number[]>([]);
+  useEffect(() => {
+    if (selectedId == null) {
+      setNavHistory([]);
+      return;
+    }
+    setNavHistory((prev) => {
+      if (prev[prev.length - 1] === selectedId) return prev;
+      const idx = prev.indexOf(selectedId);
+      if (idx !== -1) return prev.slice(0, idx + 1); // went back to an earlier node
+      return [...prev, selectedId];
+    });
+  }, [selectedId]);
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
 
   const zoomToFit = useCallback(() => {
     sigmaRef.current?.getCamera().animatedReset({ duration: 400 });
+  }, []);
+
+  const zoomBy = useCallback((factor: number) => {
+    const camera = sigmaRef.current?.getCamera();
+    if (!camera) return;
+    camera.animate({ ratio: camera.ratio * factor }, { duration: 250 });
   }, []);
 
   const handleNavigate = useCallback((id: number) => {
@@ -277,6 +259,7 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
         egoNeighborIds,
         filterState,
         communityColorMap,
+        onHoverNode: setHoverInfo,
       }}
     >
       <div className="relative w-full h-[100dvh] bg-[#0A1628] overflow-hidden">
@@ -307,6 +290,79 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
           />
         )}
 
+        {/* Navigation trail — back-track the exploration chain without losing the start */}
+        {navHistory.length > 1 && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 max-w-[60vw] hidden md:flex items-center gap-1 bg-[#0A1628]/80 backdrop-blur-sm border border-white/10 rounded px-2 py-1.5">
+            {navHistory.map((id, i) => {
+              const isLast = i === navHistory.length - 1;
+              const title = nodeById.get(id)?.title ?? `#${id}`;
+              return (
+                <span key={id} className="flex items-center gap-1 min-w-0">
+                  {i > 0 && <span className="text-gray-600 text-xs flex-shrink-0">›</span>}
+                  <button
+                    type="button"
+                    onClick={() => !isLast && handleNavigate(id)}
+                    disabled={isLast}
+                    title={title}
+                    className={`text-[11px] font-mono truncate max-w-[160px] transition-colors ${
+                      isLast
+                        ? 'text-[#FF6B35] cursor-default'
+                        : 'text-gray-400 hover:text-white cursor-pointer'
+                    }`}
+                  >
+                    {title}
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Hover tooltip — title, status, momentum, article count */}
+        {hoverInfo && hoveredNode && (
+          <div
+            className="absolute z-40 pointer-events-none max-w-[260px] bg-[#0A1628]/95 backdrop-blur-sm border border-white/15 rounded px-3 py-2 shadow-xl"
+            style={{
+              left: hoverInfo.x,
+              top: hoverInfo.y,
+              transform: `translate(${hoverInfo.x > 0 ? '12px' : '0'}, -50%)`,
+            }}
+          >
+            <div className="text-xs text-white font-semibold leading-tight mb-1 line-clamp-3">
+              {hoveredNode.title}
+            </div>
+            <div className="flex items-center gap-2 text-[10px] font-mono">
+              <span
+                className={
+                  hoveredNode.narrative_status === 'emerging'
+                    ? 'text-[#FF6B35]'
+                    : hoveredNode.narrative_status === 'active'
+                    ? 'text-[#00A8E8]'
+                    : 'text-gray-400'
+                }
+              >
+                {hoveredNode.narrative_status.toUpperCase()}
+              </span>
+              <span className="text-gray-600">·</span>
+              <span className="text-gray-300">M {hoveredNode.momentum_score.toFixed(2)}</span>
+              <span className="text-gray-600">·</span>
+              <span className="text-gray-300">{hoveredNode.article_count} art.</span>
+            </div>
+            {hoverShared.length > 0 ? (
+              <div className="mt-1.5 pt-1.5 border-t border-white/10 text-[10px] font-mono">
+                <span className="text-[#FF6B35]">↔ shared: </span>
+                <span className="text-gray-300">{hoverShared.slice(0, 5).join(' · ')}</span>
+              </div>
+            ) : (
+              hoveredNode.key_entities?.length > 0 && (
+                <div className="mt-1 text-[10px] font-mono text-gray-500 truncate">
+                  {hoveredNode.key_entities.slice(0, 4).join(' · ')}
+                </div>
+              )
+            )}
+          </div>
+        )}
+
         {/* HUD — Top Left */}
         <div className="absolute top-4 left-4 pointer-events-none">
           <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-[#FF6B35]/30 rounded px-4 py-3">
@@ -331,14 +387,54 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
               </div>
             )}
             {layoutReady && (
-              <button
-                type="button"
-                onClick={zoomToFit}
-                className="pointer-events-auto mt-2 w-full text-[10px] font-mono text-gray-500 hover:text-gray-300 border border-white/10 rounded px-2 py-1 transition-colors"
-              >
-                ⊞ Zoom to Fit
-              </button>
+              <div className="pointer-events-auto mt-2 flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => zoomBy(1 / 1.4)}
+                  aria-label="Zoom in"
+                  className="flex-1 text-[12px] leading-none font-mono text-gray-400 hover:text-white border border-white/10 rounded py-1.5 transition-colors"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => zoomBy(1.4)}
+                  aria-label="Zoom out"
+                  className="flex-1 text-[12px] leading-none font-mono text-gray-400 hover:text-white border border-white/10 rounded py-1.5 transition-colors"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomToFit}
+                  className="flex-[2] text-[10px] font-mono text-gray-500 hover:text-gray-300 border border-white/10 rounded px-2 py-1 transition-colors"
+                >
+                  ⊞ Fit
+                </button>
+              </div>
             )}
+
+            {/* Always-visible key — answers "what am I looking at?" without opening a menu */}
+            <div className="mt-2 pt-2 border-t border-white/5 space-y-1 text-[10px] font-mono text-gray-500">
+              <div className="flex items-center gap-2">
+                <span className="flex items-end gap-0.5">
+                  <span className="w-1 h-1 rounded-full bg-gray-400" />
+                  <span className="w-2 h-2 rounded-full bg-gray-300" />
+                </span>
+                size = momentum
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="flex gap-0.5">
+                  <span className="w-2 h-2 rounded-full bg-[#FF6B35]" />
+                  <span className="w-2 h-2 rounded-full bg-[#00A8E8]" />
+                </span>
+                color = theme
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#FF6B35] animate-pulse" />
+                <span className="text-[#FF6B35]">new (&lt; 3d)</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -508,6 +604,18 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
                 />
               </div>
 
+              {/* Novità — highlight emerging storylines */}
+              <button
+                type="button"
+                onClick={() => setShowNew((v) => !v)}
+                className={`mb-3 flex items-center gap-2 w-full text-left transition-colors ${
+                  showNew ? 'text-[#FF6B35]' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full bg-[#FF6B35] ${showNew ? 'animate-pulse' : 'opacity-40'}`} />
+                <span className="text-xs font-mono uppercase tracking-wider">Novità (emerging)</span>
+              </button>
+
               {/* Community legend */}
               {communityLabels.length > 0 && (
                 <>
@@ -601,6 +709,7 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
           storylineId={selectedId}
           onClose={() => setSelectedId(null)}
           onNavigate={handleNavigate}
+          getSharedEntities={getSharedEntities}
         />
 
         {/* Corner brackets */}

@@ -11,6 +11,9 @@ interface StorylineDossierProps {
   storylineId: number | null;
   onClose: () => void;
   onNavigate: (id: number) => void;
+  /** Returns the entities shared between the open storyline and `relatedId` (the
+   *  connection reason). Computed client-side from graph data. */
+  getSharedEntities?: (relatedId: number) => string[];
 }
 
 const STATUS_COLORS: Record<NarrativeStatus, string> = {
@@ -29,6 +32,7 @@ function DossierContent({
   storylineId,
   onClose,
   onNavigate,
+  getSharedEntities,
   showCloseButton = false,
 }: StorylineDossierProps & { showCloseButton?: boolean }) {
   const { detail, isLoading, error } = useStorylineDetail(storylineId);
@@ -236,26 +240,42 @@ function DossierContent({
                   Connected Storylines ({detail.related_storylines.length})
                 </h3>
                 <div className="space-y-2">
-                  {detail.related_storylines.map((rel) => (
-                    <button
-                      key={rel.id}
-                      type="button"
-                      onClick={() => onNavigate(rel.id)}
-                      className="w-full text-left border-l-2 border-[#00A8E8]/30 pl-3 py-2 active:border-[#00A8E8] md:hover:border-[#00A8E8] transition-colors group"
-                    >
-                      <div className="text-sm text-white group-active:text-[#00A8E8] md:group-hover:text-[#00A8E8] transition-colors leading-snug">
-                        {rel.title}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs font-mono text-gray-500">
-                          Weight: {rel.weight.toFixed(2)}
-                        </span>
-                        <span className="text-xs font-mono text-gray-600">
-                          {rel.relation_type}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
+                  {detail.related_storylines.map((rel) => {
+                    const shared = getSharedEntities?.(rel.id) ?? [];
+                    return (
+                      <button
+                        key={rel.id}
+                        type="button"
+                        onClick={() => onNavigate(rel.id)}
+                        className="w-full text-left border-l-2 border-[#00A8E8]/30 pl-3 py-2 active:border-[#00A8E8] md:hover:border-[#00A8E8] transition-colors group"
+                      >
+                        <div className="text-sm text-white group-active:text-[#00A8E8] md:group-hover:text-[#00A8E8] transition-colors leading-snug">
+                          {rel.title}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs font-mono text-gray-500">
+                            Weight: {rel.weight.toFixed(2)}
+                          </span>
+                          <span className="text-xs font-mono text-gray-600">
+                            {rel.relation_type}
+                          </span>
+                        </div>
+                        {shared.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] font-mono text-[#00A8E8]/70">↔ shared:</span>
+                            {shared.slice(0, 6).map((e) => (
+                              <span
+                                key={e}
+                                className="px-1.5 py-0.5 rounded bg-[#00A8E8]/10 border border-[#00A8E8]/25 text-[10px] font-mono text-[#00A8E8]"
+                              >
+                                {e}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -334,7 +354,12 @@ function DossierContent({
   );
 }
 
-export default function StorylineDossier({ storylineId, onClose, onNavigate }: StorylineDossierProps) {
+export default function StorylineDossier({
+  storylineId,
+  onClose,
+  onNavigate,
+  getSharedEntities,
+}: StorylineDossierProps) {
   if (!storylineId) return null;
 
   return (
@@ -345,6 +370,7 @@ export default function StorylineDossier({ storylineId, onClose, onNavigate }: S
           storylineId={storylineId}
           onClose={onClose}
           onNavigate={onNavigate}
+          getSharedEntities={getSharedEntities}
           showCloseButton
         />
       </div>
@@ -360,6 +386,7 @@ export default function StorylineDossier({ storylineId, onClose, onNavigate }: S
           storylineId={storylineId}
           onClose={onClose}
           onNavigate={onNavigate}
+          getSharedEntities={getSharedEntities}
         />
       </BottomSheet>
     </>

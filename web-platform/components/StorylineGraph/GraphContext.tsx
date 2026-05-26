@@ -8,6 +8,13 @@ export interface FilterState {
   highlightIds: Set<number>;
 }
 
+export interface HoverInfo {
+  id: number;
+  /** viewport-relative pixel coords (anchor point for the tooltip) */
+  x: number;
+  y: number;
+}
+
 export interface GraphContextValue {
   selectedId: number | null;
   setSelectedId: Dispatch<SetStateAction<number | null>>;
@@ -18,6 +25,9 @@ export interface GraphContextValue {
   egoNeighborIds: Set<number>;
   filterState: FilterState;
   communityColorMap: Map<number, string>;
+  // Fires on node enter/leave (once each, not per mouse-move) to drive the
+  // hover tooltip in the parent. Null clears the tooltip.
+  onHoverNode: (info: HoverInfo | null) => void;
 }
 
 export const GraphContext = createContext<GraphContextValue | null>(null);

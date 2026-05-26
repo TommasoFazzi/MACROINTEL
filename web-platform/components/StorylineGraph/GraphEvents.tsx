@@ -1,36 +1,30 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { useSigma, useRegisterEvents } from '@react-sigma/core';
+import { useEffect } from 'react';
+import { useRegisterEvents } from '@react-sigma/core';
 import { useGraphContext } from './GraphContext';
+import { useScheduledRefresh } from './useScheduledRefresh';
 
 export default function GraphEvents() {
-  const sigma = useSigma();
   const registerEvents = useRegisterEvents();
-  const { setSelectedId, hoveredNodeRef } = useGraphContext();
-  const pendingRefreshRef = useRef(false);
-
-  // Batched refresh — at most one sigma.refresh() per animation frame
-  const scheduleRefresh = () => {
-    if (pendingRefreshRef.current) return;
-    pendingRefreshRef.current = true;
-    requestAnimationFrame(() => {
-      sigma.refresh();
-      pendingRefreshRef.current = false;
-    });
-  };
+  const { setSelectedId, hoveredNodeRef, onHoverNode } = useGraphContext();
+  const scheduleRefresh = useScheduledRefresh();
 
   useEffect(() => {
     registerEvents({
       clickNode: ({ node }) => {
         setSelectedId((prev) => (prev === Number(node) ? null : Number(node)));
       },
-      enterNode: ({ node }) => {
-        hoveredNodeRef.current = Number(node);
+      enterNode: ({ node, event }) => {
+        const id = Number(node);
+        hoveredNodeRef.current = id;
+        // event.x / event.y are viewport pixels relative to the sigma canvas
+        onHoverNode({ id, x: event.x, y: event.y });
         scheduleRefresh();
       },
       leaveNode: () => {
         hoveredNodeRef.current = null;
+        onHoverNode(null);
         scheduleRefresh();
       },
       clickStage: () => {

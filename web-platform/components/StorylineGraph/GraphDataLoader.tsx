@@ -33,8 +33,19 @@ export default function GraphDataLoader({
     const graph = sigma.getGraph();
     graph.clear();
 
-    // Compute a lightweight hash of the current graph data to detect changes
-    const dataHash = `${graphData.nodes.length}:${graphData.links.length}`;
+    // Lightweight signature of the graph data to detect changes. Counts alone
+    // collide when a storyline is swapped for another with the same totals, so
+    // fold the sorted node ids into the hash (FNV-1a) before persisting layout.
+    const idSignature = graphData.nodes
+      .map((n) => n.id)
+      .sort((a, b) => a - b)
+      .join(',');
+    let h = 0x811c9dc5;
+    for (let i = 0; i < idSignature.length; i++) {
+      h ^= idSignature.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    const dataHash = `${graphData.nodes.length}:${graphData.links.length}:${(h >>> 0).toString(36)}`;
 
     // Attempt to restore saved layout positions from localStorage
     let savedPositions: Record<string, { x: number; y: number }> = {};

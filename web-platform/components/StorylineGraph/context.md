@@ -38,33 +38,44 @@ Presentation components consumed by `app/stories/page.tsx`. Uses the same dynami
 - Calls `onLayoutReady()` after **500ms** (show graph immediately without waiting for full convergence)
 - Cleanup: `fa2.kill()` on unmount/route change
 
+### `useScheduledRefresh.ts` — Shared rAF-batched refresh hook
+Single source of truth for `scheduleRefresh()`, used by both `GraphEvents` and `GraphStyle` (was duplicated in each). Coalesces refresh requests into at most one `sigma.refresh()` per animation frame.
+
+### `useGraphFilters.ts` — Filter business logic (no UI)
+Owns all filter state (`minMomentum`, `selectedTicker`, `selectedEntities`, `entityQuery`, `titleQuery`, `filterIsolate`, `legendExpanded`, `showNew`) and derivations: `communityColorMap` (rank-based), `communityLabels`/`othersCount`/`othersNodes`, `tickerHighlightIds`, `entityHighlightIds`, `newHighlightIds`, `filterState`, and `entitySuggestions`. Keeps `StorylineGraph.tsx` focused on layout/rendering. Takes `graphData`, returns state + setters + derived values.
+- **`showNew` ("Novità")**: highlights `narrative_status === 'emerging'` storylines. No graph history exists in the DB (storylines store only current state), so "what's new" is derived from the current `narrative_status` field — no temporal snapshots involved.
+- `filterState.highlightIds` priority: ticker → entity → `newHighlightIds` (first non-empty wins).
+
 ### `GraphEvents.tsx` — Sigma event handlers (inside `<SigmaContainer>`)
 - `clickNode` → functional toggle: `setSelectedId(prev => prev === id ? null : id)`
-- `enterNode` / `leaveNode` → **`hoveredNodeRef.current` mutation + `scheduleRefresh()`**
-  - `scheduleRefresh()`: rAF-batched — at most one `sigma.refresh()` per animation frame
+- `enterNode` / `leaveNode` → **`hoveredNodeRef.current` mutation + `onHoverNode(...)` + `scheduleRefresh()`**
+  - `onHoverNode({ id, x, y })` drives the parent's hover tooltip (`event.x`/`event.y` = viewport px). Fires once per enter/leave, not per mouse-move.
+  - `scheduleRefresh()` from `useScheduledRefresh`
 - `clickStage` → `setSelectedId(null)`
 
 ### `GraphStyle.tsx` — Node/edge reducers (inside `<SigmaContainer>`)
-Sets Sigma's `nodeReducer` and `edgeReducer` via `sigma.setSettings()` whenever `selectedId`, `egoNeighborIds`, `filterState`, or `communityColorMap` changes.
+Sets Sigma's `nodeReducer` and `edgeReducer` via `sigma.setSettings()` whenever `selectedId`, `egoNeighborIds`, `filterState`, or `communityColorMap` changes. Neutral paths return `data` directly (no per-node object clone). `withAlpha(hex, 0..1)` helper appends an 8-bit hex alpha.
 
 **nodeReducer priority (high → low):**
 1. `momentum < momentumMin` → `hidden: true`
 2. `isolate && !highlightIds.has(id)` → `hidden: true`
-3. `!isolate && highlightIds active && !highlighted` → color + `'14'` alpha, size × 0.7
-4. `egoActive && !isNeighbor` → color + `'0D'` alpha (~5%), size × 0.8
+3. `!isolate && highlightIds active && !highlighted` → alpha 0.08, size × 0.7
+4. `egoActive && !isNeighbor` → alpha 0.05, size × 0.6; ego neighbor → scaled by edge weight
 5. `id === selectedId` → `color: '#FFFFFF', highlighted: true`
-6. `id === hoveredNodeRef.current` → `highlighted: true`
+6. **Hover focus** (`hoveredNodeRef.current != null && !egoActive`): hovered → `highlighted`; direct neighbor (`graph.hasEdge`) → full color; everything else → alpha 0.18
 
-**edgeReducer (ego mode only):**
-- Ego edge (both endpoints in egoNeighborIds): `rgba(249,115,22,0.9)`, size 3.0
-- Non-ego edge: `rgba(150,190,220,0.03)`, size 0.3
+**edgeReducer (ego mode OR hover):**
+- Hover (not ego): edges incident to hovered node → orange `0.4 + w·0.6` opacity, size `1 + w·4`; others faded `rgba(150,190,220,0.02)`
+- Ego edge (both endpoints in egoNeighborIds): orange `0.35 + w·0.65`, size `1 + w·4`; non-ego faded
+- Neutral path (no ego, no hover): returns `data` unchanged
 
-Calls `scheduleRefresh()` (rAF-batched) after settings update.
+Calls `scheduleRefresh()` after settings update.
 
 ### `CommunityOverlay.tsx` — SVG hull + labels (outside `<SigmaContainer>`)
-- Subscribes to `sigma.on('afterRender', updatePositions)`
-- **Throttled to ~30fps** (`Date.now()` gap ≥ 33ms) — no need to recompute hull at 60fps
-- **DOM mutation directly** on `svgRef.current` — no React `setState` (React reconciler is the bottleneck at frame rate)
+- Subscribes to `sigma.on('afterRender', scheduleRender)`
+- **rAF throttle with trailing edge** (`requestAnimationFrame`, one redraw per frame, final frame never dropped) — fixes hulls staying misaligned after a pan/zoom burst
+- **Reads node positions FRESH each frame** (`graph.getNodeAttribute(id, 'x'/'y')`) — node ids are bucketed by community once, but coords are re-read every render so hulls follow the FA2 layout animation (previously coords were captured once at mount → frozen hulls)
+- **DOM mutation directly** on `svgRef.current` — no React `setState`
 - For each community with 3+ nodes:
   - Converts graph coords → screen: `sigma.graphToViewport({ x, y })`
   - Computes **Jarvis March convex hull** (O(nh)) on screen points
@@ -86,13 +97,14 @@ function SigmaRefBridge({ sigmaRef }) {
 ### `StorylineGraph.tsx` — Root orchestrator
 - Stable graphology graph: `useRef(new Graph({ type: 'undirected', multi: false })).current` — **never recreated**, SigmaContainer holds the WebGL context for the session
 - `sigmaRef: MutableRefObject<Sigma | null>` — populated by `SigmaRefBridge`
-- State: `selectedId`, `layoutReady`, `optimizing`, filter states
+- State: `selectedId`, `layoutReady`, `optimizing`; filter state lives in `useGraphFilters(graphData)` (see above)
 - `hoveredNodeRef: MutableRefObject<number | null>` — not React state
+- `hoverInfo: HoverInfo | null` — React state for the tooltip (updated only on enter/leave via `onHoverNode`); `nodeById` map gives O(1) lookup of the full node payload
 - `egoNeighborIds: Set<number>` — `useMemo` on `useEgoNetwork(selectedId, 0.05)`
-- `communityColorMap` — rank-based (top 15 by count → `COMMUNITY_PALETTE`, rest → `COMMUNITY_OTHER`)
-- `filterState` — `useMemo` combining momentum, entity, ticker highlights
+- Hover tooltip: absolutely-positioned `pointer-events-none` div at `hoverInfo.x/y` showing title, status, momentum, article count, top entities
 - Camera API:
   - `zoomToFit()` → `sigma.getCamera().animatedReset({ duration: 400 })`
+  - `zoomBy(factor)` → `camera.animate({ ratio: camera.ratio * factor })` — backs the +/− zoom buttons
   - `handleNavigate(id)` → reads node attrs, `sigma.getCamera().animate({ x, y, ratio: 0.3 }, { duration: 500 })`
   - Ticker zoom → bounding box of highlighted nodes, `ratio = min(1, span/400)`
   - Deep-link `?highlight=<id>` → `handleNavigate` after `layoutReady` + 600ms delay
@@ -114,9 +126,16 @@ function SigmaRefBridge({ sigmaRef }) {
   }
   ```
 - HUD shows **"OPTIMIZING LAYOUT…"** badge while FA2 worker is running
+- HUD **always-visible KEY legend** (size = momentum, color = theme, ● = new < 3d) — answers the first-glance questions without opening a menu (Ramo A: panoramica leggibile)
+- Filter panel **"Novità (emerging)"** toggle → `setShowNew` → dims/highlights emerging storylines via `filterState`
+- **Navigation trail breadcrumb** (`navHistory: number[]`, top-center, desktop): the chain of storylines visited node→neighbor→neighbor. Derived from `selectedId` changes — re-visiting a node truncates the trail back to it; clearing the selection resets it. Crumbs call `handleNavigate(id)`. Lets the analyst back-track without losing the starting point (Ramo B: indagine concatenata)
 
 ### `StorylineDossier.tsx` — Detail side panel
-Unchanged. Props: `{ storylineId, onClose, onNavigate }`. `onNavigate` calls `handleNavigate(id)` in the parent.
+Props: `{ storylineId, onClose, onNavigate, getSharedEntities? }`. `onNavigate` calls `handleNavigate(id)` in the parent. `getSharedEntities(relatedId)` returns the entities shared between the open storyline and a connected one — rendered as cyan chips under each "Connected Storylines" row ("↔ shared: …") to answer *why* two storylines are linked.
+
+**Shared-entities ("why connected?")** — the edge `weight` is a TF-IDF weighted Jaccard over `key_entities`, and `storyline_edges` does NOT store the overlap. So the connection reason is recomputed **client-side** in `StorylineGraph.getSharedEntities(otherId)`: intersect `nodeById[selectedId].key_entities ∩ nodeById[otherId].key_entities` (case-insensitive). Zero API/edge-column changes. Surfaced in two places:
+- Hover tooltip: when a node is selected and you hover one of its neighbors → "↔ shared: a · b"
+- Dossier "Connected Storylines" rows → cyan chips
 
 ## Component Tree
 
@@ -162,10 +181,12 @@ useGraphNetwork()
 
 | Pattern | Why |
 |---------|-----|
-| `hoveredNodeRef` (useRef) | hover fires 50+/sec — React state would cascade 1542-node reducer runs |
-| `scheduleRefresh()` (rAF batch) | max one `sigma.refresh()` per frame even with rapid hover events |
+| `hoveredNodeRef` (useRef) for reducers | nodeReducer reads hover live without a React render; `hoverInfo` state (tooltip) updates only once per enter/leave |
+| `scheduleRefresh()` (rAF batch, `useScheduledRefresh`) | max one `sigma.refresh()` per frame even with rapid hover events; shared by GraphEvents + GraphStyle |
+| nodeReducer/edgeReducer neutral path returns `data` | no per-node object clone on the common path — less GC pressure on large graphs |
 | `CommunityOverlay` DOM mutation | React reconciler at 60fps is the bottleneck — direct SVG DOM avoids it |
-| `afterRender` throttle 30fps | Hull coords don't need 60fps precision |
+| `CommunityOverlay` rAF throttle (trailing) | one hull redraw per frame; trailing frame kept so hulls settle correctly after pan/zoom |
+| `localStorage` layout hash (FNV-1a over node ids) | counts-only hash collided on equal-size swaps → wrong restored positions; id signature prevents it |
 | `hideEdgesOnMove: true` | Hides all 17854 edges during pan/zoom for smooth camera movement |
 | `hideLabelsOnMove: true` | No label render during movement |
 | `labelRenderedSizeThreshold: 8` | LOD: only nodes with size ≥ 8 (momentum ≥ 0.5) show labels |
