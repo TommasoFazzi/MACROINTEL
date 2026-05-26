@@ -4,7 +4,7 @@ import '@react-sigma/core/lib/style.css';
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SigmaContainer, useSigma } from '@react-sigma/core';
-import Graph from 'graphology';
+import { UndirectedGraph } from 'graphology';
 import type Sigma from 'sigma';
 import { useGraphNetwork, useEgoNetwork, useTickerList, useTickerThemes } from '@/hooks/useStories';
 import StorylineDossier from './StorylineDossier';
@@ -100,7 +100,7 @@ interface StorylineGraphProps {
 
 export default function StorylineGraph({ highlightId = null }: StorylineGraphProps) {
   // Stable graphology graph object — never recreated, SigmaContainer holds the WebGL context
-  const sigmaGraph = useRef(new Graph({ type: 'undirected', multi: false })).current;
+  const sigmaGraph = useRef(new UndirectedGraph()).current;
   const sigmaRef = useRef<Sigma | null>(null);
 
   const { graph, isLoading, error, refresh } = useGraphNetwork();
