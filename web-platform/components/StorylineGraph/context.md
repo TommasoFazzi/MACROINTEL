@@ -1,191 +1,189 @@
 # StorylineGraph Components Context
 
 ## Purpose
-React/TypeScript components for the force-directed narrative storyline graph visualization. Renders the network of active intelligence storylines and their inter-connections (TF-IDF weighted Jaccard edges from the Narrative Engine) as an interactive Canvas-based force graph. Supports **community coloring** (Louvain clusters), **ego network** exploration, and **momentum-based filtering**.
+React/TypeScript components for the WebGL narrative storyline graph visualization. Renders the network of active intelligence storylines and their inter-connections (TF-IDF weighted Jaccard edges from the Narrative Engine) using **Sigma.js** (WebGL) + **graphology** + **ForceAtlas2** in a web worker. Supports **community coloring** (Louvain clusters), **ego network** exploration, **momentum-based filtering**, and convex hull community overlays.
 
 ## Architecture Role
-Presentation components consumed by `app/stories/page.tsx`. Uses the same dynamic import / SSR-disabled pattern as `IntelligenceMap/` because `react-force-graph-2d` requires the Canvas API and `requestAnimationFrame`, which are unavailable in the Node.js SSR environment. Each component has a single clear responsibility following React composition.
+Presentation components consumed by `app/stories/page.tsx`. Uses the same dynamic import / SSR-disabled pattern as before, because Sigma.js requires the browser WebGL API. The component tree is split into small focused components following the `@react-sigma/core v5` composition model.
 
 ## Key Files
 
 ### `GraphLoader.tsx` — Client-side dynamic loader
 - Marked `'use client'`
 - Uses `next/dynamic` with `{ ssr: false, loading: () => <GraphSkeleton /> }`
-- Enables code-splitting for the heavy `react-force-graph-2d` + d3-force bundle
-- Shows `GraphSkeleton` while the bundle downloads; transparent to the parent `StoriesPage`
+- Unchanged from previous implementation
 
 ### `GraphSkeleton.tsx` — Loading skeleton
-- Marked `'use client'`; full-screen dark background (`#0A1628`)
-- Animated orange (#FF6B35) spinning ring + "INITIALIZING STORYLINE GRAPH" label
-- HUD-corner skeleton bars (top-left, top-right) matching the real HUD layout
-- Subtle orange grid overlay (60 px × 60 px, `opacity-10`)
-- Corner bracket decorations matching `StorylineGraph`'s brackets (visual continuity)
+- Unchanged from previous implementation
 
-### `StorylineGraph.tsx` (~479 lines) — Main force-directed graph
-Marked `'use client'`. Orchestrates `ForceGraph2D`, HUD overlays, tooltip, ego network highlighting, **Top-N community coloring** with momentum brightness, legend with "Others" aggregation, momentum slider, and `StorylineDossier`.
+### `GraphContext.tsx` — Shared React context
+- `FilterState`: `{ momentumMin, isolate, highlightIds: Set<number> }`
+- `GraphContextValue`:
+  - `selectedId: number | null` — selected node (React state, drives ego mode)
+  - `setSelectedId: Dispatch<SetStateAction<number | null>>`
+  - `hoveredNodeRef: MutableRefObject<number | null>` — **useRef, not state** (hover fires 50+/sec; keeping it out of React tree avoids cascading nodeReducer runs)
+  - `egoNeighborIds: Set<number>` — `useMemo`-stabilised, changes only when `selectedId` changes
+  - `filterState: FilterState` — `useMemo`-stabilised
+  - `communityColorMap: Map<number, string>` — rank-based, recomputed on new API data
 
-**Data flow:**
-1. Calls `useGraphNetwork()` (SWR, 60 s polling) → `graph: GraphNetwork | undefined`
-2. On node click, calls `useEgoNetwork(selectedId, 0.05)` → `egoData` (direct neighbors + connecting edges)
-3. `useMemo` transforms `graph.nodes` → `GraphNode[]` and `graph.links` → `GraphLink[]` (filters out links whose source/target is not in the node set)
-4. Momentum slider state (`momentumFilter`, default 0) filters nodes below threshold
-5. Passes `graphData` to `<ForceGraph2D>`
+### `GraphDataLoader.tsx` — Graph builder (inside `<SigmaContainer>`)
+- Calls `useSigma()` → `sigma.getGraph()` to access the stable graphology Graph
+- On each `graphData` change (SWR 60s poll): `graph.clear()` + full in-place rebuild
+- **Restores saved node positions** from `localStorage` (`story-graph-layout-v1`) before adding nodes — eliminates "explosion" animation on reload
+- Builds nodes with: `label`, `size` (4 + momentum × 12), `color` (from `communityColorMap`), `x/y` (restored or random ±500)
+- Builds edges with: `weight`, `size` (0.5 + weight × 2.0), `color` (`rgba(150,190,220,...)`)
+- **FA2 worker** (`graphology-layout-forceatlas2/worker`): `barnesHutOptimize: true`, `scalingRatio: 2`, `strongGravityMode: true`, `gravity: 0.05`, `slowDown: 10`
+  - **Fallback**: `assign(graph, { iterations: 150 })` sync if worker path fails in Next.js build
+- Stops worker after **8s**, saves positions to `localStorage`, calls `onOptimizing(false)`
+- Calls `onLayoutReady()` after **500ms** (show graph immediately without waiting for full convergence)
+- Cleanup: `fa2.kill()` on unmount/route change
 
-**Node rendering — `paintNode` (Canvas 2D):**
-- Radius = `4 + momentum_score * 12` → range **4–16 px**
-- **Color by `community_id`** (primary): **Top-N strategy** — 15-color `COMMUNITY_PALETTE` assigned by community size rank. Top 15 communities (by node count) get unique perceptually-distinct colors; all others render in `OTHER_COLOR = '#2A3A4A'` (neutral dark gray). Color assignment computed in `useMemo` via `communityColorMap` (Map<community_id, hex>). Nodes without `community_id` fall back to **status color**: `emerging=#FF6B35`, `active=#00A8E8`, `stabilized=#666666`
-- **Momentum-as-brightness**: Node opacity = `Math.max(0.5, Math.min(1.0, 0.5 + momentum_score * 0.5))` — range [0.5, 1.0]. High-momentum storylines appear brighter; low-momentum ones are dimmer but always visible (minimum 50% opacity).
-- **Ego network highlighting**: When ego mode is active (a node is selected and ego data is loaded), non-neighbor nodes are drawn with `globalAlpha=0.08` (heavily dimmed). Neighbor nodes and the selected node remain at full opacity. **Ghost highlight**: neighbor nodes that are normally gray (`OTHER_COLOR`) highlight to `EGO_HIGHLIGHT = '#FFFFFF'` (white) during ego drill-down.
-- Selected node: filled white, color border (2 px); glow ring at `radius + 4` px with 20% alpha
-- Hovered node: same glow ring
-- Label: drawn only when `globalScale > 1.5` OR `momentum_score > 0.7` OR node is selected/hovered; truncated at 30 chars; monospace font at `max(10/globalScale, 3)` px; dark background pill (`rgba(10,22,40,0.85)`)
+### `GraphEvents.tsx` — Sigma event handlers (inside `<SigmaContainer>`)
+- `clickNode` → functional toggle: `setSelectedId(prev => prev === id ? null : id)`
+- `enterNode` / `leaveNode` → **`hoveredNodeRef.current` mutation + `scheduleRefresh()`**
+  - `scheduleRefresh()`: rAF-batched — at most one `sigma.refresh()` per animation frame
+- `clickStage` → `setSelectedId(null)`
 
-**Hit area — `nodePointerAreaPaint`:**
-- Extends the clickable area by +4 px beyond the visual radius so small low-momentum nodes remain easy to click
+### `GraphStyle.tsx` — Node/edge reducers (inside `<SigmaContainer>`)
+Sets Sigma's `nodeReducer` and `edgeReducer` via `sigma.setSettings()` whenever `selectedId`, `egoNeighborIds`, `filterState`, or `communityColorMap` changes.
 
-**Link rendering — `paintLink` (Canvas 2D):**
-- Default: `rgba(100, 100, 100, 0.2 + weight * 0.6)` — more opaque for stronger connections
-- **Ego network edges**: highlighted in orange with `alpha=0.9`; non-ego edges dimmed further when ego mode is active
-- Width: `0.5 + weight * 2.5` px — thicker for stronger connections
+**nodeReducer priority (high → low):**
+1. `momentum < momentumMin` → `hidden: true`
+2. `isolate && !highlightIds.has(id)` → `hidden: true`
+3. `!isolate && highlightIds active && !highlighted` → color + `'14'` alpha, size × 0.7
+4. `egoActive && !isNeighbor` → color + `'0D'` alpha (~5%), size × 0.8
+5. `id === selectedId` → `color: '#FFFFFF', highlighted: true`
+6. `id === hoveredNodeRef.current` → `highlighted: true`
 
-**Community labels — `paintFramePost` callback:**
-- After each frame, computes the centroid (average x,y) of all nodes in each community
-- Draws community labels at centroids: font `18px`, opacity `22%` (subtle background labels)
-- Labels use community number or LLM-generated community label if available
+**edgeReducer (ego mode only):**
+- Ego edge (both endpoints in egoNeighborIds): `rgba(249,115,22,0.9)`, size 3.0
+- Non-ego edge: `rgba(150,190,220,0.03)`, size 0.3
 
-**d3-force simulation parameters:**
-- `warmupTicks=300` — let simulation settle before rendering
-- `cooldownTicks=0` — never stops (continuous physics)
-- `d3AlphaDecay=0.05` — moderate cooling
-- `d3VelocityDecay=0.4` — moderate friction
-- `linkDirectionalParticles=0` — no animated particles (performance)
-- Drag, zoom, and pan all enabled
+Calls `scheduleRefresh()` (rAF-batched) after settings update.
 
-**Interaction:**
-- `onNodeClick`: toggles `selectedId` (clicking the same node again deselects it → `setSelectedId(prev => prev === node.id ? null : node.id)`); triggers ego network fetch
-- `onNodeHover`: sets `hoveredNode` state
-- `handleNavigate(id)`: called from `StorylineDossier`'s "Connected Storylines" buttons; sets `selectedId` and animates camera via `graphRef.current.centerAt(x, y, 500)` + `.zoom(3, 500)`
+### `CommunityOverlay.tsx` — SVG hull + labels (outside `<SigmaContainer>`)
+- Subscribes to `sigma.on('afterRender', updatePositions)`
+- **Throttled to ~30fps** (`Date.now()` gap ≥ 33ms) — no need to recompute hull at 60fps
+- **DOM mutation directly** on `svgRef.current` — no React `setState` (React reconciler is the bottleneck at frame rate)
+- For each community with 3+ nodes:
+  - Converts graph coords → screen: `sigma.graphToViewport({ x, y })`
+  - Computes **Jarvis March convex hull** (O(nh)) on screen points
+  - Pads hull outward by 18px from centroid
+  - Renders `<polygon>`: fill 6% opacity, dashed stroke 18% opacity
+  - Renders `<text>` at centroid: 13px bold sans-serif, 28% opacity, uppercase
+- Positioned `absolute inset-0 w-full h-full pointer-events-none`
 
-**Overlays (all `pointer-events-none` except Dossier, Retry button, and momentum slider):**
-- **Top-left HUD**: "NARRATIVE GRAPH" label + stats: NODES, EDGES, **COMMUNITIES**, AVG MOMENTUM, **EDGES/NODE**
-- **Top-right Legend (when no node selected)**: **Community legend** — dynamic list of top 15 communities (by size) with colored dots and entity-based labels (most frequent entity among top-5 `key_entities` per community). **"Others (N)" row** at the bottom with a separator line, aggregating all minor communities and their total node count, displayed in `OTHER_COLOR`.
-- **Top-right Momentum slider**: Interactive range slider (0–1, step 0.1) for filtering nodes by minimum momentum score
-- Bottom-left Tooltip: shown when `hoveredNode` is set and no node is selected; displays title, momentum (2 dp), article count, category
-- Loading overlay: spinner + "Loading graph data…" while `isLoading && !graph`
-- Error overlay: "Connection Error" message + RETRY button (calls `refresh()`) while `error && !graph`
-- Empty state: "No Active Storylines" message when graph loaded but `graph.nodes.length === 0`
-- Corner brackets: decorative CSS borders matching `GraphSkeleton`
-
-### `StorylineDossier.tsx` (~291 lines) — Detail side panel
-Marked `'use client'`. Follows the same design language as `EntityDossier.tsx` in `IntelligenceMap/`.
-
-**Props:**
+### `SigmaRefBridge` — Inline component in `StorylineGraph.tsx`
+Bridges the Sigma instance from inside `<SigmaContainer>` (where `useSigma()` works) to a `sigmaRef` in the parent, enabling camera controls and `CommunityOverlay` to access it.
 ```ts
-{ storylineId: number | null; onClose: () => void; onNavigate: (id: number) => void }
+function SigmaRefBridge({ sigmaRef }) {
+  const sigma = useSigma();
+  useEffect(() => { sigmaRef.current = sigma; return () => { sigmaRef.current = null; }; }, [sigma, sigmaRef]);
+  return null;
+}
 ```
-Returns `null` immediately when `storylineId` is null (no render cost).
 
-**Data:**  Calls `useStorylineDetail(storylineId)` internally (SWR, on-demand, no polling).
+### `StorylineGraph.tsx` — Root orchestrator
+- Stable graphology graph: `useRef(new Graph({ type: 'undirected', multi: false })).current` — **never recreated**, SigmaContainer holds the WebGL context for the session
+- `sigmaRef: MutableRefObject<Sigma | null>` — populated by `SigmaRefBridge`
+- State: `selectedId`, `layoutReady`, `optimizing`, filter states
+- `hoveredNodeRef: MutableRefObject<number | null>` — not React state
+- `egoNeighborIds: Set<number>` — `useMemo` on `useEgoNetwork(selectedId, 0.05)`
+- `communityColorMap` — rank-based (top 15 by count → `COMMUNITY_PALETTE`, rest → `COMMUNITY_OTHER`)
+- `filterState` — `useMemo` combining momentum, entity, ticker highlights
+- Camera API:
+  - `zoomToFit()` → `sigma.getCamera().animatedReset({ duration: 400 })`
+  - `handleNavigate(id)` → reads node attrs, `sigma.getCamera().animate({ x, y, ratio: 0.3 }, { duration: 500 })`
+  - Ticker zoom → bounding box of highlighted nodes, `ratio = min(1, span/400)`
+  - Deep-link `?highlight=<id>` → `handleNavigate` after `layoutReady` + 600ms delay
+- **`SIGMA_SETTINGS`** (stable object, defined outside component):
+  ```ts
+  {
+    renderLabels: true,
+    labelFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    labelSize: 12,
+    labelColor: { color: '#E0E0E0' },
+    labelRenderedSizeThreshold: 8,  // LOD: labels only for nodes size >= 8
+    hideLabelsOnMove: true,
+    defaultEdgeColor: 'rgba(150,190,220,0.08)',
+    defaultNodeColor: '#00A8E8',
+    minCameraRatio: 0.05,
+    maxCameraRatio: 5,
+    enableEdgeEvents: false,
+    hideEdgesOnMove: true,       // critical for 17854 edges
+  }
+  ```
+- HUD shows **"OPTIMIZING LAYOUT…"** badge while FA2 worker is running
 
-**Layout:** Fixed panel `right-4 top-4 bottom-4 w-[450px]`, `z-50`, dark `gray-900/95` background with orange border and backdrop blur.
+### `StorylineDossier.tsx` — Detail side panel
+Unchanged. Props: `{ storylineId, onClose, onNavigate }`. `onNavigate` calls `handleNavigate(id)` in the parent.
 
-**Sections (scrollable content area):**
-
-| Section | Content |
-|---------|---------|
-| Header | Animated pulse dot, "Storyline Dossier" label, title, status badge (color-coded), ID |
-| Momentum Analysis | Score (2 dp), HIGH/MEDIUM/LOW/MINIMAL label, article count, days active, animated progress bar |
-| Summary | LLM-generated summary text |
-| Key Entities | Orange badge list (`key_entities[]`) |
-| Connected Storylines | Clickable list; each triggers `onNavigate(id)` → graph camera centers on that node |
-| Recent Articles | Scrollable (max 300 px), Italian date format (`it-IT`), source label |
-
-**Momentum thresholds:**
-- ≥ 0.8 → HIGH (red-400)
-- ≥ 0.5 → MEDIUM (yellow-400)
-- ≥ 0.3 → LOW (gray-400)
-- < 0.3 → MINIMAL (gray-600)
-
-**Footer:** "CLASSIFIED | NARRATIVE ENGINE | \<today's ISO date\>" monospace label.
-
-## Loading Architecture
+## Component Tree
 
 ```
 app/stories/page.tsx  (Server Component)
-    ├── Metadata/SEO (rendered server-side)
-    └── <GraphLoader>  ('use client')
-            └── dynamic(() => import('./StorylineGraph'), { ssr: false })
-                    ├── <GraphSkeleton>  (bundle download)
-                    └── <StorylineGraph>  (Canvas, browser-only)
-                            ├── useGraphNetwork()  (graph data, 60s poll)
-                            ├── useEgoNetwork(selectedId, 0.05)  (ego subgraph)
-                            └── <StorylineDossier>  (on node click)
+    └── <GraphLoader>  ('use client', SSR disabled)
+            └── <StorylineGraph>  (root state owner)
+                    ├── GraphContext.Provider
+                    ├── <SigmaContainer graph={sigmaGraph} settings={SIGMA_SETTINGS}>
+                    │       ├── <SigmaRefBridge />         — sigma instance → sigmaRef
+                    │       ├── <GraphDataLoader />         — build graph + FA2 worker
+                    │       ├── <GraphEvents />             — click/hover → state/ref
+                    │       └── <GraphStyle />              — nodeReducer + edgeReducer
+                    ├── <CommunityOverlay />               — SVG hull + labels
+                    ├── HUD panel (top-left)
+                    ├── Filter panel (top-right)
+                    └── <StorylineDossier />               — unchanged
 ```
-
-## Dependencies
-
-- **Internal**: `@/hooks/useStories` (`useGraphNetwork`, `useEgoNetwork`, `useStorylineDetail`), `@/types/stories` (`NarrativeStatus`, `GraphNetwork`, `StorylineDetailData`, `EgoNetworkData`)
-- **External**:
-  - `react-force-graph-2d` — Canvas-based force-directed graph (d3-force under the hood)
-  - `next/dynamic` — Dynamic imports with SSR control
-  - `lucide-react` — Icons (X, TrendingUp, FileText, GitBranch, Calendar, Tag)
-  - `react` — `useCallback`, `useRef`, `useState`, `useMemo`
 
 ## Data Flow
 
 ```
 useGraphNetwork()
-    └── SWR GET /api/proxy/stories/graph (60 s poll)
-            └── ForceGraph2D (graphData: { nodes, links })
-                    ├── community coloring (node.community_id → color palette)
-                    ├── community labels (paintFramePost → centroid labels)
-                    ├── momentum slider → filter nodes below threshold
-                    └── node click → setSelectedId(id)
-                            ├── useEgoNetwork(id, 0.05)
-                            │       └── SWR GET /api/proxy/stories/<id>/network
-                            │               └── highlight neighbors, dim non-neighbors (alpha=0.08)
-                            │                   ego edges drawn in orange (alpha=0.9)
-                            └── useStorylineDetail(id)
-                                    └── SWR GET /api/proxy/stories/<id>
-                                            └── StorylineDossier (detail panel)
-                                                    └── onNavigate(id) → handleNavigate → graphRef.centerAt + zoom
+    └── SWR GET /api/proxy/stories/graph (60s poll)
+            └── GraphDataLoader
+                    ├── graph.clear() + rebuild in-place
+                    └── FA2 worker (8s) → positions saved to localStorage
+                            └── sigma WebGL renders graph
+                                    ├── GraphStyle (nodeReducer/edgeReducer)
+                                    │       ├── momentum filter → hidden
+                                    │       ├── entity/ticker filter → dim/hide
+                                    │       ├── ego mode → dim non-neighbors
+                                    │       └── selection → white highlight
+                                    ├── CommunityOverlay (afterRender, 30fps)
+                                    │       └── convex hull SVG per community
+                                    └── node click → setSelectedId(id)
+                                            ├── useEgoNetwork(id, 0.05)
+                                            └── useStorylineDetail(id)
+                                                    └── StorylineDossier panel
 ```
+
+## Performance Patterns
+
+| Pattern | Why |
+|---------|-----|
+| `hoveredNodeRef` (useRef) | hover fires 50+/sec — React state would cascade 1542-node reducer runs |
+| `scheduleRefresh()` (rAF batch) | max one `sigma.refresh()` per frame even with rapid hover events |
+| `CommunityOverlay` DOM mutation | React reconciler at 60fps is the bottleneck — direct SVG DOM avoids it |
+| `afterRender` throttle 30fps | Hull coords don't need 60fps precision |
+| `hideEdgesOnMove: true` | Hides all 17854 edges during pan/zoom for smooth camera movement |
+| `hideLabelsOnMove: true` | No label render during movement |
+| `labelRenderedSizeThreshold: 8` | LOD: only nodes with size ≥ 8 (momentum ≥ 0.5) show labels |
+| `localStorage` layout save | Avoids "explosion" animation on reload |
+| Stable graphology graph ref | SigmaContainer never reinitializes WebGL context on SWR polls |
+
+## Dependencies
+
+- **Internal**: `@/hooks/useStories`, `@/types/stories`, `@/lib/communityColors`
+- **External**:
+  - `@react-sigma/core@5.0.6` — React bindings for Sigma.js v3
+  - `sigma@3.0.3` — WebGL graph renderer
+  - `graphology@0.26.0` — Graph data structure
+  - `graphology-layout-forceatlas2@0.10.1` — FA2 layout (worker + sync)
+  - `next/dynamic` — Dynamic import with SSR control
 
 ## Color Reference
 
-### Community Colors (15-color `COMMUNITY_PALETTE`, assigned by size rank)
-
-The top 15 communities by node count each receive a unique color from the palette. All remaining communities are rendered in `OTHER_COLOR`.
-
-| Rank | Color | Hex |
-|------|-------|-----|
-| 0 | Orange | `#FF6B35` |
-| 1 | Blue | `#00A8E8` |
-| 2 | Purple | `#7B68EE` |
-| 3 | Teal | `#00CED1` |
-| 4 | Gold | `#FFD700` |
-| 5 | Pink | `#FF69B4` |
-| 6 | Green | `#32CD32` |
-| 7 | Red-Orange | `#FF4500` |
-| 8 | Coral | `#FF7F7F` |
-| 9 | Lime | `#ADFF2F` |
-| 10 | Sky Blue | `#87CEEB` |
-| 11 | Orchid | `#DA70D6` |
-| 12 | Spring Green | `#00FA9A` |
-| 13 | Salmon | `#FA8072` |
-| 14 | Steel Blue | `#4682B4` |
-
-### Special Colors
-
-| Purpose | Hex | Usage |
-|---------|-----|-------|
-| Other (minor communities) | `#2A3A4A` | Neutral dark gray for communities outside top 15 |
-| Ego Highlight | `#FFFFFF` | White — ghost nodes (normally `OTHER_COLOR`) highlight to this during ego drill-down |
-
-### Status Colors (fallback when `community_id` is null)
-
-| Status | Canvas fill | Tailwind text | Tailwind badge bg |
-|--------|-------------|---------------|-------------------|
-| emerging | `#FF6B35` | `text-[#FF6B35]` | `bg-[#FF6B35]/20 border-[#FF6B35]/40` |
-| active | `#00A8E8` | `text-[#00A8E8]` | `bg-[#00A8E8]/20 border-[#00A8E8]/40` |
-| stabilized | `#666666` | `text-gray-400` | `bg-gray-500/20 border-gray-500/40` |
+Same `COMMUNITY_PALETTE` and `COMMUNITY_OTHER` as before (see `lib/communityColors.ts`).
+Top 15 communities by node count get `COMMUNITY_PALETTE[rank]`; all others get `COMMUNITY_OTHER = '#2A3A4A'`.
+Selected node color: `#FFFFFF`. Ego edges: `rgba(249,115,22,0.9)` (orange).

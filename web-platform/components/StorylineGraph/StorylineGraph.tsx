@@ -1,52 +1,52 @@
 'use client';
 
+import '@react-sigma/core/lib/style.css';
+
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import ForceGraph2D from 'react-force-graph-2d';
+import { SigmaContainer, useSigma } from '@react-sigma/core';
+import Graph from 'graphology';
+import type Sigma from 'sigma';
 import { useGraphNetwork, useEgoNetwork, useTickerList, useTickerThemes } from '@/hooks/useStories';
 import StorylineDossier from './StorylineDossier';
-import type { NarrativeStatus } from '@/types/stories';
+import GraphDataLoader from './GraphDataLoader';
+import GraphEvents from './GraphEvents';
+import GraphStyle from './GraphStyle';
+import CommunityOverlay from './CommunityOverlay';
+import { GraphContext } from './GraphContext';
+import type { FilterState } from './GraphContext';
 import { HelpModal } from '@/components/HelpModal';
 import type { HelpSection } from '@/components/HelpModal';
-
-const STATUS_COLORS: Record<NarrativeStatus, string> = {
-  emerging: '#FF6B35',
-  active: '#00A8E8',
-  stabilized: '#666666',
-};
-
-interface GraphNode {
-  id: number;
-  title: string;
-  narrative_status: NarrativeStatus;
-  momentum_score: number;
-  article_count: number;
-  category: string | null;
-  community_id?: number | null;
-  community_name?: string | null;
-  key_entities?: string[];
-  x?: number;
-  y?: number;
-}
-
-interface GraphLink {
-  source: number | GraphNode;
-  target: number | GraphNode;
-  weight: number;
-  relation_type: string;
-}
-
 import { COMMUNITY_PALETTE, COMMUNITY_OTHER } from '@/lib/communityColors';
 
-// Top-N palette: 15 perceptually distinct colors for the largest communities.
-// All other communities render in COMMUNITY_OTHER (neutral dark gray).
-// Palette is shared with TacticalMap (/map) for visual consistency.
 const OTHER_COLOR = COMMUNITY_OTHER;
-const EGO_HIGHLIGHT = '#FFFFFF'; // bright highlight for ghost nodes during ego drill-down
 const TOP_N = COMMUNITY_PALETTE.length; // 15
 
-interface StorylineGraphProps {
-  highlightId?: number | null;
+// ── SigmaRefBridge ────────────────────────────────────────────────────────────
+// Bridges the sigma instance (only accessible inside SigmaContainer) to a ref
+// in the parent, so CommunityOverlay and camera controls can use it.
+function SigmaRefBridge({ sigmaRef }: { sigmaRef: React.MutableRefObject<Sigma | null> }) {
+  const sigma = useSigma();
+  useEffect(() => {
+    sigmaRef.current = sigma;
+    return () => { sigmaRef.current = null; };
+  }, [sigma, sigmaRef]);
+  return null;
 }
+
+const SIGMA_SETTINGS = {
+  renderLabels: true,
+  labelFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  labelSize: 12,
+  labelColor: { color: '#E0E0E0' },
+  labelRenderedSizeThreshold: 8,
+  hideLabelsOnMove: true,
+  defaultEdgeColor: 'rgba(150,190,220,0.08)',
+  defaultNodeColor: '#00A8E8',
+  minCameraRatio: 0.05,
+  maxCameraRatio: 5,
+  enableEdgeEvents: false,
+  hideEdgesOnMove: true,
+};
 
 const STORIES_GUIDE_SECTIONS: HelpSection[] = [
   {
@@ -75,14 +75,14 @@ const STORIES_GUIDE_SECTIONS: HelpSection[] = [
     label: 'Ego Network',
     labelColor: 'text-blue-300',
     bgColor: 'bg-blue-500/8 border-blue-500/15',
-    content: 'Click a node to enter ego-network mode: the global graph freezes and the selected node\'s direct neighbors are highlighted. Other nodes become ghost outlines. Click the same node again or press Escape to exit.',
+    content: 'Click a node to enter ego-network mode: the selected node\'s direct neighbors are highlighted. Other nodes become ghost outlines. Click the same node again or press Escape to exit.',
   },
   {
     key: 'filters',
     label: 'Filters',
     labelColor: 'text-green-300',
     bgColor: 'bg-green-500/8 border-green-500/15',
-    content: 'Momentum slider — hide storylines below a minimum momentum. Ticker filter — select a market ticker to highlight storylines related to that asset (e.g. "EURUSD", "GLD"). Community legend — click a community to isolate it.',
+    content: 'Momentum slider — hide storylines below a minimum momentum. Ticker filter — select a market ticker to highlight storylines related to that asset. Community legend — click to isolate.',
     tip: 'Use the ticker filter to find geopolitical narratives with direct market relevance.',
   },
   {
@@ -90,17 +90,27 @@ const STORIES_GUIDE_SECTIONS: HelpSection[] = [
     label: 'Status — Node Age',
     labelColor: 'text-yellow-300',
     bgColor: 'bg-yellow-500/8 border-yellow-500/15',
-    content: 'Emerging — new storylines (< 3 days). Active — developing threads with recent updates. Stabilized — established narratives with lower but steady activity. Only emerging, active, and stabilized storylines appear in the graph.',
+    content: 'Emerging — new storylines (< 3 days). Active — developing threads with recent updates. Stabilized — established narratives with lower but steady activity.',
   },
 ];
 
+interface StorylineGraphProps {
+  highlightId?: number | null;
+}
+
 export default function StorylineGraph({ highlightId = null }: StorylineGraphProps) {
-  const graphRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Stable graphology graph object — never recreated, SigmaContainer holds the WebGL context
+  const sigmaGraph = useRef(new Graph({ type: 'undirected', multi: false })).current;
+  const sigmaRef = useRef<Sigma | null>(null);
+
   const { graph, isLoading, error, refresh } = useGraphNetwork();
+
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+
+  // Filters
   const [minMomentum, setMinMomentum] = useState(0);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [legendExpanded, setLegendExpanded] = useState(false);
@@ -110,731 +120,505 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
   const [titleQuery, setTitleQuery] = useState('');
   const [filterIsolate, setFilterIsolate] = useState(false);
 
+  // hover is a ref — not React state to avoid cascade on enterNode/leaveNode (50+/sec)
+  const hoveredNodeRef = useRef<number | null>(null);
+
   // Ticker hooks
   const { tickers } = useTickerList();
   const { themes } = useTickerThemes(selectedTicker);
 
-  // Ego-network state: loaded on node click, overlay on top of frozen global graph
+  // Ego network
   const { egoNetwork } = useEgoNetwork(selectedId, 0.05);
   const egoNeighborIds = useMemo<Set<number>>(() => {
     if (!egoNetwork || !selectedId) return new Set();
     return new Set([selectedId, ...egoNetwork.neighbors.map((n) => n.id)]);
   }, [egoNetwork, selectedId]);
 
-  // All unique entities from the full (unfiltered) graph data — powers autocomplete
-  const allEntities = useMemo(() =>
-    [...new Set((graph?.nodes ?? []).flatMap(n => n.key_entities || []))]
-      .sort()
-      .filter(e => e.length > 1),
-    [graph]
-  );
+  // Raw graph data (from SWR)
+  const graphData = graph ?? null;
 
-  // Autocomplete suggestions: show up to 15 matches when query >= 2 chars
-  const entitySuggestions = useMemo(() =>
-    entityQuery.length >= 2
-      ? allEntities
-          .filter(e => e.toLowerCase().includes(entityQuery.toLowerCase()))
-          .filter(e => !selectedEntities.includes(e))
-          .slice(0, 15)
-      : [],
-    [allEntities, entityQuery, selectedEntities]
-  );
-
-  // Ticker-correlated storylines
-  const tickerHighlightIds = useMemo<Set<number>>(() => {
-    if (!themes || !themes.themes) return new Set();
-    return new Set(themes.themes.map((t) => t.storyline_id));
-  }, [themes]);
-
-  // Zoom to ticker-relevant nodes when ticker is selected
-  useEffect(() => {
-    if (tickerHighlightIds.size > 0 && graphRef.current) {
-      graphRef.current.zoomToFit(400, 50, (node: GraphNode) => tickerHighlightIds.has(node.id));
-    }
-  }, [tickerHighlightIds]);
-
-  // Transform API data for react-force-graph (with momentum filter)
-  const graphData = useMemo(() => {
-    if (!graph) return { nodes: [], links: [] };
-
-    const allNodes: GraphNode[] = graph.nodes.map((n) => ({
-      id: n.id,
-      title: n.title,
-      narrative_status: n.narrative_status as NarrativeStatus,
-      momentum_score: n.momentum_score,
-      article_count: n.article_count,
-      category: n.category,
-      community_id: n.community_id ?? null,
-      community_name: n.community_name ?? null,
-      key_entities: n.key_entities,
-    }));
-
-    let filteredNodes = minMomentum > 0
-      ? allNodes.filter((n) => n.momentum_score >= minMomentum)
-      : allNodes;
-
-    // Isolate mode: hide non-matching nodes entirely from the graph
-    if (filterIsolate && (selectedEntities.length > 0 || titleQuery.trim())) {
-      filteredNodes = filteredNodes.filter(n => {
-        const entityMatch = selectedEntities.length === 0 ||
-          selectedEntities.some(sel =>
-            n.key_entities?.some(ke => ke.toLowerCase().includes(sel.toLowerCase()))
-          );
-        const titleMatch = !titleQuery.trim() ||
-          n.title.toLowerCase().includes(titleQuery.trim().toLowerCase());
-        return entityMatch && titleMatch;
-      });
-    }
-
-    const filteredIds = new Set(filteredNodes.map((n) => n.id));
-
-    const links: GraphLink[] = graph.links
-      .filter((l) => filteredIds.has(l.source as number) && filteredIds.has(l.target as number))
-      .map((l) => ({
-        source: l.source,
-        target: l.target,
-        weight: l.weight,
-        relation_type: l.relation_type,
-      }));
-
-    return { nodes: filteredNodes, links };
-  }, [graph, minMomentum, filterIsolate, selectedEntities, titleQuery]);
-
-  // Entity/title highlight IDs — used in dim mode (when not isolating)
-  // Must be defined after graphData since it depends on graphData.nodes
-  const entityHighlightIds = useMemo<Set<number>>(() => {
-    const hasFilter = selectedEntities.length > 0 || titleQuery.trim();
-    if (!hasFilter || filterIsolate) return new Set<number>();
-    return new Set(
-      graphData.nodes
-        .filter(n => {
-          const entityMatch = selectedEntities.length === 0 ||
-            selectedEntities.some(sel =>
-              n.key_entities?.some(ke => ke.toLowerCase().includes(sel.toLowerCase()))
-            );
-          const titleMatch = !titleQuery.trim() ||
-            n.title.toLowerCase().includes(titleQuery.trim().toLowerCase());
-          return entityMatch && titleMatch;
-        })
-        .map(n => n.id)
-    );
-  }, [graphData.nodes, selectedEntities, titleQuery, filterIsolate]);
-
-  // Zoom to matching nodes only when entity CHIPS change (not on title typing)
-  // Depends on selectedEntities only — avoids re-firing on every keystroke
-  useEffect(() => {
-    if (selectedEntities.length === 0 || !graphRef.current) return;
-    const timer = setTimeout(() => {
-      graphRef.current?.zoomToFit(400, 80, (node: any) => {
-        const n = node as GraphNode;
-        return selectedEntities.some(sel =>
-          n.key_entities?.some(ke => ke.toLowerCase().includes(sel.toLowerCase()))
-        );
-      });
-    }, 150);
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEntities]);
-
-  // Auto-select node from URL param (deep-link from map → graph)
-  const highlightApplied = useRef(false);
-  useEffect(() => {
-    if (!highlightId || !graph || highlightApplied.current) return;
-    highlightApplied.current = true;
-    setSelectedId(highlightId);
-    // Wait for force simulation to position nodes, then zoom
-    const timer = setTimeout(() => {
-      const node = graphData.nodes.find((n) => n.id === highlightId);
-      if (node && node.x !== undefined && node.y !== undefined && graphRef.current) {
-        graphRef.current.centerAt(node.x, node.y, 500);
-        graphRef.current.zoom(3, 500);
-      }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [highlightId, graph, graphData.nodes]);
-
-  // Compute community sizes + labels, sorted by size descending.
-  // Top N get distinct colors from COMMUNITY_PALETTE; the rest = OTHER_COLOR.
-  const { communityLabels, communityColorMap, othersCount, othersNodes } = useMemo(() => {
-    const communityMap = new Map<number, { count: number; community_name: string | null; entities: Map<string, number> }>();
-
+  // Community rank-based color map
+  const { communityColorMap, communityLabels, othersCount, othersNodes } = useMemo(() => {
+    if (!graphData) return { communityColorMap: new Map<number, string>(), communityLabels: [], othersCount: 0, othersNodes: 0 };
+    const communityMap = new Map<number, { count: number; community_name: string | null }>();
     for (const node of graphData.nodes) {
       const cid = node.community_id;
       if (cid == null) continue;
-      if (!communityMap.has(cid)) {
-        communityMap.set(cid, { count: 0, community_name: node.community_name ?? null, entities: new Map() });
-      }
+      if (!communityMap.has(cid)) communityMap.set(cid, { count: 0, community_name: null });
       const entry = communityMap.get(cid)!;
       entry.count++;
-      // Capture first non-null community_name we find for this community
       if (!entry.community_name && node.community_name) entry.community_name = node.community_name;
-      for (const e of (node.key_entities || []).slice(0, 5)) {
-        entry.entities.set(e, (entry.entities.get(e) || 0) + 1);
-      }
     }
-
     const allSorted = Array.from(communityMap.entries())
-      .map(([cid, { count, community_name, entities }]) => {
-        // LLM name takes priority; fallback to top entity from key_entities
-        const topEntity = [...entities.entries()]
-          .sort((a, b) => b[1] - a[1])[0]?.[0] || `Community ${cid}`;
-        const label = community_name || topEntity;
-        return { cid, label, count };
-      })
+      .map(([cid, { count, community_name }]) => ({ cid, label: community_name || `Community ${cid}`, count }))
       .sort((a, b) => b.count - a.count);
-
-    // Build color map: top N communities → palette index, rest → null
     const colorMap = new Map<number, string>();
     allSorted.forEach(({ cid }, idx) => {
       colorMap.set(cid, idx < TOP_N ? COMMUNITY_PALETTE[idx] : OTHER_COLOR);
     });
-
     return {
-      communityLabels: allSorted.slice(0, TOP_N),
       communityColorMap: colorMap,
+      communityLabels: allSorted.slice(0, TOP_N),
       othersCount: Math.max(0, allSorted.length - TOP_N),
       othersNodes: allSorted.slice(TOP_N).reduce((sum, c) => sum + c.count, 0),
     };
-  }, [graphData.nodes]);
+  }, [graphData]);
 
-  // Compute community centroids for canvas labels (only communities with 3+ nodes)
-  const communityCentroids = useMemo(() => {
-    const groups = new Map<number, { xs: number[]; ys: number[] }>();
-    for (const node of graphData.nodes) {
-      const cid = node.community_id;
-      if (cid == null || node.x == null || node.y == null) continue;
-      if (!groups.has(cid)) groups.set(cid, { xs: [], ys: [] });
-      groups.get(cid)!.xs.push(node.x);
-      groups.get(cid)!.ys.push(node.y);
-    }
-    return new Map(
-      [...groups.entries()]
-        .filter(([, g]) => g.xs.length >= 3)
-        .map(([cid, g]) => [cid, {
-          x: g.xs.reduce((a, b) => a + b, 0) / g.xs.length,
-          y: g.ys.reduce((a, b) => a + b, 0) / g.ys.length,
-          label: communityLabels.find((c) => c.cid === cid)?.label || '',
-        }])
+  // Ticker-correlated storylines
+  const tickerHighlightIds = useMemo<Set<number>>(() => {
+    if (!themes?.themes) return new Set();
+    return new Set(themes.themes.map((t) => t.storyline_id));
+  }, [themes]);
+
+  // Entity/title highlight IDs (dim mode)
+  const entityHighlightIds = useMemo<Set<number>>(() => {
+    const hasFilter = selectedEntities.length > 0 || titleQuery.trim();
+    if (!hasFilter || filterIsolate || !graphData) return new Set<number>();
+    return new Set(
+      graphData.nodes
+        .filter((n) => {
+          const entityMatch =
+            selectedEntities.length === 0 ||
+            selectedEntities.some((sel) =>
+              n.key_entities?.some((ke) => ke.toLowerCase().includes(sel.toLowerCase()))
+            );
+          const titleMatch = !titleQuery.trim() || n.title.toLowerCase().includes(titleQuery.trim().toLowerCase());
+          return entityMatch && titleMatch;
+        })
+        .map((n) => n.id)
     );
-  }, [graphData.nodes, communityLabels]);
+  }, [graphData, selectedEntities, titleQuery, filterIsolate]);
 
-  // Node rendering
-  const paintNode = useCallback(
-    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const { x, y, title, momentum_score, narrative_status } = node as GraphNode;
-      if (x === undefined || y === undefined) return;
+  // Filter state passed into context
+  const filterState = useMemo<FilterState>(() => {
+    const highlightIds =
+      tickerHighlightIds.size > 0 ? tickerHighlightIds : entityHighlightIds;
+    return { momentumMin: minMomentum, isolate: filterIsolate, highlightIds };
+  }, [minMomentum, filterIsolate, tickerHighlightIds, entityHighlightIds]);
 
-      const isSelected = node.id === selectedId;
-      const isHovered = hoveredNode?.id === node.id;
-      const isEgoActive = egoNeighborIds.size > 0;
-      const isNeighbor = egoNeighborIds.has(node.id);
-
-      // Use ranked community color (top N = distinct, rest = gray), fallback to status.
-      // In ego mode, ghost nodes that are neighbors get a bright highlight.
-      const communityId = (node as GraphNode).community_id;
-      const baseColor = communityId != null
-        ? (communityColorMap.get(communityId) || OTHER_COLOR)
-        : (STATUS_COLORS[narrative_status] || STATUS_COLORS.active);
-      const isGhost = baseColor === OTHER_COLOR;
-      const color = (isEgoActive && isNeighbor && isGhost) ? EGO_HIGHLIGHT : baseColor;
-
-      // Dim non-neighbor nodes when ego mode is active.
-      // Momentum-as-brightness: low momentum = dimmer, high = full.
-      // Clamped to [0.5, 1.0] so even dormant nodes stay visible.
-      const momentumBrightness = Math.max(0.5, Math.min(1.0, 0.5 + momentum_score * 0.5));
-
-      // Ticker filter: dim non-highlighted nodes (ego mode takes precedence)
-      let alpha = momentumBrightness;
-      if (isEgoActive && !isNeighbor) {
-        alpha = 0.05;
-      } else if (!isEgoActive) {
-        const hasActiveFilter = tickerHighlightIds.size > 0 || entityHighlightIds.size > 0;
-        const isHighlighted = tickerHighlightIds.has(node.id) || entityHighlightIds.has(node.id);
-        if (hasActiveFilter && !isHighlighted) {
-          alpha = 0.08;
-        }
-      }
-      ctx.globalAlpha = alpha;
-
-      // Node radius based on momentum (min 4, max 16)
-      const radius = 4 + momentum_score * 12;
-
-      // Glow effect for selected/hovered
-      if (isSelected || isHovered) {
-        ctx.beginPath();
-        ctx.arc(x, y, radius + 4, 0, 2 * Math.PI);
-        ctx.fillStyle = `${color}33`;
-        ctx.fill();
-      }
-
-      // Main circle
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, 2 * Math.PI);
-      ctx.fillStyle = isSelected ? '#FFFFFF' : color;
-      ctx.fill();
-
-      // Border
-      ctx.strokeStyle = isSelected ? color : `${color}88`;
-      ctx.lineWidth = isSelected ? 2 : 1;
-      ctx.stroke();
-
-      // Label: only show on hover, selection, or ego-network neighbors
-      if (isHovered || isSelected || (isEgoActive && isNeighbor)) {
-        ctx.globalAlpha = 1.0; // labels always at full opacity for readability
-        const label = title.length > 30 ? title.slice(0, 30) + '...' : title;
-        const fontSize = Math.max(10 / globalScale, 3);
-        ctx.font = `${fontSize}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-
-        // Text background
-        const textWidth = ctx.measureText(label).width;
-        ctx.fillStyle = 'rgba(10, 22, 40, 0.92)';
-        ctx.fillRect(
-          x - textWidth / 2 - 2,
-          y + radius + 2,
-          textWidth + 4,
-          fontSize + 4
-        );
-
-        // Text
-        ctx.fillStyle = isSelected ? '#FFFFFF' : '#CCCCCC';
-        ctx.fillText(label, x, y + radius + 4);
-      }
-
-      // Reset alpha so subsequent canvas draws are unaffected
-      ctx.globalAlpha = 1.0;
-    },
-    [selectedId, hoveredNode, egoNeighborIds, communityColorMap, tickerHighlightIds, entityHighlightIds]
+  // Entity autocomplete
+  const allEntities = useMemo(
+    () =>
+      [...new Set((graphData?.nodes ?? []).flatMap((n) => n.key_entities || []))]
+        .sort()
+        .filter((e) => e.length > 1),
+    [graphData]
+  );
+  const entitySuggestions = useMemo(
+    () =>
+      entityQuery.length >= 2
+        ? allEntities
+            .filter((e) => e.toLowerCase().includes(entityQuery.toLowerCase()))
+            .filter((e) => !selectedEntities.includes(e))
+            .slice(0, 15)
+        : [],
+    [allEntities, entityQuery, selectedEntities]
   );
 
-  // Community label overlay drawn after all nodes
-  const paintFramePost = useCallback(
-    (ctx: CanvasRenderingContext2D) => {
-      if (communityCentroids.size === 0) return;
-      ctx.save();
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+  // ── Camera helpers ──────────────────────────────────────────────────────────
 
-      for (const [cid, { x, y, label }] of communityCentroids) {
-        if (!label) continue;
-        const color = communityColorMap.get(cid) || OTHER_COLOR;
-        ctx.font = 'bold 18px monospace';
-        ctx.globalAlpha = 0.22;
-        ctx.fillStyle = color;
-        ctx.fillText(label.toUpperCase(), x, y);
-      }
-      ctx.restore();
-    },
-    [communityCentroids, communityColorMap]
-  );
-
-  // Link rendering
-  const paintLink = useCallback(
-    (link: any, ctx: CanvasRenderingContext2D) => {
-      const { source, target, weight } = link;
-      if (!source.x || !target.x) return;
-
-      const isEgoActive = egoNeighborIds.size > 0;
-      const srcId = typeof source === 'object' ? source.id : source;
-      const tgtId = typeof target === 'object' ? target.id : target;
-      const isEgoEdge = egoNeighborIds.has(srcId) && egoNeighborIds.has(tgtId);
-
-      // Dim non-ego links; brighten ego links
-      const alpha = isEgoActive ? (isEgoEdge ? 0.9 : 0.03) : (0.2 + weight * 0.6);
-      const lineWidth = isEgoActive && isEgoEdge ? 2.5 + weight * 1.5 : 0.5 + weight * 2.0;
-
-      ctx.beginPath();
-      ctx.moveTo(source.x, source.y);
-      ctx.lineTo(target.x, target.y);
-      ctx.strokeStyle = isEgoEdge
-        ? `rgba(249, 115, 22, ${alpha})`
-        : `rgba(150, 190, 220, ${0.06 + weight * 0.18})`;
-      ctx.lineWidth = lineWidth;
-      ctx.stroke();
-    },
-    [egoNeighborIds]
-  );
-
-  // Configure D3 forces for a more open "galaxy" layout
-  useEffect(() => {
-    const fg = graphRef.current;
-    if (!fg) return;
-    fg.d3Force('charge').strength(-200);
-    fg.d3Force('link').distance(80);
-    fg.d3Force('center').strength(0.05);
-    fg.d3ReheatSimulation();
-  }, []);
-
-  const handleNodeClick = useCallback((node: any) => {
-    setSelectedId((prev) => (prev === node.id ? null : node.id));
+  const zoomToFit = useCallback(() => {
+    sigmaRef.current?.getCamera().animatedReset({ duration: 400 });
   }, []);
 
   const handleNavigate = useCallback((id: number) => {
     setSelectedId(id);
-    if (graphRef.current) {
-      const node = graphData.nodes.find((n) => n.id === id);
-      if (node && node.x !== undefined && node.y !== undefined) {
-        graphRef.current.centerAt(node.x, node.y, 500);
-        graphRef.current.zoom(3, 500);
-      }
-    }
-  }, [graphData.nodes]);
+    const sigma = sigmaRef.current;
+    if (!sigma) return;
+    try {
+      const attrs = sigma.getGraph().getNodeAttributes(String(id));
+      sigma.getCamera().animate({ x: attrs.x as number, y: attrs.y as number, ratio: 0.3 }, { duration: 500 });
+    } catch { /* node not in graph */ }
+  }, []);
+
+  // Zoom to ticker bounding box when selectedTicker changes
+  useEffect(() => {
+    if (tickerHighlightIds.size === 0 || !sigmaRef.current || !layoutReady) return;
+    const sigma = sigmaRef.current;
+    const graph = sigma.getGraph();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    tickerHighlightIds.forEach((id) => {
+      try {
+        const attrs = graph.getNodeAttributes(String(id));
+        if (attrs.x != null && attrs.y != null) {
+          minX = Math.min(minX, attrs.x as number);
+          minY = Math.min(minY, attrs.y as number);
+          maxX = Math.max(maxX, attrs.x as number);
+          maxY = Math.max(maxY, attrs.y as number);
+        }
+      } catch { /* ignore */ }
+    });
+    if (minX === Infinity) return;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const span = Math.max(maxX - minX, maxY - minY, 1);
+    // ratio: smaller = more zoomed in
+    const ratio = Math.min(1, span / 400);
+    sigma.getCamera().animate({ x: cx, y: cy, ratio }, { duration: 500 });
+  }, [tickerHighlightIds, layoutReady]);
+
+  // Deep-link ?highlight=<id> — navigate after layout is ready
+  const highlightApplied = useRef(false);
+  useEffect(() => {
+    if (!highlightId || !layoutReady || highlightApplied.current) return;
+    highlightApplied.current = true;
+    const timer = setTimeout(() => {
+      handleNavigate(highlightId);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [highlightId, layoutReady, handleNavigate]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-[100dvh] bg-[#0A1628] overflow-hidden">
-      {/* Force Graph */}
-      <ForceGraph2D
-        ref={graphRef}
-        graphData={graphData}
-        nodeId="id"
-        nodeCanvasObject={paintNode}
-        nodePointerAreaPaint={(node: any, color, ctx) => {
-          const radius = 4 + (node.momentum_score || 0.5) * 12;
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, radius + 4, 0, 2 * Math.PI);
-          ctx.fillStyle = color;
-          ctx.fill();
-        }}
-        linkCanvasObject={paintLink}
-        onRenderFramePost={paintFramePost}
-        onNodeClick={handleNodeClick}
-        onNodeHover={(node: any) => setHoveredNode(node || null)}
-        backgroundColor="#0A1628"
-        warmupTicks={300}
-        cooldownTicks={200}
-        d3AlphaDecay={0.05}
-        d3VelocityDecay={0.4}
-        linkDirectionalParticles={0}
-        enableNodeDrag={true}
-        enableZoomInteraction={true}
-        enablePanInteraction={true}
-      />
+    <GraphContext.Provider
+      value={{
+        selectedId,
+        setSelectedId,
+        hoveredNodeRef,
+        egoNeighborIds,
+        filterState,
+        communityColorMap,
+      }}
+    >
+      <div className="relative w-full h-[100dvh] bg-[#0A1628] overflow-hidden">
+        {/* Sigma WebGL canvas */}
+        <SigmaContainer
+          graph={sigmaGraph}
+          settings={SIGMA_SETTINGS}
+          style={{ width: '100%', height: '100%', background: '#0A1628' }}
+        >
+          <SigmaRefBridge sigmaRef={sigmaRef} />
+          <GraphDataLoader
+            graphData={graphData}
+            communityColorMap={communityColorMap}
+            onLayoutReady={() => setLayoutReady(true)}
+            onOptimizing={setOptimizing}
+          />
+          <GraphEvents />
+          <GraphStyle />
+        </SigmaContainer>
 
-      {/* HUD Overlay - Top Left */}
-      <div className="absolute top-4 left-4 pointer-events-none">
-        <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-[#FF6B35]/30 rounded px-4 py-3">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-2 h-2 bg-[#FF6B35] rounded-full animate-pulse" />
-            <span className="text-[#FF6B35] font-mono text-sm font-bold tracking-wider">
-              NARRATIVE GRAPH
-            </span>
-          </div>
-          {graph?.stats && (
-            <div className="space-y-1 text-xs font-mono text-gray-400">
-              <div>NODES: <span className="text-white">{graph.stats.total_nodes}</span></div>
-              <div>EDGES: <span className="text-white">{graph.stats.total_edges}</span></div>
-              <div>COMMUNITIES: <span className="text-white">{graph.stats.communities_count || '—'}</span></div>
-              <div>AVG MOMENTUM: <span className="text-white">{graph.stats.avg_momentum.toFixed(2)}</span></div>
-              <div>EDGES/NODE: <span className="text-white">{graph.stats.avg_edges_per_node?.toFixed(1) || '—'}</span></div>
-            </div>
-          )}
-        </div>
-      </div>
+        {/* Community hull + labels SVG overlay (outside SigmaContainer) */}
+        {layoutReady && graphData && (
+          <CommunityOverlay
+            sigmaRef={sigmaRef}
+            nodes={graphData.nodes}
+            communityColorMap={communityColorMap}
+            communityLabels={communityLabels}
+          />
+        )}
 
-      {/* Momentum filter + Dynamic community legend - Top Right */}
-      <div className="absolute top-4 right-4 pointer-events-auto">
-        {!selectedId && (
-          <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-white/10 rounded px-4 py-3 w-[220px]">
-            {/* Entity filter — autocomplete + chips */}
-            <div className="mb-3">
-              <label className="text-xs text-gray-400 uppercase tracking-wider block mb-1">
-                Filter by Entity
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={entityQuery}
-                  onChange={(e) => {
-                    setEntityQuery(e.target.value);
-                    setShowEntityDropdown(true);
-                  }}
-                  onFocus={() => setShowEntityDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowEntityDropdown(false), 150)}
-                  placeholder="e.g. Russia, Kazakhstan…"
-                  className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 placeholder-gray-600 focus:outline-none focus:border-white/25"
-                />
-                {showEntityDropdown && entitySuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-0.5 bg-[#0A1628] border border-white/15 rounded shadow-lg z-50 max-h-40 overflow-y-auto">
-                    {entitySuggestions.map(e => (
-                      <button
-                        key={e}
-                        type="button"
-                        onMouseDown={() => {
-                          setSelectedEntities(prev => [...prev, e]);
-                          setEntityQuery('');
-                          setShowEntityDropdown(false);
-                        }}
-                        className="w-full text-left text-xs font-mono text-gray-300 px-2 py-1 hover:bg-white/10 transition-colors truncate"
-                      >
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* Selected entity chips */}
-              {selectedEntities.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1.5">
-                  {selectedEntities.map(e => (
-                    <span
-                      key={e}
-                      className="inline-flex items-center gap-1 bg-[#FF6B35]/20 border border-[#FF6B35]/30 rounded px-1.5 py-0.5 text-[10px] font-mono text-[#FF6B35] max-w-[120px]"
-                    >
-                      <span className="truncate">{e}</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEntities(prev => prev.filter(x => x !== e))}
-                        className="flex-shrink-0 hover:text-white transition-colors leading-none"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedEntities([])}
-                    className="text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors px-1"
-                  >
-                    clear all
-                  </button>
-                </div>
+        {/* HUD — Top Left */}
+        <div className="absolute top-4 left-4 pointer-events-none">
+          <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-[#FF6B35]/30 rounded px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 bg-[#FF6B35] rounded-full animate-pulse" />
+              <span className="text-[#FF6B35] font-mono text-sm font-bold tracking-wider">
+                NARRATIVE GRAPH
+              </span>
+              {optimizing && (
+                <span className="text-[10px] font-mono text-yellow-400/70 ml-1 animate-pulse">
+                  OPTIMIZING LAYOUT…
+                </span>
               )}
             </div>
-
-            {/* Storyline title search */}
-            <div className="mb-3">
-              <label className="text-xs text-gray-400 uppercase tracking-wider block mb-1">
-                Search by Title
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={titleQuery}
-                  onChange={(e) => setTitleQuery(e.target.value)}
-                  placeholder="Keyword in title…"
-                  className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 pr-6 placeholder-gray-600 focus:outline-none focus:border-white/25"
-                />
-                {titleQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setTitleQuery('')}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors text-xs"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Isolate toggle — only shown when a filter is active */}
-            {(selectedEntities.length > 0 || titleQuery.trim()) && (
-              <div className="mb-3 flex items-center gap-2">
-                <input
-                  id="filter-isolate"
-                  type="checkbox"
-                  checked={filterIsolate}
-                  onChange={(e) => setFilterIsolate(e.target.checked)}
-                  className="w-3 h-3 accent-[#FF6B35] cursor-pointer"
-                />
-                <label
-                  htmlFor="filter-isolate"
-                  className="text-xs font-mono text-gray-400 cursor-pointer select-none"
-                >
-                  Show only matches
-                </label>
+            {graph?.stats && (
+              <div className="space-y-1 text-xs font-mono text-gray-400">
+                <div>NODES: <span className="text-white">{graph.stats.total_nodes}</span></div>
+                <div>EDGES: <span className="text-white">{graph.stats.total_edges}</span></div>
+                <div>COMMUNITIES: <span className="text-white">{graph.stats.communities_count || '—'}</span></div>
+                <div>AVG MOMENTUM: <span className="text-white">{graph.stats.avg_momentum.toFixed(2)}</span></div>
+                <div>EDGES/NODE: <span className="text-white">{graph.stats.avg_edges_per_node?.toFixed(1) || '—'}</span></div>
               </div>
             )}
+            {layoutReady && (
+              <button
+                type="button"
+                onClick={zoomToFit}
+                className="pointer-events-auto mt-2 w-full text-[10px] font-mono text-gray-500 hover:text-gray-300 border border-white/10 rounded px-2 py-1 transition-colors"
+              >
+                ⊞ Zoom to Fit
+              </button>
+            )}
+          </div>
+        </div>
 
-            {/* Ticker filter dropdown */}
-            {tickers && (
+        {/* Filters — Top Right */}
+        <div className="absolute top-4 right-4 pointer-events-auto">
+          {!selectedId && (
+            <div className="bg-[#0A1628]/80 backdrop-blur-sm border border-white/10 rounded px-4 py-3 w-[220px]">
+              {/* Entity filter */}
               <div className="mb-3">
                 <label className="text-xs text-gray-400 uppercase tracking-wider block mb-1">
-                  Filter by Ticker
+                  Filter by Entity
                 </label>
-                <select
-                  aria-label="Filter storylines by market ticker"
-                  value={selectedTicker ?? ''}
-                  onChange={(e) => setSelectedTicker(e.target.value || null)}
-                  className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 cursor-pointer"
-                >
-                  <option value="">All Tickers</option>
-                  {Object.entries(tickers.categories).map(([cat, entries]) => (
-                    <optgroup key={cat} label={cat.toUpperCase()}>
-                      {entries.map((e) => (
-                        <option key={e.ticker} value={e.ticker}>
-                          {e.ticker} — {e.name}
-                        </option>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={entityQuery}
+                    onChange={(e) => {
+                      setEntityQuery(e.target.value);
+                      setShowEntityDropdown(true);
+                    }}
+                    onFocus={() => setShowEntityDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowEntityDropdown(false), 150)}
+                    placeholder="e.g. Russia, Kazakhstan…"
+                    className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 placeholder-gray-600 focus:outline-none focus:border-white/25"
+                  />
+                  {showEntityDropdown && entitySuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-0.5 bg-[#0A1628] border border-white/15 rounded shadow-lg z-50 max-h-40 overflow-y-auto">
+                      {entitySuggestions.map((e) => (
+                        <button
+                          key={e}
+                          type="button"
+                          onMouseDown={() => {
+                            setSelectedEntities((prev) => [...prev, e]);
+                            setEntityQuery('');
+                            setShowEntityDropdown(false);
+                          }}
+                          className="w-full text-left text-xs font-mono text-gray-300 px-2 py-1 hover:bg-white/10 transition-colors truncate"
+                        >
+                          {e}
+                        </button>
                       ))}
-                    </optgroup>
-                  ))}
-                </select>
-                {selectedTicker && (
-                  <button
-                    onClick={() => setSelectedTicker(null)}
-                    className="mt-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                    type="button"
-                  >
-                    Clear filter ×
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Momentum slider */}
-            <div className="mb-3">
-              <div className="flex justify-between text-xs font-mono text-gray-500 mb-1">
-                <span className="uppercase">Min Momentum</span>
-                <span className="text-white">{minMomentum.toFixed(1)}</span>
-              </div>
-              <input
-                type="range"
-                aria-label="Minimum momentum filter"
-                min={0}
-                max={1}
-                step={0.1}
-                value={minMomentum}
-                onChange={(e) => setMinMomentum(parseFloat(e.target.value))}
-                className="w-full h-1 accent-[#FF6B35] cursor-pointer"
-              />
-            </div>
-
-            {/* Dynamic community legend — collapsible */}
-            {communityLabels.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setLegendExpanded((v) => !v)}
-                  className="flex items-center justify-between w-full text-xs font-mono text-gray-500 mb-2 uppercase hover:text-gray-300 transition-colors"
-                >
-                  <span>Communities ({communityLabels.length + (othersCount > 0 ? 1 : 0)})</span>
-                  <span className="ml-2 text-gray-600">{legendExpanded ? '▲' : '▼'}</span>
-                </button>
-                {legendExpanded && (
-                  <div className="space-y-1.5">
-                    {communityLabels.map(({ cid, label, count }) => (
-                      <div key={cid} className="flex items-start gap-2">
-                        <div
-                          className="w-3 h-3 rounded-full flex-shrink-0 mt-0.5"
-                          style={{ backgroundColor: communityColorMap.get(cid) || OTHER_COLOR }}
-                        />
-                        <span className="text-xs font-mono text-gray-300 flex-1 leading-tight">
-                          {label}
-                        </span>
-                        <span className="text-xs font-mono text-gray-600 flex-shrink-0">{count}</span>
-                      </div>
+                    </div>
+                  )}
+                </div>
+                {selectedEntities.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {selectedEntities.map((e) => (
+                      <span
+                        key={e}
+                        className="inline-flex items-center gap-1 bg-[#FF6B35]/20 border border-[#FF6B35]/30 rounded px-1.5 py-0.5 text-[10px] font-mono text-[#FF6B35] max-w-[120px]"
+                      >
+                        <span className="truncate">{e}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedEntities((prev) => prev.filter((x) => x !== e))}
+                          className="flex-shrink-0 hover:text-white transition-colors leading-none"
+                        >
+                          ×
+                        </button>
+                      </span>
                     ))}
-                    {/* "Others" row */}
-                    {othersCount > 0 && (
-                      <div className="flex items-center gap-2 mt-1 pt-1 border-t border-white/5">
-                        <div
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: OTHER_COLOR }}
-                        />
-                        <span className="text-xs font-mono text-gray-500 flex-1">
-                          Others ({othersCount})
-                        </span>
-                        <span className="text-xs font-mono text-gray-600 flex-shrink-0">{othersNodes}</span>
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedEntities([])}
+                      className="text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors px-1"
+                    >
+                      clear all
+                    </button>
                   </div>
                 )}
-              </>
-            )}
+              </div>
+
+              {/* Title search */}
+              <div className="mb-3">
+                <label className="text-xs text-gray-400 uppercase tracking-wider block mb-1">
+                  Search by Title
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={titleQuery}
+                    onChange={(e) => setTitleQuery(e.target.value)}
+                    placeholder="Keyword in title…"
+                    className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 pr-6 placeholder-gray-600 focus:outline-none focus:border-white/25"
+                  />
+                  {titleQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setTitleQuery('')}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors text-xs"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Isolate toggle */}
+              {(selectedEntities.length > 0 || titleQuery.trim()) && (
+                <div className="mb-3 flex items-center gap-2">
+                  <input
+                    id="filter-isolate"
+                    type="checkbox"
+                    checked={filterIsolate}
+                    onChange={(e) => setFilterIsolate(e.target.checked)}
+                    className="w-3 h-3 accent-[#FF6B35] cursor-pointer"
+                  />
+                  <label
+                    htmlFor="filter-isolate"
+                    className="text-xs font-mono text-gray-400 cursor-pointer select-none"
+                  >
+                    Show only matches
+                  </label>
+                </div>
+              )}
+
+              {/* Ticker filter */}
+              {tickers && (
+                <div className="mb-3">
+                  <label className="text-xs text-gray-400 uppercase tracking-wider block mb-1">
+                    Filter by Ticker
+                  </label>
+                  <select
+                    aria-label="Filter storylines by market ticker"
+                    value={selectedTicker ?? ''}
+                    onChange={(e) => setSelectedTicker(e.target.value || null)}
+                    className="w-full bg-black/60 border border-white/10 rounded text-xs text-gray-300 px-2 py-1.5 cursor-pointer"
+                  >
+                    <option value="">All Tickers</option>
+                    {Object.entries(tickers.categories).map(([cat, entries]) => (
+                      <optgroup key={cat} label={cat.toUpperCase()}>
+                        {entries.map((e) => (
+                          <option key={e.ticker} value={e.ticker}>
+                            {e.ticker} — {e.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  {selectedTicker && (
+                    <button
+                      onClick={() => setSelectedTicker(null)}
+                      className="mt-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                      type="button"
+                    >
+                      Clear filter ×
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Momentum slider */}
+              <div className="mb-3">
+                <div className="flex justify-between text-xs font-mono text-gray-500 mb-1">
+                  <span className="uppercase">Min Momentum</span>
+                  <span className="text-white">{minMomentum.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  aria-label="Minimum momentum filter"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={minMomentum}
+                  onChange={(e) => setMinMomentum(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-[#FF6B35] cursor-pointer"
+                />
+              </div>
+
+              {/* Community legend */}
+              {communityLabels.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setLegendExpanded((v) => !v)}
+                    className="flex items-center justify-between w-full text-xs font-mono text-gray-500 mb-2 uppercase hover:text-gray-300 transition-colors"
+                  >
+                    <span>Communities ({communityLabels.length + (othersCount > 0 ? 1 : 0)})</span>
+                    <span className="ml-2 text-gray-600">{legendExpanded ? '▲' : '▼'}</span>
+                  </button>
+                  {legendExpanded && (
+                    <div className="space-y-1.5">
+                      {communityLabels.map(({ cid, label, count }) => (
+                        <div key={cid} className="flex items-start gap-2">
+                          <div
+                            className="w-3 h-3 rounded-full flex-shrink-0 mt-0.5"
+                            style={{ backgroundColor: communityColorMap.get(cid) || OTHER_COLOR }}
+                          />
+                          <span className="text-xs font-mono text-gray-300 flex-1 leading-tight">{label}</span>
+                          <span className="text-xs font-mono text-gray-600 flex-shrink-0">{count}</span>
+                        </div>
+                      ))}
+                      {othersCount > 0 && (
+                        <div className="flex items-center gap-2 mt-1 pt-1 border-t border-white/5">
+                          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: OTHER_COLOR }} />
+                          <span className="text-xs font-mono text-gray-500 flex-1">Others ({othersCount})</span>
+                          <span className="text-xs font-mono text-gray-600 flex-shrink-0">{othersNodes}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Help button */}
+          <button
+            type="button"
+            onClick={() => setShowHelp(true)}
+            className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded border border-white/10 bg-[#0A1628]/80 backdrop-blur-sm text-gray-400 hover:text-white hover:border-white/30 transition-all font-mono text-[10px] uppercase tracking-wider w-full justify-center"
+          >
+            ? Guide
+          </button>
+        </div>
+
+        {/* Loading overlay */}
+        {isLoading && !graph && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0A1628]/80">
+            <div className="text-center">
+              <div className="w-12 h-12 border-2 border-[#FF6B35] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+              <div className="text-[#FF6B35] font-mono text-sm">Loading graph data...</div>
+            </div>
           </div>
         )}
 
-        {/* Help button — always visible below the controls panel */}
-        <button
-          type="button"
-          onClick={() => setShowHelp(true)}
-          className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded border border-white/10 bg-[#0A1628]/80 backdrop-blur-sm text-gray-400 hover:text-white hover:border-white/30 transition-all font-mono text-[10px] uppercase tracking-wider w-full justify-center"
-        >
-          ? Guide
-        </button>
+        {/* Error state */}
+        {error && !graph && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0A1628]/80">
+            <div className="text-center max-w-md">
+              <div className="text-red-400 font-mono text-lg mb-2">Connection Error</div>
+              <div className="text-gray-400 font-mono text-sm mb-4">
+                Unable to load narrative graph data. Make sure the API server is running.
+              </div>
+              <button
+                type="button"
+                onClick={() => refresh()}
+                className="px-4 py-2 bg-[#FF6B35]/20 border border-[#FF6B35]/40 text-[#FF6B35] font-mono text-sm rounded hover:bg-[#FF6B35]/30 transition-colors"
+              >
+                RETRY
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && !error && graph && graph.nodes.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-gray-500 font-mono text-lg mb-2">No Active Storylines</div>
+              <div className="text-gray-600 font-mono text-sm">
+                Run the narrative pipeline to generate storylines.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Storyline Dossier Panel */}
+        <StorylineDossier
+          storylineId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onNavigate={handleNavigate}
+        />
+
+        {/* Corner brackets */}
+        <div className="absolute top-2 left-2 w-8 h-8 border-l-2 border-t-2 border-[#FF6B35]/30 pointer-events-none" />
+        <div className="absolute top-2 right-2 w-8 h-8 border-r-2 border-t-2 border-[#FF6B35]/30 pointer-events-none" />
+        <div className="absolute bottom-2 left-2 w-8 h-8 border-l-2 border-b-2 border-[#FF6B35]/30 pointer-events-none" />
+        <div className="absolute bottom-2 right-2 w-8 h-8 border-r-2 border-b-2 border-[#FF6B35]/30 pointer-events-none" />
+
+        {/* Help modal */}
+        <HelpModal
+          open={showHelp}
+          onClose={() => setShowHelp(false)}
+          title="Narrative Graph Guide"
+          subtitle="How to navigate the storyline network"
+          intro="The Narrative Graph is a WebGL network of active geopolitical storylines rendered with Sigma.js. Nodes are storylines; edges are narrative connections based on shared entities. The layout is computed by ForceAtlas2 in a web worker."
+          sections={STORIES_GUIDE_SECTIONS}
+        />
       </div>
-
-      {/* Hovered node tooltip */}
-      {hoveredNode && !selectedId && (
-        <div className="absolute bottom-4 left-4 pointer-events-none">
-          <div className="bg-[#0A1628]/90 backdrop-blur-sm border border-[#FF6B35]/30 rounded px-4 py-3 max-w-sm">
-            <div className="text-white font-mono text-sm font-bold mb-1">
-              {hoveredNode.title}
-            </div>
-            <div className="flex items-center gap-3 text-xs font-mono text-gray-400">
-              <span>Momentum: <span className="text-[#FF6B35]">{hoveredNode.momentum_score.toFixed(2)}</span></span>
-              <span>Articles: <span className="text-white">{hoveredNode.article_count}</span></span>
-              {hoveredNode.category && (
-                <span className="text-[#00A8E8]">{hoveredNode.category}</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading overlay */}
-      {isLoading && !graph && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#0A1628]/80">
-          <div className="text-center">
-            <div className="w-12 h-12 border-2 border-[#FF6B35] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <div className="text-[#FF6B35] font-mono text-sm">Loading graph data...</div>
-          </div>
-        </div>
-      )}
-
-      {/* Error state */}
-      {error && !graph && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#0A1628]/80">
-          <div className="text-center max-w-md">
-            <div className="text-red-400 font-mono text-lg mb-2">Connection Error</div>
-            <div className="text-gray-400 font-mono text-sm mb-4">
-              Unable to load narrative graph data. Make sure the API server is running.
-            </div>
-            <button
-              type="button"
-              onClick={() => refresh()}
-              className="px-4 py-2 bg-[#FF6B35]/20 border border-[#FF6B35]/40 text-[#FF6B35] font-mono text-sm rounded hover:bg-[#FF6B35]/30 transition-colors"
-            >
-              RETRY
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!isLoading && !error && graph && graph.nodes.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-gray-500 font-mono text-lg mb-2">No Active Storylines</div>
-            <div className="text-gray-600 font-mono text-sm">
-              Run the narrative pipeline to generate storylines.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Storyline Dossier Panel */}
-      <StorylineDossier
-        storylineId={selectedId}
-        onClose={() => setSelectedId(null)}
-        onNavigate={handleNavigate}
-      />
-
-      {/* Corner brackets */}
-      <div className="absolute top-2 left-2 w-8 h-8 border-l-2 border-t-2 border-[#FF6B35]/30 pointer-events-none" />
-      <div className="absolute top-2 right-2 w-8 h-8 border-r-2 border-t-2 border-[#FF6B35]/30 pointer-events-none" />
-      <div className="absolute bottom-2 left-2 w-8 h-8 border-l-2 border-b-2 border-[#FF6B35]/30 pointer-events-none" />
-      <div className="absolute bottom-2 right-2 w-8 h-8 border-r-2 border-b-2 border-[#FF6B35]/30 pointer-events-none" />
-
-      {/* Narrative graph guide modal */}
-      <HelpModal
-        open={showHelp}
-        onClose={() => setShowHelp(false)}
-        title="Narrative Graph Guide"
-        subtitle="How to navigate the storyline network"
-        intro="The Narrative Graph is a force-directed network of active geopolitical storylines. Nodes are storylines; edges are narrative connections based on shared entities. The layout is computed continuously — drag nodes to reorganise."
-        sections={STORIES_GUIDE_SECTIONS}
-      />
-    </div>
+    </GraphContext.Provider>
   );
 }
