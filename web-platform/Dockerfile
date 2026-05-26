@@ -1,6 +1,10 @@
 # Stage 1: Install dependencies
 FROM node:20-alpine AS deps
 WORKDIR /app
+# DEPLOY_SHA busts this layer on every deploy so npm ci always runs with the latest lock file.
+# npm package downloads remain fast via the BuildKit cache mount.
+ARG DEPLOY_SHA=unknown
+RUN echo "Deps SHA: $DEPLOY_SHA"
 COPY package.json package-lock.json ./
 # BuildKit cache mount: keeps npm package cache across builds (fast even with --no-cache)
 RUN --mount=type=cache,target=/root/.npm \

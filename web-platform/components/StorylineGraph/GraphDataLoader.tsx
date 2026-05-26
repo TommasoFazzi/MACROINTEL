@@ -135,7 +135,7 @@ export default function GraphDataLoader({
         // Persist layout
         try {
           const positions: Record<string, { x: number; y: number }> = {};
-          graph.forEachNode((node, attrs) => {
+          graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
             positions[node] = { x: attrs.x as number, y: attrs.y as number };
           });
           localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(positions));
