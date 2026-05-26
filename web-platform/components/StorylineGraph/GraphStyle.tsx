@@ -44,9 +44,22 @@ export default function GraphStyle() {
           return { ...attrs, color: baseColor + '14', size: (attrs.size as number) * 0.7 };
         }
 
-        // Ego mode: dim non-neighbors
-        if (egoActive && !egoNeighborIds.has(id)) {
-          return { ...attrs, color: baseColor + '0D', size: (attrs.size as number) * 0.8 };
+        // Ego mode: dim non-neighbors; scale neighbors by edge weight for hierarchy
+        if (egoActive) {
+          if (!egoNeighborIds.has(id)) {
+            return { ...attrs, color: baseColor + '0D', size: (attrs.size as number) * 0.6 };
+          }
+          if (id !== selectedId) {
+            // Find the edge connecting this neighbor to the selected node
+            const graph = sigma.getGraph();
+            const edgeKey = graph.edge(node, String(selectedId)) ?? graph.edge(String(selectedId), node);
+            const edgeWeight: number = edgeKey ? (graph.getEdgeAttribute(edgeKey, 'weight') as number ?? 0) : 0;
+            // Scale size by connection strength: weak neighbor ~70% size, strong neighbor ~150%
+            const scaleFactor = 0.7 + edgeWeight * 1.5;
+            // Opacity by connection strength
+            const alpha = Math.round((0.45 + edgeWeight * 0.55) * 255).toString(16).padStart(2, '0');
+            return { ...attrs, color: baseColor + alpha, size: (attrs.size as number) * scaleFactor };
+          }
         }
 
         // Selected node
@@ -72,9 +85,13 @@ export default function GraphStyle() {
         const isEgoEdge = egoNeighborIds.has(srcId) && egoNeighborIds.has(tgtId);
 
         if (isEgoEdge) {
-          return { ...data, color: 'rgba(249,115,22,0.9)', size: 3.0 };
+          // Scale ego edges by weight: strong connection = thick bright orange, weak = thin pale
+          const w: number = (data.weight as number) ?? 0;
+          const opacity = 0.35 + w * 0.65;
+          const size = 1.0 + w * 4.0;
+          return { ...data, color: `rgba(249,115,22,${opacity.toFixed(2)})`, size };
         }
-        return { ...data, color: 'rgba(150,190,220,0.03)', size: 0.3 };
+        return { ...data, color: 'rgba(150,190,220,0.02)', size: 0.2 };
       },
     });
 
