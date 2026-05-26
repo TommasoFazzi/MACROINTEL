@@ -29,12 +29,13 @@ Presentation components consumed by `app/stories/page.tsx`. Uses the same dynami
 ### `GraphDataLoader.tsx` — Graph builder (inside `<SigmaContainer>`)
 - Calls `useSigma()` → `sigma.getGraph()` to access the stable graphology Graph
 - On each `graphData` change (SWR 60s poll): `graph.clear()` + full in-place rebuild
-- **Restores saved node positions** from `localStorage` (`story-graph-layout-v1`) before adding nodes — eliminates "explosion" animation on reload
+- **Restores saved node positions** from `localStorage` (`story-graph-layout-v3` — bump the version to force a re-layout after changing FA2 params) before adding nodes — eliminates "explosion" animation on reload. Hash = node-count:edge-count:FNV-1a(sorted ids)
 - Builds nodes with: `label`, `size` (4 + momentum × 12), `color` (from `communityColorMap`), `x/y` (restored or random ±500)
-- Builds edges with: `weight`, `size` (0.5 + weight × 2.0), `color` (`rgba(150,190,220,...)`)
-- **FA2 worker** (`graphology-layout-forceatlas2/worker`): `barnesHutOptimize: true`, `scalingRatio: 2`, `strongGravityMode: true`, `gravity: 0.05`, `slowDown: 10`
-  - **Fallback**: `assign(graph, { iterations: 150 })` sync if worker path fails in Next.js build
-- Stops worker after **8s**, saves positions to `localStorage`, calls `onOptimizing(false)`
+- Builds edges with: `weight`, `size` (0.4 + weight × 1.4), `color` (`rgba(150,190,220,…)`, alpha 0.04 + weight × 0.10 — kept faint so the graph doesn't read as a bright tangle)
+- **FA2 worker** — tuned to **spread** the hairball, not collapse it: `barnesHutOptimize: true`, `barnesHutTheta: 0.6`, `scalingRatio: 16`, `strongGravityMode: false`, `gravity: 0.05`, `outboundAttractionDistribution: true` (pushes hubs apart), `edgeWeightInfluence: 0.5`, `slowDown: 5`
+  - **Fallback**: `assign(graph, { iterations: 300 })` sync (same spread settings) if worker path fails in Next.js build
+- Stops worker after **12s**, saves positions to `localStorage`, calls `onOptimizing(false)`
+- **Edge density**: `useGraphNetwork` requests `?min_edge_weight=0.18` (API default 0.10 returned ~18k edges / 11.9 per node → hairball). 0.18 keeps meaningful TF-IDF links; lone high-momentum nodes survive via the server's "lone stars" rule
 - Calls `onLayoutReady()` after **500ms** (show graph immediately without waiting for full convergence)
 - Cleanup: `fa2.kill()` on unmount/route change
 
@@ -113,16 +114,19 @@ function SigmaRefBridge({ sigmaRef }) {
   {
     renderLabels: true,
     labelFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    labelSize: 12,
-    labelColor: { color: '#E0E0E0' },
-    labelRenderedSizeThreshold: 8,  // LOD: labels only for nodes size >= 8
+    labelSize: 11,
+    labelColor: { color: '#C8D4E0' },
+    labelRenderedSizeThreshold: 10,   // LOD: labels only for larger nodes
+    labelGridCellSize: 250,           // bigger grid + low density → far fewer overlapping labels
+    labelDensity: 0.25,
     hideLabelsOnMove: true,
-    defaultEdgeColor: 'rgba(150,190,220,0.08)',
+    defaultDrawNodeHover: () => {},   // disable Sigma's white hover-label box (white-on-white); React tooltip replaces it
+    defaultEdgeColor: 'rgba(150,190,220,0.06)',
     defaultNodeColor: '#00A8E8',
     minCameraRatio: 0.05,
     maxCameraRatio: 5,
     enableEdgeEvents: false,
-    hideEdgesOnMove: true,       // critical for 17854 edges
+    hideEdgesOnMove: true,
   }
   ```
 - HUD shows **"OPTIMIZING LAYOUT…"** badge while FA2 worker is running

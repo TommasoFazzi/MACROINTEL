@@ -49,8 +49,12 @@ const fetcher = async <T>(url: string): Promise<T> => {
  * Polls every 60 seconds.
  */
 export function useGraphNetwork() {
+  // min_edge_weight raised from the API default (0.10) to 0.18: at 0.10 the graph
+  // returns ~18k edges (11.9/node) and collapses into an unreadable hairball.
+  // 0.18 keeps the meaningful TF-IDF links; isolated high-momentum nodes are still
+  // kept server-side as "lone stars".
   const { data, error, isLoading, mutate } = useSWR<GraphNetworkResponse, ApiError>(
-    '/api/proxy/stories/graph',
+    '/api/proxy/stories/graph?min_edge_weight=0.18',
     fetcher,
     {
       refreshInterval: 60000,

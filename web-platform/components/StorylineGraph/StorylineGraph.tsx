@@ -37,11 +37,18 @@ function SigmaRefBridge({ sigmaRef }: { sigmaRef: React.MutableRefObject<Sigma |
 const SIGMA_SETTINGS = {
   renderLabels: true,
   labelFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  labelSize: 12,
-  labelColor: { color: '#E0E0E0' },
-  labelRenderedSizeThreshold: 8,
+  labelSize: 11,
+  labelColor: { color: '#C8D4E0' },
+  labelRenderedSizeThreshold: 10,
+  // Spread labels out — fewer, non-overlapping labels (bigger grid, lower density)
+  labelGridCellSize: 250,
+  labelDensity: 0.25,
   hideLabelsOnMove: true,
-  defaultEdgeColor: 'rgba(150,190,220,0.08)',
+  // Disable Sigma's built-in hover label: its background box is white and our
+  // labels are light → unreadable white-on-white. We render our own dark React
+  // tooltip instead. No-op here removes the box entirely.
+  defaultDrawNodeHover: () => {},
+  defaultEdgeColor: 'rgba(150,190,220,0.06)',
   defaultNodeColor: '#00A8E8',
   minCameraRatio: 0.05,
   maxCameraRatio: 5,

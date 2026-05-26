@@ -101,7 +101,7 @@ export default function GraphStyle() {
         // Hover focus (takes precedence when not in ego mode)
         if (hovered != null && !egoActive) {
           if (srcId === hovered || tgtId === hovered) {
-            return { ...data, color: `${EGO_EDGE_BASE}${(0.4 + w * 0.6).toFixed(2)})`, size: 1.0 + w * 4.0 };
+            return { ...data, color: `${EGO_EDGE_BASE}${(0.3 + w * 0.4).toFixed(2)})`, size: 0.8 + w * 2.2 };
           }
           return { ...data, color: FADED_EDGE, size: 0.2 };
         }
@@ -109,7 +109,7 @@ export default function GraphStyle() {
         // Ego mode
         const isEgoEdge = egoNeighborIds.has(srcId) && egoNeighborIds.has(tgtId);
         if (isEgoEdge) {
-          return { ...data, color: `${EGO_EDGE_BASE}${(0.35 + w * 0.65).toFixed(2)})`, size: 1.0 + w * 4.0 };
+          return { ...data, color: `${EGO_EDGE_BASE}${(0.25 + w * 0.45).toFixed(2)})`, size: 0.8 + w * 2.2 };
         }
         return { ...data, color: FADED_EDGE, size: 0.2 };
       },

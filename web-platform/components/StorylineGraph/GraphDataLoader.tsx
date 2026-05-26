@@ -4,8 +4,8 @@ import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { GraphNetwork } from '@/types/stories';
 
-const LAYOUT_STORAGE_KEY = 'story-graph-layout-v2';
-const LAYOUT_HASH_KEY = 'story-graph-hash-v2';
+const LAYOUT_STORAGE_KEY = 'story-graph-layout-v3';
+const LAYOUT_HASH_KEY = 'story-graph-hash-v3';
 const FA2_DURATION_MS = 12000;
 const LAYOUT_READY_DELAY_MS = 500;
 
@@ -83,10 +83,10 @@ export default function GraphDataLoader({
       const src = String(link.source);
       const tgt = String(link.target);
       if (!nodeIds.has(src) || !nodeIds.has(tgt)) continue;
-      const alpha = 0.06 + link.weight * 0.18;
+      const alpha = 0.04 + link.weight * 0.10;
       graph.addEdge(src, tgt, {
         weight: link.weight,
-        size: 0.5 + link.weight * 2.0,
+        size: 0.4 + link.weight * 1.4,
         color: `rgba(150,190,220,${alpha.toFixed(2)})`,
       });
     }
@@ -105,13 +105,18 @@ export default function GraphDataLoader({
       const FA2Worker = require('graphology-layout-forceatlas2/worker').default;
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { inferSettings } = require('graphology-layout-forceatlas2');
+      // Tuned to SPREAD the graph instead of collapsing it into a central ball:
+      // higher repulsion (scalingRatio), no strong gravity, mild centering, and
+      // outboundAttractionDistribution to push high-degree hubs apart.
       const settings = {
         ...inferSettings(graph),
         barnesHutOptimize: true,
-        barnesHutTheta: 0.5,
-        scalingRatio: 8,
-        strongGravityMode: true,
-        gravity: 0.02,
+        barnesHutTheta: 0.6,
+        scalingRatio: 16,
+        strongGravityMode: false,
+        gravity: 0.05,
+        outboundAttractionDistribution: true,
+        edgeWeightInfluence: 0.5,
         slowDown: 5,
       };
 
@@ -132,11 +137,13 @@ export default function GraphDataLoader({
             settings: {
               ...inferSettings(graph),
               barnesHutOptimize: true,
-              scalingRatio: 8,
-              strongGravityMode: true,
-              gravity: 0.02,
+              scalingRatio: 16,
+              strongGravityMode: false,
+              gravity: 0.05,
+              outboundAttractionDistribution: true,
+              edgeWeightInfluence: 0.5,
             },
-            iterations: 200,
+            iterations: 300,
           });
         }
       } catch { /* layout stays random */ }
