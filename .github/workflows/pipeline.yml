@@ -22,6 +22,7 @@ jobs:
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
+        id: cache-hf
         with:
           path: ~/.cache/huggingface/hub
           key: hf-models-v1
@@ -44,9 +45,27 @@ jobs:
         run: python -m patchright install chromium
 
       - name: Download sentence-transformers models
+        # Only on cold cache. When cache is warm we skip this entirely and load
+        # offline (see HF_HUB_OFFLINE in the pipeline step) — transformers otherwise
+        # phones home to /api/models on every from_pretrained and can 429 even cached.
+        if: steps.cache-hf.outputs.cache-hit != 'true'
+        env:
+          # Authenticated requests have much higher HF Hub rate limits than anonymous.
+          # Optional: pipeline still works without it, but anonymous downloads risk 429.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
-          python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+          # Retry with exponential backoff: HF Hub returns transient 429s on shared CI IPs.
+          for attempt in 1 2 3 4 5; do
+            if python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"; then
+              echo "Models ready (attempt $attempt)"
+              exit 0
+            fi
+            delay=$((10 * 2 ** (attempt - 1)))
+            echo "HF download failed (attempt $attempt). Retrying in ${delay}s..."
+            sleep "$delay"
+          done
+          echo "ERROR: HF model download failed after 5 attempts"
+          exit 1
 
       - name: Setup SSH tunnel to Hetzner DB
         run: |
@@ -79,6 +98,11 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}
+          # Models are already cached/downloaded above. Force fully-offline HF loads so
+          # transformers never calls /api/models (model_info) — that call 429s on shared
+          # CI IPs even when files are cached, and would kill the long pipeline run.
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
           REPORT_OUTPUT_DIR: ./reports
           DATA_DIR: ./data
           ENVIRONMENT: production
