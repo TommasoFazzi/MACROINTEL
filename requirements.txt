@@ -33,7 +33,7 @@ deepdiff==8.6.2
 defusedxml==0.7.1
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
 et_xmlfile==2.0.0
-fastapi==0.134.0
+fastapi==0.128.0  # capped by openbb-core (fastapi<0.129.0); CVE-2026-48710 bump to 0.134 blocked — see CLAUDE.md accepted CVE
 feedfinder2==0.0.4
 feedparser==6.0.12
 filelock==3.24.2
@@ -175,7 +175,7 @@ spacy==3.8.11
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
 srsly==2.5.2
-starlette==1.0.1
+starlette==0.50.0  # capped by fastapi==0.128.0 (starlette<0.51); CVE-2026-48710 fix needs 1.0.1 but blocked by openbb-core
 streamlit==1.55.0
 sympy==1.14.0
 tenacity==9.1.2
