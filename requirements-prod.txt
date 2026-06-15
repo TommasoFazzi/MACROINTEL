@@ -81,7 +81,9 @@ multitasking==0.0.12
 murmurhash==1.0.15
 narwhals==2.15.0
 networkx==3.6
-python-louvain==0.16
+leidenalg>=0.10  # community detection (CPM); replaces python-louvain in compute_communities.py (Phase 1 of clustering upgrade)
+python-igraph>=0.11,<1.0  # required by leidenalg + vectorized disparity filter (Serrano 2009); pin <1.0 to avoid transitional shim
+python-louvain==0.16  # kept during shadow comparison phase; will be removed post-promote
 newspaper3k==0.2.8
 numpy==2.3.5
 openbb==4.6.0
@@ -200,6 +202,7 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.3
 tzlocal==5.3.1
+unidecode>=1.3  # L2 entity canonicalization (fuzzy normalization) in src/nlp/processing.py
 uritemplate==4.2.0
 url-normalize==1.4.3
 urllib3==2.7.0
