@@ -104,6 +104,7 @@ flowchart LR
     llm --> EXT_sentence_transformers
     nlp --> EXT_numpy
     nlp --> EXT_psycopg2
+    nlp --> EXT_pydantic
     nlp --> EXT_sentence_transformers
     nlp --> EXT_sklearn
     nlp --> EXT_spacy
@@ -194,23 +195,27 @@ flowchart TD
 ```mermaid
 flowchart TD
     bullet_generator["bullet_generator.py"]
+    config["config.py"]
     narrative_processor["narrative_processor.py"]
     processing["processing.py"]
     relevance_filter["relevance_filter.py"]
     EXT_numpy(("numpy"))
     EXT_psycopg2(("psycopg2"))
+    EXT_pydantic(("pydantic"))
     EXT_sentence_transformers(("sentence_transformers"))
     EXT_sklearn(("sklearn"))
     EXT_spacy(("spacy"))
 
     bullet_generator --> llm
     bullet_generator --> utils
+    config --> utils
     narrative_processor --> llm
     narrative_processor --> storage
     narrative_processor --> utils
     processing --> utils
     relevance_filter --> llm
     relevance_filter --> utils
+    config --> EXT_pydantic
     narrative_processor --> EXT_numpy
     narrative_processor --> EXT_psycopg2
     narrative_processor --> EXT_sentence_transformers
