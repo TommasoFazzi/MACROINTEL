@@ -1,0 +1,110 @@
+# =============================================================================
+# Narrative Clustering Configuration
+# =============================================================================
+# Schema reference: openspec/changes/upgrade-narrative-clustering-algorithms/
+#                   design.md § Decision 14 (canonical) + § Decision 20 (tiers)
+#
+# Phase 1A baseline values: preserve current production behavior where they
+# differ from the Decision 14 target values (post-sweep / post-Leiden). Target
+# values are noted inline and will be activated by their respective phases
+# (Phase 1D sparsification, 1E Leiden+CPM, 2B sweep, 2D HDBSCAN adaptive, etc.).
+#
+# Validated by Pydantic model NarrativeClusteringConfig in src/nlp/config.py.
+# CLI flags on consumer scripts always override config values.
+# =============================================================================
+
+micro_cluster:
+  threshold: 0.90          # current = Decision 14 target
+  linkage: average
+
+matching:
+  threshold: 0.75          # current code; Decision 14 target: 0.65 (post Phase 2B sweep)
+  time_decay_factor: 0.05  # exp(-k*days), linear decay in current code; exponential in Phase 2B (task 2.5)
+  entity_boost: 0.10
+  entity_jaccard_threshold: 0.05  # current code; Decision 14 target: 0.15 (post Phase 2B sweep)
+
+hdbscan:
+  min_cluster_size_base: 2 # current code; Decision 14 target: 3 (Phase 2D adaptive sqrt + EWMA)
+  min_samples: 2
+  metric: euclidean
+
+orphan:
+  ttl_days: 30             # Phase 2E target (task 2.8); current behavior unaffected until activated
+  max_pool_size: 5000      # Phase 2E target (task 2.9)
+  max_retry_count: 10      # Phase 2E target (task 2.10)
+  batch_consolidation_interval_days: 3  # Phase 2E target (task 2.11)
+
+evolution:
+  drift_weight_old: 0.85   # current = Decision 14 target
+  drift_weight_new: 0.15   # current = Decision 14 target
+
+momentum:
+  ewma_lambda: 0.3         # Phase 2F target (current uses linear MOMENTUM_DECAY_FACTOR=0.7)
+  burst_threshold: 2.0     # Phase 2F target
+  rate_floor: 0.05         # Phase 2F target
+
+decay:
+  stale_days_for_decay: 7
+  active_to_stabilized_momentum: 0.3
+  stabilized_to_archived_days: 30
+  emerging_ttl_days: 10
+  edge_weight_decay_days: 30
+  edge_weight_change_threshold: 0.02
+
+community:
+  algorithm: louvain                # Phase 1A transitional; switches to leiden_cpm in Phase 1E
+  # Louvain-specific (active until Phase 1E):
+  min_weight: 0.05                  # current default in compute_communities.py
+  resolution: 0.8                   # current default in compute_communities.py
+  # Leiden+CPM-specific (activated in Phase 1E, task 1.17-1.22):
+  resolution_parameter: 0.01        # CPM γ centerpoint
+  resolution_sweep: [0.005, 0.01, 0.02, 0.03, 0.05]
+  quality_gate:
+    n_communities_min: 20
+    n_communities_max: 60
+    max_community_ratio: 0.15
+    singleton_ratio_max: 0.30
+    coherence_median_min: 0.45
+    epr_min: 0.5
+  shadow_mode: true                 # active when --shadow flag used
+
+sparsification:                     # activated in Phase 1D (task 1.14-1.16)
+  algorithm: disparity_filter
+  alpha: 0.3
+  fallback_threshold: 0.10
+
+summary_cache:                      # activated in Phase 3H (task 3.17)
+  delta_embedding_threshold: 0.05
+  min_new_articles: 2
+
+source_diversity:                   # activated in Phase 3C (task 3.8-3.10)
+  enabled: true
+  epsilon: 0.1
+
+community_lineage:                  # activated in Phase 4A (task 4.0-4.0c)
+  composite_weights:
+    weighted_jaccard: 0.45
+    centroid_cosine: 0.40
+    inclusion: 0.15
+  tau_match: 0.45
+  tau_split: 0.30
+  tau_merge: 0.30
+  inclusion_override: 0.60
+
+drift_detection:                    # activated in Phase 5B (task 5.1-5.2)
+  enabled: true
+  baseline_window_days: 30
+  thresholds:
+    tcs_drop_ratio: 0.80
+    coherence_drop_ratio: 0.85
+    epr_drop_ratio: 0.80
+    churn_shift_ratio: 0.30
+
+meta:
+  schema_version: 1
+  last_retuned_at: null              # populated by Phase 5C retune workflow
+  baseline_metrics:                  # populated by retune job from narrative_run_metrics
+    tcs_p50_30d: null
+    coherence_med_p50_30d: null
+    epr_p50_30d: null
+    new_per_day_p50_30d: null
