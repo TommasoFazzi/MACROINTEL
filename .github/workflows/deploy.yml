@@ -3,6 +3,12 @@ name: Deploy to Production
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'requirements.txt'
+      - 'requirements-prod.txt'
+      - 'Dockerfile'
   workflow_dispatch:
 
 permissions:
@@ -33,6 +39,45 @@ jobs:
           DEEPSEEK_API_KEY: "ci-fake-key-for-unit-tests"
           MISTRAL_API_KEY: "ci-fake-key-for-unit-tests"
         run: pytest tests/ -m "not slow" --ignore=tests/test_sprint2_full.py --tb=short -q
+
+  arm64-build-check:
+    # Pre-merge guard for Hetzner CAX31 (linux/arm64). Catches missing wheels or
+    # native build failures before they hit main. Runs only on PRs that touch
+    # requirements files or the Dockerfile (paths filter at workflow level).
+    name: ARM64 build & import check (Hetzner CAX31)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ARM64 image (load to local daemon)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          push: false
+          load: true
+          cache-from: type=gha,scope=arm64-deps
+          cache-to: type=gha,scope=arm64-deps,mode=max
+          tags: intelligence-ita:arm64-check
+
+      - name: Verify critical imports under arm64
+        run: |
+          docker run --rm --platform linux/arm64 \
+            --entrypoint python \
+            intelligence-ita:arm64-check \
+            -c "import leidenalg, igraph, unidecode; from scipy.optimize import linear_sum_assignment; from sentence_transformers import SentenceTransformer; print('arm64 critical imports OK')"
 
   deploy:
     needs: test
