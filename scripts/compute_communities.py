@@ -247,14 +247,20 @@ def compute_and_save_communities(
 
 
 def main():
+    # Defaults are loaded from config/narrative_clustering.yaml; CLI flags override.
+    from src.nlp.config import load_clustering_config
+    cfg = load_clustering_config()
+    cfg_min_weight = cfg.community.min_weight
+    cfg_resolution = cfg.community.resolution
+
     parser = argparse.ArgumentParser(description="Compute Louvain communities on narrative graph")
     parser.add_argument(
-        "--min-weight", type=float, default=0.05,
-        help="Min edge weight to include in community graph (default: 0.05)"
+        "--min-weight", type=float, default=cfg_min_weight,
+        help=f"Min edge weight to include in community graph (default from config: {cfg_min_weight})"
     )
     parser.add_argument(
-        "--resolution", type=float, default=0.8,
-        help="Louvain resolution: lower = larger communities (default: 0.8)"
+        "--resolution", type=float, default=cfg_resolution,
+        help=f"Louvain resolution: lower = larger communities (default from config: {cfg_resolution})"
     )
     parser.add_argument(
         "--max-name", type=int, default=60,

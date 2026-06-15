@@ -20,16 +20,17 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
 
 - `narrative_processor.py` - **Narrative Engine** (~1498 lines)
   - `NarrativeProcessor` class - Full storyline lifecycle
-  - **Key tunable constants:**
-    - `MICRO_CLUSTER_THRESHOLD = 0.90` — cosine sim threshold for near-duplicate grouping
-    - `MATCH_THRESHOLD = 0.75` — min hybrid score to match an event to an existing storyline
-    - `TIME_DECAY_FACTOR = 0.05` — score penalty per day of storyline inactivity
-    - `ENTITY_BOOST = 0.10` — bonus when entity Jaccard >= 0.3
-    - `ENTITY_JACCARD_THRESHOLD = 0.05` — min TF-IDF weighted Jaccard for graph edges (0.30 fallback without IDF)
-    - `HDBSCAN_MIN_CLUSTER_SIZE = 2`, `HDBSCAN_MIN_SAMPLES = 2`
-    - `DRIFT_WEIGHT_OLD = 0.85`, `DRIFT_WEIGHT_NEW = 0.15` — embedding drift weights
-    - `MOMENTUM_DECAY_FACTOR = 0.7` — weekly decay multiplier for inactive storylines
-    - `LLM_RATE_LIMIT_SECONDS = 0.1` — pause between Gemini calls (2.0-flash has high quota)
+  - **Key tunable thresholds** — externalized to `config/narrative_clustering.yaml` (Phase 1A); loaded in `__init__` via `src/nlp/config.py :: load_clustering_config()` and exposed as instance attributes for backward compat. Current Phase 1A values preserve previous code behavior; Phase 2B sweep / Phase 1E Leiden / Phase 2D HDBSCAN adaptive will retune them.
+    - `self.MICRO_CLUSTER_THRESHOLD = 0.90` ← `micro_cluster.threshold`
+    - `self.MATCH_THRESHOLD = 0.75` ← `matching.threshold` (Decision 14 target: 0.65 post-sweep)
+    - `self.TIME_DECAY_FACTOR = 0.05` ← `matching.time_decay_factor`
+    - `self.ENTITY_BOOST = 0.10` ← `matching.entity_boost`
+    - `self.ENTITY_JACCARD_THRESHOLD = 0.05` ← `matching.entity_jaccard_threshold` (Decision 14 target: 0.15)
+    - `self.HDBSCAN_MIN_CLUSTER_SIZE = 2`, `self.HDBSCAN_MIN_SAMPLES = 2` ← `hdbscan.*` (Decision 14 base: 3; Phase 2D adds adaptive sqrt + EWMA)
+    - `self.DRIFT_WEIGHT_OLD = 0.85`, `self.DRIFT_WEIGHT_NEW = 0.15` ← `evolution.*`
+    - `self.MOMENTUM_DECAY_FACTOR = 0.7` — hardcoded constant; Phase 2F replaces with EWMA + burst (`momentum.*`)
+    - `self.LLM_RATE_LIMIT_SECONDS = 0.1` — hardcoded constant (Tier 4 fixed operational cap)
+  - `src/nlp/config.py` (new): Pydantic models (`NarrativeClusteringConfig` + sub-models with `extra='forbid'`) + cached `load_clustering_config(path=None, force_reload=False)` + `reset_cache()` for tests.
   - **Public interface:**
     - `process_daily_batch(days, dry_run)` — Main orchestrator: micro-clustering → matching → HDBSCAN discovery → LLM evolution → **post-clustering validation** → graph → decay
   - **Stage 1 — Micro-clustering:**

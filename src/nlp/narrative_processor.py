@@ -94,18 +94,10 @@ class NarrativeProcessor:
     - Graph edges: entity overlap connections between storylines
     """
 
-    # --- Thresholds (tunable) ---
-    MICRO_CLUSTER_THRESHOLD = 0.90   # Cosine similarity for near-duplicate grouping
-    MATCH_THRESHOLD = 0.75           # Min hybrid score to match a storyline
-    TIME_DECAY_FACTOR = 0.05         # Score penalty per day of storyline inactivity
-    ENTITY_BOOST = 0.10              # Bonus when entity Jaccard > 0.3
-    ENTITY_JACCARD_THRESHOLD = 0.05  # Min TF-IDF weighted Jaccard for graph edges
-    HDBSCAN_MIN_CLUSTER_SIZE = 2     # Min events to form a new storyline
-    HDBSCAN_MIN_SAMPLES = 2
-    DRIFT_WEIGHT_OLD = 0.85          # Weight for existing storyline embedding
-    DRIFT_WEIGHT_NEW = 0.15          # Weight for new event embedding
-    MOMENTUM_DECAY_FACTOR = 0.7      # Weekly decay multiplier
-    LLM_RATE_LIMIT_SECONDS = 0.1     # gemini-2.0-flash: high quota, 0.1s sufficient
+    # Thresholds are loaded from config/narrative_clustering.yaml at __init__.
+    # Schema: src/nlp/config.py :: NarrativeClusteringConfig
+    # Per-attribute names are preserved (self.MATCH_THRESHOLD, etc.) so existing
+    # call sites in this file keep working without modification.
 
     def __init__(
         self,
@@ -115,6 +107,25 @@ class NarrativeProcessor:
     ):
         self.db = db_manager or DatabaseManager()
         self.skip_llm = skip_llm
+
+        # Load tunable thresholds from YAML (Phase 1A: externalized constants)
+        from .config import load_clustering_config
+        self.config = load_clustering_config()
+        self.MICRO_CLUSTER_THRESHOLD = self.config.micro_cluster.threshold
+        self.MATCH_THRESHOLD = self.config.matching.threshold
+        self.TIME_DECAY_FACTOR = self.config.matching.time_decay_factor
+        self.ENTITY_BOOST = self.config.matching.entity_boost
+        self.ENTITY_JACCARD_THRESHOLD = self.config.matching.entity_jaccard_threshold
+        self.HDBSCAN_MIN_CLUSTER_SIZE = self.config.hdbscan.min_cluster_size_base
+        self.HDBSCAN_MIN_SAMPLES = self.config.hdbscan.min_samples
+        self.DRIFT_WEIGHT_OLD = self.config.evolution.drift_weight_old
+        self.DRIFT_WEIGHT_NEW = self.config.evolution.drift_weight_new
+        # MOMENTUM_DECAY_FACTOR retained as hardcoded constant: Phase 2F replaces
+        # the linear weekly multiplier with EWMA + burst detection (task 2.12-2.13);
+        # until then keep current production behavior.
+        self.MOMENTUM_DECAY_FACTOR = 0.7
+        # LLM_RATE_LIMIT_SECONDS is Tier 4 (truly fixed operational cap, Decision 20)
+        self.LLM_RATE_LIMIT_SECONDS = 0.1
 
         # Lazy-loaded embedding model
         self._embedding_model = None
