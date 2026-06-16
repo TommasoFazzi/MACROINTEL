@@ -126,6 +126,17 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - Replaces `Δ30d/w/m` for non-daily indicators (YoY is the standard economic metric; 30 observations = 2.5 years for monthly is non-standard)
   - Backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
 
+### Narrative Clustering Upgrade (2026-06-15 / Phase 1B)
+
+- `043_narrative_run_metrics.sql` — Observability tables + shadow community + NIS score for the clustering upgrade (`openspec/changes/upgrade-narrative-clustering-algorithms/`):
+  1. `narrative_run_metrics` — one row per pipeline step run (`narrative_processing`, `community_detection`, `consolidation`, `orphan_consolidation`). Tracks population counts, quality metrics (`silhouette`, `community_coherence_med`, `cpm_quality`, `modularity`, `tcs`, `epr`), adaptive parameters (`hdbscan_mcs_smoothed`, `gamma_sweep_range`, `backbone_weight_p50/p75`), stage stats JSONB (`decay_stats`, `match_stats`, `consolidation_stats`, `shadow_diff_report`, `drift_signals`), and `runtime_seconds`. `run_id UUID UNIQUE` enables joins with `storyline_community_history`. Includes `tcs_overlap_size` + `tcs_unreliable` flag for intersection-based TCS (Phase 1C task 1.11).
+  2. `storyline_community_history` — partition snapshot per run for TCS/EPR intersection (PK `(run_id, storyline_id)`). Source-of-truth for Hungarian cross-run matching (Phase 4A).
+  3. `storylines.community_id_shadow INTEGER` — Leiden+CPM shadow partition destination (Phase 1E task 1.20).
+  4. `storylines.nis_score FLOAT` — Narrative Identity Stability per storyline, `cos(original_embedding, current_embedding)` (Phase 1C task 1.12).
+  - **Type correction vs design.md**: § Decision 6 declared `storyline_id UUID`; corrected to `INTEGER` to match `storylines.id` (SERIAL, migration 008). Same correction will apply to migration 045 (`community_lineage.anchor_storylines INTEGER[]`).
+  - **Note on numbering gap**: migrations 040/041/042 reserved for later phases (`entity_canonical_map`, `storyline_edges_decay_view`, `community_color_persistence`). Runner uses sorted glob + `schema_migrations` tracking → gaps are safe.
+  - Rollback: see commented section at bottom of the migration file.
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -138,6 +149,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 037: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/037_romania_vertical.sql`
 - 038: **Applied** (2026-05-14) — historical context columns. Backfill run: 378 rows seeded, 2413 rows updated.
 - 039: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/039_macro_pct_change_12m.sql`. Then re-run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
+- 043: **Not yet applied** — clustering upgrade Phase 1B observability tables (additive only, no data migration). Apply via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/043_narrative_run_metrics.sql`. Producers (compute_communities.py, narrative_processor.py) start populating these in Phase 1C (tasks 1.8-1.13).
 
 ## Execution Order
 
@@ -156,6 +168,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 037 (Romania Vertical PoC — no external dependencies)
   → 038 (Historical Context Columns — requires 037 applied first for country_code column)
   → 039 (pct_change_12m YoY column — no external dependencies, requires 038)
+  → 043 (clustering upgrade observability — additive, no external dependencies; 040/041/042 reserved for later phases)
 ```
 
 Run a single migration:
