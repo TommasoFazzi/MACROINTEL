@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import argparse
 from collections import Counter
 from pathlib import Path
@@ -33,6 +34,13 @@ try:
     LOUVAIN_AVAILABLE = True
 except ImportError:
     LOUVAIN_AVAILABLE = False
+
+try:
+    import numpy as np
+    from sklearn.metrics import silhouette_score, normalized_mutual_info_score
+    METRICS_AVAILABLE = True
+except ImportError:
+    METRICS_AVAILABLE = False
 
 try:
     from src.llm.llm_factory import LLMFactory
@@ -115,12 +123,28 @@ def compute_and_save_communities(
             "Run: pip install python-louvain networkx"
         )
 
+    start_time = time.time()
+    run_id = str(uuid.uuid4())  # shared between narrative_run_metrics + storyline_community_history (task 1.10)
     db = DatabaseManager()
-    stats = {"nodes": 0, "edges_loaded": 0, "communities": 0, "updated": 0, "modularity": None}
+    stats = {
+        "nodes": 0, "edges_loaded": 0, "communities": 0, "updated": 0,
+        "modularity": None,
+        # Phase 1C task 1.8 — observability counters (persisted in narrative_run_metrics)
+        "storylines_total": 0,
+        "edges_pre_filter": 0,
+        "n_singletons": 0,
+        "max_community_size": 0,
+        "runtime_seconds": 0.0,
+        "run_id": run_id,
+    }
 
     # Load edges from DB
     with db.get_connection() as conn:
         with conn.cursor() as cur:
+            # Pre-filter edge count for observability (Phase 1C task 1.8)
+            cur.execute("SELECT count(*) FROM storyline_edges")
+            stats["edges_pre_filter"] = cur.fetchone()[0]
+
             cur.execute("""
                 SELECT source_story_id, target_story_id, weight
                 FROM storyline_edges
@@ -137,8 +161,14 @@ def compute_and_save_communities(
             all_ids = [row[0] for row in cur.fetchall()]
             stats["nodes"] = len(all_ids)
 
+            # Total storylines across all statuses (Phase 1C task 1.8)
+            cur.execute("SELECT count(*) FROM storylines")
+            stats["storylines_total"] = cur.fetchone()[0]
+
     if not edges:
         logger.warning("No edges loaded (min_weight=%.2f). Skipping community detection.", min_weight)
+        stats["runtime_seconds"] = round(time.time() - start_time, 3)
+        _persist_run_metrics(db, stats, dry_run)
         return stats
 
     # Build undirected weighted graph
@@ -172,6 +202,22 @@ def compute_and_save_communities(
     partition = {node: rank[cid] for node, cid in partition.items()}
 
     stats["communities"] = len(freq)
+    # Phase 1C task 1.8 — community size distribution observability
+    stats["n_singletons"] = sum(1 for cnt in freq.values() if cnt == 1)
+    stats["max_community_size"] = max(freq.values()) if freq else 0
+
+    # Phase 1C task 1.9 — silhouette + community_coherence_med
+    sil, coh_med = _compute_quality_metrics(db, partition)
+    stats["silhouette"] = sil
+    stats["community_coherence_med"] = coh_med
+
+    # Phase 1C task 1.11 — TCS NMI on intersection with previous run
+    tcs, overlap_size, unreliable = _compute_tcs_on_intersection(db, run_id, partition)
+    stats["tcs"] = tcs
+    stats["tcs_overlap_size"] = overlap_size
+    stats["tcs_unreliable"] = unreliable
+    # EPR deferred: requires per-run edge snapshot (not in scope for Phase 1C —
+    # storyline_edges is cumulative, no historical state to diff against).
     logger.info(
         "Louvain found %d communities from %d nodes (%d edges, min_weight=%.2f, resolution=%.2f) — modularity=%.3f",
         stats["communities"], stats["nodes"], stats["edges_loaded"],
@@ -204,6 +250,9 @@ def compute_and_save_communities(
 
     stats["updated"] = len(partition)
     logger.info("Saved community IDs for %d storylines", stats["updated"])
+
+    # Phase 1C task 1.10 — partition snapshot for TCS/EPR/Hungarian lineage
+    _persist_partition_history(db, run_id, partition)
 
     # Generate LLM community names (one call per community, resilient to failures)
     if GEMINI_AVAILABLE:
@@ -243,7 +292,269 @@ def compute_and_save_communities(
     else:
         logger.warning("GEMINI_API_KEY not set — community_name not generated")
 
+    # Phase 1C task 1.8 — persist run metrics (final step before return)
+    stats["runtime_seconds"] = round(time.time() - start_time, 3)
+    _persist_run_metrics(db, stats, dry_run)
+
     return stats
+
+
+def _compute_tcs_on_intersection(db: DatabaseManager, current_run_id: str, partition: dict) -> tuple:
+    """Compute Temporal Cluster Stability via NMI on the storyline intersection
+    between the current partition and the most recent prior partition (Phase 1C
+    task 1.11).
+
+    Returns (tcs, overlap_size, unreliable):
+        - tcs: float in [0, 1] (NMI), or None when overlap < 30 (statistically
+          meaningless) or sklearn missing or first run (no history).
+        - overlap_size: |intersection of storyline IDs|.
+        - unreliable: True when 0 < overlap_size < 50 (NMI computable but noisy).
+    """
+    if not METRICS_AVAILABLE or not partition:
+        return None, 0, False
+
+    # Most recent previous run (any pipeline_step other than the current run)
+    prev_rows = []
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT storyline_id, community_id
+                    FROM storyline_community_history
+                    WHERE run_id = (
+                        SELECT run_id FROM storyline_community_history
+                        WHERE run_id != %s
+                        ORDER BY ts DESC
+                        LIMIT 1
+                    )
+                    """,
+                    (current_run_id,),
+                )
+                prev_rows = cur.fetchall()
+    except Exception as e:
+        msg = str(e).lower()
+        if "storyline_community_history" in msg and ("does not exist" in msg or "undefinedtable" in msg):
+            logger.debug("storyline_community_history missing — skipping TCS (apply migration 043)")
+            return None, 0, False
+        logger.warning("TCS prev-partition query failed: %s", e)
+        return None, 0, False
+
+    if not prev_rows:
+        logger.info("TCS: no previous partition history — first run, skipping")
+        return None, 0, False
+
+    prev_partition = {sid: cid for sid, cid in prev_rows}
+    common_ids = set(partition.keys()) & set(prev_partition.keys())
+    overlap_size = len(common_ids)
+
+    if overlap_size < 30:
+        logger.info("TCS: overlap=%d < 30 → unreliable, returning NULL", overlap_size)
+        return None, overlap_size, True
+
+    labels_curr = [partition[sid] for sid in common_ids]
+    labels_prev = [prev_partition[sid] for sid in common_ids]
+    try:
+        tcs = float(normalized_mutual_info_score(labels_prev, labels_curr))
+    except Exception as e:
+        logger.warning("normalized_mutual_info_score failed: %s", e)
+        return None, overlap_size, True
+
+    unreliable = overlap_size < 50
+    logger.info(
+        "TCS=%.4f (overlap=%d storylines, unreliable=%s)",
+        tcs, overlap_size, unreliable,
+    )
+    return tcs, overlap_size, unreliable
+
+
+def _persist_partition_history(db: DatabaseManager, run_id: str, partition: dict) -> None:
+    """Snapshot the partition into storyline_community_history (Phase 1C task 1.10).
+
+    One row per (run_id, storyline_id). Used by TCS intersection (task 1.11) and
+    Hungarian cross-run matching (Phase 4A). Silent no-op when table missing.
+    """
+    if not partition:
+        return
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO storyline_community_history (run_id, storyline_id, community_id)
+                    VALUES %s
+                    ON CONFLICT (run_id, storyline_id) DO NOTHING
+                    """,
+                    [(run_id, sid, cid) for sid, cid in partition.items()],
+                )
+            conn.commit()
+        logger.info("Persisted partition history: %d rows (run_id=%s)", len(partition), run_id)
+    except Exception as e:
+        msg = str(e).lower()
+        if "storyline_community_history" in msg and ("does not exist" in msg or "undefinedtable" in msg):
+            logger.debug(
+                "storyline_community_history missing — skipping snapshot "
+                "(apply migration 043 to enable)"
+            )
+        else:
+            logger.warning("Failed to persist partition history: %s", e)
+
+
+def _vec_to_array(value):
+    """Convert pgvector return value to numpy array (handles list / pgvector type / None)."""
+    if value is None:
+        return None
+    if hasattr(value, 'tolist'):
+        value = value.tolist()
+    elif not isinstance(value, list):
+        try:
+            value = list(value)
+        except TypeError:
+            return None
+    return np.asarray(value, dtype=np.float32) if value else None
+
+
+def _compute_quality_metrics(db: DatabaseManager, partition: dict) -> tuple:
+    """Return (silhouette, community_coherence_med) — Phase 1C task 1.9.
+
+    silhouette: sklearn silhouette_score on current_embedding, cosine metric.
+                None when sklearn missing, <2 communities, or <(k+1) samples.
+    community_coherence_med: median of per-community medians of pairwise cosine
+                similarity on summary_vector. None when <2 communities qualify
+                (need ≥2 members with summary_vector each).
+    """
+    if not METRICS_AVAILABLE or not partition:
+        return None, None
+
+    storyline_ids = list(partition.keys())
+    rows = []
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, current_embedding, summary_vector "
+                "FROM storylines WHERE id = ANY(%s)",
+                (storyline_ids,),
+            )
+            rows = cur.fetchall()
+
+    current_by_id = {}
+    summary_by_id = {}
+    for sid, cur_emb, sum_emb in rows:
+        ca = _vec_to_array(cur_emb)
+        sa = _vec_to_array(sum_emb)
+        if ca is not None:
+            current_by_id[sid] = ca
+        if sa is not None:
+            summary_by_id[sid] = sa
+
+    # ---- silhouette ----
+    silhouette = None
+    if len(current_by_id) >= 3:
+        emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
+        labels = [partition[sid] for sid in emb_ids]
+        distinct_labels = set(labels)
+        # silhouette requires 2 <= n_labels < n_samples
+        if 2 <= len(distinct_labels) < len(emb_ids):
+            X = np.stack([current_by_id[sid] for sid in emb_ids])
+            try:
+                silhouette = float(silhouette_score(X, labels, metric='cosine'))
+            except Exception as e:
+                logger.debug("silhouette_score failed: %s", e)
+
+    # ---- community_coherence_med ----
+    community_members = {}
+    for sid, cid in partition.items():
+        if sid in summary_by_id:
+            community_members.setdefault(cid, []).append(summary_by_id[sid])
+
+    per_community_medians = []
+    for cid, embs in community_members.items():
+        if len(embs) < 2:
+            continue
+        M = np.stack(embs)
+        # Cosine similarity matrix (manual to avoid extra sklearn dependency depth)
+        norms = np.linalg.norm(M, axis=1, keepdims=True)
+        norms[norms == 0] = 1e-10
+        Mn = M / norms
+        sim = Mn @ Mn.T
+        # Upper triangle (i < j) — pairwise similarities only
+        iu = np.triu_indices(len(embs), k=1)
+        sims = sim[iu]
+        if sims.size:
+            per_community_medians.append(float(np.median(sims)))
+
+    coherence_med = float(np.median(per_community_medians)) if per_community_medians else None
+
+    if silhouette is not None:
+        logger.info("silhouette=%.4f (cosine, %d storylines)", silhouette, len(emb_ids))
+    if coherence_med is not None:
+        logger.info(
+            "community_coherence_med=%.4f (median of %d community medians)",
+            coherence_med, len(per_community_medians),
+        )
+
+    return silhouette, coherence_med
+
+
+def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> None:
+    """Insert one row into narrative_run_metrics for the current run.
+
+    Silent no-op when:
+    - dry_run=True (diagnostic runs should not pollute metrics history)
+    - the table doesn't exist yet (migration 043 not applied — matches the
+      `log_oracle_query` pattern in DatabaseManager)
+    Any other error is logged as warning but does NOT fail the pipeline.
+    """
+    if dry_run:
+        return
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO narrative_run_metrics (
+                        run_id, pipeline_step,
+                        n_storylines_total, n_storylines_active,
+                        n_edges_pre_filter, n_edges_post_filter,
+                        n_communities, n_singletons, max_community_size,
+                        silhouette, community_coherence_med,
+                        tcs, tcs_overlap_size, tcs_unreliable,
+                        modularity, runtime_seconds
+                    ) VALUES (
+                        %s, 'community_detection',
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        stats.get("run_id"),
+                        stats.get("storylines_total"),
+                        stats.get("nodes"),
+                        stats.get("edges_pre_filter"),
+                        stats.get("edges_loaded"),
+                        stats.get("communities"),
+                        stats.get("n_singletons"),
+                        stats.get("max_community_size"),
+                        stats.get("silhouette"),
+                        stats.get("community_coherence_med"),
+                        stats.get("tcs"),
+                        stats.get("tcs_overlap_size"),
+                        stats.get("tcs_unreliable"),
+                        stats.get("modularity"),
+                        stats.get("runtime_seconds"),
+                    ),
+                )
+            conn.commit()
+        logger.info("Persisted run metrics to narrative_run_metrics")
+    except Exception as e:
+        msg = str(e).lower()
+        if "narrative_run_metrics" in msg and ("does not exist" in msg or "undefinedtable" in msg):
+            logger.debug(
+                "narrative_run_metrics table missing — skipping metrics persistence "
+                "(apply migration 043 to enable)"
+            )
+        else:
+            logger.warning("Failed to persist run metrics: %s", e)
 
 
 def main():
