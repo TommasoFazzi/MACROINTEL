@@ -170,6 +170,7 @@ class NarrativeProcessor:
             Stats dict with counters for each stage
         """
         logger.info(f"=== Narrative Processing (days={days}, dry_run={dry_run}) ===")
+        start_time = time.time()
         stats = {
             'articles_loaded': 0,
             'micro_clusters': 0,
@@ -270,6 +271,12 @@ class NarrativeProcessor:
                 except Exception as e:
                     logger.error(f"Failed to evolve summary for storyline #{sid}: {e}")
 
+        # 7.b Phase 1C task 1.12 — Narrative Identity Stability (post Stage 4)
+        # Batch update: nis = cos(original_embedding, current_embedding) for all
+        # storylines touched this run. Skips rows where either embedding is NULL.
+        if updated_storyline_ids:
+            self._batch_update_nis_scores(updated_storyline_ids)
+
         # 7.5. Post-clustering relevance validation (after LLM so we have titles+summaries)
         validation_stats = self._validate_storyline_relevance(updated_storyline_ids)
         stats['validated_on_scope'] = validation_stats['validated']
@@ -323,6 +330,11 @@ class NarrativeProcessor:
             backfilled = self._backfill_missing_summaries(limit=50)
             stats['summaries_backfilled'] = backfilled
 
+        # Phase 1C task 1.13 — persist run metrics (final step before return)
+        stats['runtime_seconds'] = round(time.time() - start_time, 3)
+        if not dry_run:
+            self._persist_narrative_run_metrics(stats)
+
         logger.info(f"=== Narrative Processing Complete ===")
         logger.info(f"  Events: {stats['micro_clusters']} ({stats['events_matched']} matched, {stats['events_orphaned']} orphaned)")
         logger.info(f"  New storylines: {stats['new_storylines']}")
@@ -330,6 +342,7 @@ class NarrativeProcessor:
         logger.info(f"  Relevance validation: {stats['validated_on_scope']} on-scope, {stats['archived_off_topic']} archived off-topic")
         logger.info(f"  Graph edges updated: {stats['graph_edges_updated']}")
         logger.info(f"  Decay: {stats['decay_stats']}")
+        logger.info(f"  Runtime: {stats['runtime_seconds']:.2f}s")
 
         return stats
 
@@ -1414,16 +1427,21 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
         Apply lifecycle transitions to inactive storylines.
 
         Rules:
-        - No articles in 7 days: momentum *= 0.7
-        - momentum < 0.3 + narrative_status='active': → 'stabilized'
-        - 'stabilized' for 30 days without update: → 'archived'
-        - 'emerging' for 14 days without reaching 3 articles: → 'archived'
+        - rule_1: momentum *= MOMENTUM_DECAY_FACTOR for stale emerging/active (>7 days)
+        - rule_2: active + momentum < 0.3 → stabilized
+        - rule_3: stabilized for 30 days → archived
+        - rule_4: emerging for 5 days without reaching 3 articles → archived
+        - reverse_promo: stabilized → active when burst detected (Phase 2F task 2.13;
+          placeholder=0 in Phase 1C)
+
+        Returns per-rule counters (Phase 1C task 1.13): persisted in
+        `narrative_run_metrics.decay_stats` JSONB by `process_daily_batch`.
         """
-        stats = {'decayed': 0, 'stabilized': 0, 'archived': 0}
+        stats = {'rule_1': 0, 'rule_2': 0, 'rule_3': 0, 'rule_4': 0, 'reverse_promo': 0}
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                # 1. Decay momentum for stale active storylines
+                # Rule 1: Decay momentum for stale active storylines
                 cur.execute("""
                     UPDATE storylines
                     SET momentum_score = momentum_score * %s
@@ -1431,9 +1449,9 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                     AND last_update < NOW() - INTERVAL '7 days'
                     RETURNING id
                 """, (self.MOMENTUM_DECAY_FACTOR,))
-                stats['decayed'] = cur.rowcount
+                stats['rule_1'] = cur.rowcount
 
-                # 2. Active with low momentum → stabilized
+                # Rule 2: Active with low momentum → stabilized
                 cur.execute("""
                     UPDATE storylines
                     SET narrative_status = 'stabilized'
@@ -1441,9 +1459,9 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                     AND momentum_score < 0.3
                     RETURNING id
                 """)
-                stats['stabilized'] = cur.rowcount
+                stats['rule_2'] = cur.rowcount
 
-                # 3. Stabilized for 30 days → archived
+                # Rule 3: Stabilized for 30 days → archived
                 cur.execute("""
                     UPDATE storylines
                     SET narrative_status = 'archived'
@@ -1451,9 +1469,9 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                     AND last_update < NOW() - INTERVAL '30 days'
                     RETURNING id
                 """)
-                stats['archived'] = cur.rowcount
+                stats['rule_3'] = cur.rowcount
 
-                # 4. Emerging for 5 days without reaching 3 articles → archived
+                # Rule 4: Emerging for 5 days without reaching 3 articles → archived
                 cur.execute("""
                     UPDATE storylines
                     SET narrative_status = 'archived'
@@ -1462,17 +1480,129 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                     AND created_at < NOW() - INTERVAL '5 days'
                     RETURNING id
                 """)
-                stats['archived'] += cur.rowcount
+                stats['rule_4'] = cur.rowcount
+
+                # reverse_promo placeholder — implemented in Phase 2F (task 2.13)
 
             conn.commit()
 
         if any(stats.values()):
             logger.info(
-                f"Decay: {stats['decayed']} decayed, "
-                f"{stats['stabilized']} → stabilized, {stats['archived']} → archived"
+                f"Decay: rule_1={stats['rule_1']} (momentum decay), "
+                f"rule_2={stats['rule_2']} (active→stabilized), "
+                f"rule_3={stats['rule_3']} (stabilized→archived), "
+                f"rule_4={stats['rule_4']} (emerging→archived), "
+                f"reverse_promo={stats['reverse_promo']}"
             )
 
         return stats
+
+    def _batch_update_nis_scores(self, storyline_ids) -> None:
+        """Compute NIS = cos(original_embedding, current_embedding) for the given
+        storylines and persist into storylines.nis_score (Phase 1C task 1.12).
+
+        Uses pgvector's cosine distance operator `<=>` for a single batch UPDATE.
+        NIS = 1 - cos_distance (i.e. cosine similarity in [-1, 1], typically [0, 1]
+        for normalized embeddings).
+
+        Silent no-op when the nis_score column is missing (migration 043 not
+        applied yet).
+        """
+        ids = list(storyline_ids) if not isinstance(storyline_ids, list) else storyline_ids
+        if not ids:
+            return
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE storylines
+                        SET nis_score = 1 - (original_embedding <=> current_embedding)
+                        WHERE id = ANY(%s)
+                          AND original_embedding IS NOT NULL
+                          AND current_embedding IS NOT NULL
+                        """,
+                        (ids,),
+                    )
+                    updated = cur.rowcount
+                conn.commit()
+            if updated:
+                logger.info("Updated nis_score for %d storylines (post Stage 4)", updated)
+        except Exception as e:
+            msg = str(e).lower()
+            if "nis_score" in msg and ("does not exist" in msg or "undefinedcolumn" in msg):
+                logger.debug(
+                    "storylines.nis_score column missing — skipping NIS update "
+                    "(apply migration 043 to enable)"
+                )
+            else:
+                logger.warning("Failed to update nis_score: %s", e)
+
+    def _persist_narrative_run_metrics(self, stats: Dict[str, Any]) -> None:
+        """Insert one row into narrative_run_metrics for this narrative_processing run.
+
+        Phase 1C task 1.13 (decay_stats JSONB) + task 1.8 sister-counters for the
+        narrative side. Silent no-op when migration 043 not applied yet (matches
+        the `log_oracle_query` pattern in DatabaseManager).
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Counters at end-of-run (post decay) for accurate observability
+                    cur.execute(
+                        "SELECT count(*), "
+                        "count(*) FILTER (WHERE narrative_status IN "
+                        "  ('emerging', 'active', 'stabilized')) "
+                        "FROM storylines"
+                    )
+                    n_total, n_active = cur.fetchone()
+
+                    match_stats = {
+                        'matched': stats.get('events_matched', 0),
+                        'orphaned': stats.get('events_orphaned', 0),
+                        'orphans_recovered': stats.get('orphans_recovered', 0),
+                        'orphans_buffered': stats.get('orphans_buffered', 0),
+                        'new_storyline': stats.get('new_storylines', 0),
+                        'summaries_evolved': stats.get('summaries_evolved', 0),
+                        'summaries_backfilled': stats.get('summaries_backfilled', 0),
+                        'validated_on_scope': stats.get('validated_on_scope', 0),
+                        'archived_off_topic': stats.get('archived_off_topic', 0),
+                        'graph_edges_updated': stats.get('graph_edges_updated', 0),
+                    }
+
+                    cur.execute(
+                        """
+                        INSERT INTO narrative_run_metrics (
+                            pipeline_step,
+                            n_storylines_total, n_storylines_active,
+                            n_archived,
+                            decay_stats, match_stats,
+                            runtime_seconds
+                        ) VALUES (
+                            'narrative_processing',
+                            %s, %s, %s, %s, %s, %s
+                        )
+                        """,
+                        (
+                            n_total,
+                            n_active,
+                            stats.get('archived_off_topic', 0),
+                            Json(stats.get('decay_stats', {})),
+                            Json(match_stats),
+                            stats.get('runtime_seconds'),
+                        ),
+                    )
+                conn.commit()
+            logger.info("Persisted narrative_processing run metrics")
+        except Exception as e:
+            msg = str(e).lower()
+            if "narrative_run_metrics" in msg and ("does not exist" in msg or "undefinedtable" in msg):
+                logger.debug(
+                    "narrative_run_metrics table missing — skipping persistence "
+                    "(apply migration 043 to enable)"
+                )
+            else:
+                logger.warning("Failed to persist narrative run metrics: %s", e)
 
     def _backfill_missing_summaries(self, limit: int = 50) -> int:
         """
