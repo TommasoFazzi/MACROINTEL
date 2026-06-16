@@ -203,6 +203,163 @@ def _disparity_filter_backbone(
     return backbone, stats
 
 
+def _run_louvain_and_score(
+    db: DatabaseManager,
+    all_ids: list,
+    edges: list[tuple],
+    resolution: float,
+) -> dict:
+    """Build the graph from `edges`, run Louvain, compute silhouette + coherence.
+
+    Used by `--compare-sparsification` to score full-graph vs backbone partitions
+    side-by-side in a single dry run, without DB writes.
+    """
+    G = nx.Graph()
+    G.add_nodes_from(all_ids)
+    for s, t, w in edges:
+        G.add_edge(s, t, weight=w)
+
+    partition = community_louvain.best_partition(
+        G, random_state=42, weight='weight', resolution=resolution
+    )
+    modularity = community_louvain.modularity(partition, G, weight='weight')
+
+    freq = Counter(partition.values())
+    rank = {old_id: new_id for new_id, (old_id, _) in enumerate(freq.most_common())}
+    partition = {node: rank[cid] for node, cid in partition.items()}
+    freq = Counter(partition.values())
+
+    sil, coh_med = _compute_quality_metrics(db, partition)
+
+    return {
+        "n_edges": len(edges),
+        "n_communities": len(freq),
+        "n_singletons": sum(1 for c in freq.values() if c == 1),
+        "max_community_size": max(freq.values()) if freq else 0,
+        "modularity": round(modularity, 4),
+        "silhouette": sil,
+        "community_coherence_med": coh_med,
+    }
+
+
+def compare_sparsification(
+    min_weight: float = 0.05,
+    resolution: float = 0.8,
+) -> dict:
+    """Run Louvain twice — on the full active edge set and on the disparity-filter
+    backbone — and print a side-by-side comparison. NO DB WRITES.
+
+    This is a diagnostic tool to validate the impact of Phase 1D
+    `--apply-sparsification` on production data before promoting it as default.
+    """
+    if not LOUVAIN_AVAILABLE:
+        raise RuntimeError(
+            "python-louvain and networkx are required. "
+            "Run: pip install python-louvain networkx"
+        )
+
+    from src.nlp.config import load_clustering_config
+    cfg = load_clustering_config()
+    db = DatabaseManager()
+
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT source_story_id, target_story_id, weight "
+                "FROM storyline_edges WHERE weight >= %s",
+                (min_weight,),
+            )
+            raw_edges = cur.fetchall()
+
+            cur.execute(
+                "SELECT id FROM storylines "
+                "WHERE narrative_status IN ('emerging', 'active', 'stabilized')"
+            )
+            all_ids = [row[0] for row in cur.fetchall()]
+
+    if not raw_edges:
+        logger.warning("No edges loaded (min_weight=%.2f). Nothing to compare.", min_weight)
+        return {}
+
+    active_ids = set(all_ids)
+    edge_max: dict = {}
+    for s, t, w in raw_edges:
+        if s not in active_ids or t not in active_ids:
+            continue
+        key = (s, t) if s < t else (t, s)
+        prev = edge_max.get(key)
+        if prev is None or w > prev:
+            edge_max[key] = w
+    active_edges = [(s, t, w) for (s, t), w in edge_max.items()]
+
+    cfg_sp = cfg.sparsification
+    backbone_edges, backbone_stats = _disparity_filter_backbone(
+        active_edges, alpha=cfg_sp.alpha, fallback_threshold=cfg_sp.fallback_threshold,
+    )
+
+    logger.info(
+        "Disparity filter: %d → %d edges (%.1f%% kept, p50=%s, p75=%s, fallback=%s)",
+        backbone_stats["n_input"], backbone_stats["n_backbone"],
+        100.0 * backbone_stats["n_backbone"] / max(backbone_stats["n_input"], 1),
+        f"{backbone_stats['backbone_weight_p50']:.3f}" if backbone_stats["backbone_weight_p50"] is not None else "n/a",
+        f"{backbone_stats['backbone_weight_p75']:.3f}" if backbone_stats["backbone_weight_p75"] is not None else "n/a",
+        backbone_stats["used_fallback"],
+    )
+
+    logger.info("Running Louvain on FULL graph (%d edges)...", len(active_edges))
+    full_result = _run_louvain_and_score(db, all_ids, active_edges, resolution)
+
+    logger.info("Running Louvain on BACKBONE graph (%d edges)...", len(backbone_edges))
+    backbone_result = _run_louvain_and_score(db, all_ids, backbone_edges, resolution)
+
+    def _fmt(v):
+        if v is None:
+            return "n/a"
+        if isinstance(v, float):
+            return f"{v:.4f}"
+        return str(v)
+
+    def _delta(full, backbone):
+        if full is None or backbone is None:
+            return "n/a"
+        if isinstance(full, float) or isinstance(backbone, float):
+            d = backbone - full
+            sign = "+" if d >= 0 else ""
+            return f"{sign}{d:.4f}"
+        d = backbone - full
+        sign = "+" if d >= 0 else ""
+        return f"{sign}{d}"
+
+    print("=" * 78)
+    print("SPARSIFICATION COMPARISON — Louvain on FULL vs BACKBONE (dry-run, no DB writes)")
+    print("=" * 78)
+    print(f"  Nodes (active storylines):  {len(all_ids)}")
+    print(f"  min_weight:                 {min_weight}")
+    print(f"  resolution:                 {resolution}")
+    print(f"  Disparity alpha:            {cfg_sp.alpha}")
+    print(f"  Backbone fallback used:     {backbone_stats['used_fallback']}")
+    print(f"  Backbone weight p50/p75:    {_fmt(backbone_stats['backbone_weight_p50'])}"
+          f" / {_fmt(backbone_stats['backbone_weight_p75'])}")
+    print()
+    print(f"  {'Metric':<32} {'FULL':>14} {'BACKBONE':>14} {'Δ':>14}")
+    print(f"  {'-'*32} {'-'*14} {'-'*14} {'-'*14}")
+    metrics = [
+        "n_edges", "n_communities", "n_singletons", "max_community_size",
+        "modularity", "silhouette", "community_coherence_med",
+    ]
+    for m in metrics:
+        f = full_result.get(m)
+        b = backbone_result.get(m)
+        print(f"  {m:<32} {_fmt(f):>14} {_fmt(b):>14} {_delta(f, b):>14}")
+    print("=" * 78)
+
+    return {
+        "full": full_result,
+        "backbone": backbone_result,
+        "backbone_stats": backbone_stats,
+    }
+
+
 def compute_and_save_communities(
     min_weight: float = 0.05,
     resolution: float = 0.8,
@@ -746,7 +903,34 @@ def main():
             "computed and persisted, but Louvain uses the full graph)."
         ),
     )
+    parser.add_argument(
+        "--compare-sparsification", action="store_true",
+        help=(
+            "Diagnostic: run Louvain twice (full graph + disparity backbone) "
+            "and print a side-by-side comparison of partition quality. NO DB "
+            "WRITES. Implies --dry-run. Used to validate the impact of "
+            "--apply-sparsification on production data before promoting it."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.compare_sparsification:
+        print("=" * 60)
+        print("SPARSIFICATION COMPARE MODE (dry-run, no DB writes)")
+        print("=" * 60)
+        print(f"  Min edge weight:        {args.min_weight}")
+        print(f"  Resolution:             {args.resolution}")
+        print()
+        try:
+            compare_sparsification(
+                min_weight=args.min_weight,
+                resolution=args.resolution,
+            )
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        print("\nDone (no DB writes).")
+        return
 
     print("=" * 60)
     print("COMMUNITY DETECTION")
