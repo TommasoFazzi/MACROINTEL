@@ -102,11 +102,113 @@ def _name_community(cid: int, nodes_in_community: list, conn) -> str | None:
         return None
 
 
+def _disparity_filter_backbone(
+    edges: list[tuple], alpha: float, fallback_threshold: float
+) -> tuple[list[tuple], dict]:
+    """Serrano-Boguñá-Vespignani (2009) disparity filter — extracts the
+    statistically significant edge backbone from a weighted graph.
+
+    For each node i with degree k_i and strength s_i, and each incident edge
+    (i,j) with weight w_ij:
+        p_ij  = w_ij / s_i
+        a_ij  = (1 - p_ij)^(k_i - 1)
+    Edge (i,j) is kept if a_ij < alpha from EITHER endpoint (union, conservative:
+    preserves significant edges between nodes of unequal degree).
+
+    Degree-1 nodes are degenerate (formula gives a=1, edge would always be
+    pruned). They are kept unconditionally — the lone edge IS the only signal.
+
+    Fallback: if the backbone ends up empty (alpha too aggressive for the data
+    distribution), the function falls back to weight >= fallback_threshold to
+    guarantee Louvain has something to chew on. This is a guard, not a normal
+    operating mode.
+
+    Args:
+        edges: list of (source_id, target_id, weight) tuples — assumed
+               already deduplicated and weight > 0.
+        alpha: significance threshold (typical 0.1 - 0.5; 0.3 = default).
+        fallback_threshold: min weight if backbone is empty.
+
+    Returns:
+        (backbone_edges, stats) where stats has:
+            n_input, n_backbone, n_fallback_kept, used_fallback,
+            backbone_weight_p50, backbone_weight_p75
+    """
+    stats = {
+        "n_input": len(edges),
+        "n_backbone": 0,
+        "n_fallback_kept": 0,
+        "used_fallback": False,
+        "backbone_weight_p50": None,
+        "backbone_weight_p75": None,
+    }
+    if not edges:
+        return [], stats
+
+    # Per-node: collect (neighbor, weight) lists to compute degree + strength
+    incidents: dict = {}
+    for s, t, w in edges:
+        incidents.setdefault(s, []).append((t, w))
+        incidents.setdefault(t, []).append((s, w))
+
+    # Pre-compute node strengths and degrees
+    node_k = {n: len(adj) for n, adj in incidents.items()}
+    node_s = {n: sum(w for _, w in adj) for n, adj in incidents.items()}
+
+    # Edge survives if it passes the test from EITHER endpoint
+    kept: set = set()
+    for s, t, w in edges:
+        key = (s, t) if s < t else (t, s)
+        if key in kept:
+            continue
+        # From s's side
+        k_s, str_s = node_k[s], node_s[s]
+        if k_s <= 1:
+            kept.add(key)
+            continue
+        p_s = w / str_s if str_s > 0 else 0.0
+        a_s = (1.0 - p_s) ** (k_s - 1)
+        # From t's side
+        k_t, str_t = node_k[t], node_s[t]
+        if k_t <= 1:
+            kept.add(key)
+            continue
+        p_t = w / str_t if str_t > 0 else 0.0
+        a_t = (1.0 - p_t) ** (k_t - 1)
+        if a_s < alpha or a_t < alpha:
+            kept.add(key)
+
+    backbone = [(s, t, w) for (s, t, w) in edges
+                if (s, t) in kept or (t, s) in kept]
+
+    if not backbone:
+        # Fallback: backbone empty (alpha too tight for data). Use a simple
+        # weight threshold to avoid handing Louvain an empty graph.
+        backbone = [(s, t, w) for (s, t, w) in edges if w >= fallback_threshold]
+        stats["used_fallback"] = True
+        stats["n_fallback_kept"] = len(backbone)
+
+    stats["n_backbone"] = len(backbone)
+    if backbone and METRICS_AVAILABLE:
+        weights = np.array([w for _, _, w in backbone], dtype=float)
+        stats["backbone_weight_p50"] = float(np.median(weights))
+        stats["backbone_weight_p75"] = float(np.percentile(weights, 75))
+    elif backbone:
+        # Pure-Python fallback if numpy unavailable
+        weights = sorted(w for _, _, w in backbone)
+        n = len(weights)
+        stats["backbone_weight_p50"] = weights[n // 2]
+        stats["backbone_weight_p75"] = weights[(3 * n) // 4]
+
+    return backbone, stats
+
+
 def compute_and_save_communities(
     min_weight: float = 0.05,
     resolution: float = 0.8,
     dry_run: bool = False,
     max_name: int = 60,
+    apply_sparsification: bool = False,
 ) -> dict:
     """
     Load edge graph from DB, run Louvain, save community_id to storylines.
@@ -114,6 +216,11 @@ def compute_and_save_communities(
     Community IDs are assigned by descending community size:
     - community 0 = largest community (most stable across runs)
     - community 1 = second largest, etc.
+
+    apply_sparsification: when True, runs Louvain on the disparity-filter
+    backbone instead of the raw min_weight-filtered edge set (Phase 1D
+    promotion). Default False = shadow mode (compute backbone metrics, but
+    Louvain still uses the full graph — zero behavior change).
 
     Returns stats dict.
     """
@@ -125,6 +232,10 @@ def compute_and_save_communities(
 
     start_time = time.time()
     run_id = str(uuid.uuid4())  # shared between narrative_run_metrics + storyline_community_history (task 1.10)
+    # Local import avoids module-load coupling to the config (and keeps
+    # compute_and_save_communities callable from tests with monkeypatched cfg).
+    from src.nlp.config import load_clustering_config
+    cfg = load_clustering_config()
     db = DatabaseManager()
     stats = {
         "nodes": 0, "edges_loaded": 0, "communities": 0, "updated": 0,
@@ -136,6 +247,12 @@ def compute_and_save_communities(
         "max_community_size": 0,
         "runtime_seconds": 0.0,
         "run_id": run_id,
+        # Phase 1D — disparity filter backbone stats (always computed in shadow)
+        "n_edges_post_filter": None,
+        "backbone_weight_p50": None,
+        "backbone_weight_p75": None,
+        "sparsification_used_fallback": False,
+        "sparsification_applied": apply_sparsification,
     }
 
     # Load edges from DB
@@ -151,6 +268,8 @@ def compute_and_save_communities(
                 WHERE weight >= %s
             """, (min_weight,))
             edges = cur.fetchall()
+            # edges_loaded is updated after the active-only / dedup pass below
+            # so the number matches the graph Louvain actually sees.
             stats["edges_loaded"] = len(edges)
 
             # Also load all active storyline IDs (include isolated nodes)
@@ -171,21 +290,51 @@ def compute_and_save_communities(
         _persist_run_metrics(db, stats, dry_run)
         return stats
 
-    # Build undirected weighted graph
-    # Only include edges where BOTH endpoints are in the active set.
-    # nx.Graph.add_edge() auto-creates missing nodes — filtering prevents
-    # archived/deleted storylines from sneaking in via stale edges.
-    G = nx.Graph()
-    G.add_nodes_from(all_ids)
+    # Restrict edges to active endpoints (also dedup on undirected key, keeping
+    # max weight). Done BEFORE disparity filter so backbone stats reflect the
+    # actual graph Louvain will see — not the raw storyline_edges table.
     active_ids = set(all_ids)
+    edge_max: dict = {}
     for source, target, weight in edges:
         if source not in active_ids or target not in active_ids:
             continue
-        # For undirected graph, keep max weight if edge already exists
-        if G.has_edge(source, target):
-            G[source][target]['weight'] = max(G[source][target]['weight'], weight)
-        else:
-            G.add_edge(source, target, weight=weight)
+        key = (source, target) if source < target else (target, source)
+        prev = edge_max.get(key)
+        if prev is None or weight > prev:
+            edge_max[key] = weight
+    active_edges = [(s, t, w) for (s, t), w in edge_max.items()]
+    # Refresh edges_loaded so observability numbers refer to the actual graph
+    # Louvain sees (post min_weight + post active-only dedup), not raw rows.
+    stats["edges_loaded"] = len(active_edges)
+
+    # Phase 1D — disparity filter (Serrano-Boguñá-Vespignani 2009)
+    # Always computed in shadow; only used by Louvain when apply_sparsification.
+    cfg_sp = cfg.sparsification
+    backbone_edges, backbone_stats = _disparity_filter_backbone(
+        active_edges, alpha=cfg_sp.alpha, fallback_threshold=cfg_sp.fallback_threshold,
+    )
+    stats["n_edges_post_filter"] = backbone_stats["n_backbone"]
+    stats["backbone_weight_p50"] = backbone_stats["backbone_weight_p50"]
+    stats["backbone_weight_p75"] = backbone_stats["backbone_weight_p75"]
+    stats["sparsification_used_fallback"] = backbone_stats["used_fallback"]
+    logger.info(
+        "Disparity filter: %d → %d edges (%.1f%% kept, p50=%s, p75=%s, fallback=%s, mode=%s)",
+        backbone_stats["n_input"], backbone_stats["n_backbone"],
+        100.0 * backbone_stats["n_backbone"] / max(backbone_stats["n_input"], 1),
+        f"{stats['backbone_weight_p50']:.3f}" if stats["backbone_weight_p50"] is not None else "n/a",
+        f"{stats['backbone_weight_p75']:.3f}" if stats["backbone_weight_p75"] is not None else "n/a",
+        backbone_stats["used_fallback"],
+        "APPLIED" if apply_sparsification else "shadow",
+    )
+
+    # Build undirected weighted graph. In shadow mode (default) Louvain uses the
+    # full active_edges set — disparity backbone is observed but not enforced,
+    # so behavior is unchanged from Phase 1C baseline.
+    G = nx.Graph()
+    G.add_nodes_from(all_ids)
+    edges_for_louvain = backbone_edges if apply_sparsification else active_edges
+    for source, target, weight in edges_for_louvain:
+        G.add_edge(source, target, weight=weight)
 
     # Run Louvain with fixed seed for reproducible community IDs
     partition = community_louvain.best_partition(
@@ -219,8 +368,9 @@ def compute_and_save_communities(
     # EPR deferred: requires per-run edge snapshot (not in scope for Phase 1C —
     # storyline_edges is cumulative, no historical state to diff against).
     logger.info(
-        "Louvain found %d communities from %d nodes (%d edges, min_weight=%.2f, resolution=%.2f) — modularity=%.3f",
-        stats["communities"], stats["nodes"], stats["edges_loaded"],
+        "Louvain found %d communities from %d nodes (%d edges [%s], min_weight=%.2f, resolution=%.2f) — modularity=%.3f",
+        stats["communities"], stats["nodes"], len(edges_for_louvain),
+        "backbone" if apply_sparsification else "full",
         min_weight, resolution, modularity
     )
 
@@ -520,10 +670,12 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
                         n_communities, n_singletons, max_community_size,
                         silhouette, community_coherence_med,
                         tcs, tcs_overlap_size, tcs_unreliable,
-                        modularity, runtime_seconds
+                        modularity, runtime_seconds,
+                        backbone_weight_p50, backbone_weight_p75
                     ) VALUES (
                         %s, 'community_detection',
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s
                     )
                     """,
                     (
@@ -531,7 +683,10 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
                         stats.get("storylines_total"),
                         stats.get("nodes"),
                         stats.get("edges_pre_filter"),
-                        stats.get("edges_loaded"),
+                        # Phase 1D: n_edges_post_filter = disparity backbone size
+                        # (was: dedup edge count; that's now reflected in
+                        # edges_loaded, mirrored to n_storylines_active context).
+                        stats.get("n_edges_post_filter"),
                         stats.get("communities"),
                         stats.get("n_singletons"),
                         stats.get("max_community_size"),
@@ -542,6 +697,8 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
                         stats.get("tcs_unreliable"),
                         stats.get("modularity"),
                         stats.get("runtime_seconds"),
+                        stats.get("backbone_weight_p50"),
+                        stats.get("backbone_weight_p75"),
                     ),
                 )
             conn.commit()
@@ -581,15 +738,24 @@ def main():
         "--dry-run", action="store_true",
         help="Compute communities but do not write to DB"
     )
+    parser.add_argument(
+        "--apply-sparsification", action="store_true",
+        help=(
+            "Phase 1D: run Louvain on the disparity-filter backbone instead of "
+            "the full edge set. Default = shadow mode (backbone stats are still "
+            "computed and persisted, but Louvain uses the full graph)."
+        ),
+    )
     args = parser.parse_args()
 
     print("=" * 60)
     print("COMMUNITY DETECTION")
     print("=" * 60)
-    print(f"  Min edge weight: {args.min_weight}")
-    print(f"  Resolution:      {args.resolution}")
-    print(f"  Max LLM names:   {args.max_name}")
-    print(f"  Dry run:         {args.dry_run}")
+    print(f"  Min edge weight:        {args.min_weight}")
+    print(f"  Resolution:             {args.resolution}")
+    print(f"  Max LLM names:          {args.max_name}")
+    print(f"  Dry run:                {args.dry_run}")
+    print(f"  Apply sparsification:   {args.apply_sparsification} (False = shadow)")
     print()
 
     try:
@@ -598,17 +764,21 @@ def main():
             resolution=args.resolution,
             dry_run=args.dry_run,
             max_name=args.max_name,
+            apply_sparsification=args.apply_sparsification,
         )
     except RuntimeError as e:
         print(f"ERROR: {e}")
         sys.exit(1)
 
-    print(f"Storylines (nodes):  {stats['nodes']}")
-    print(f"Edges loaded:        {stats['edges_loaded']}")
-    print(f"Communities found:   {stats['communities']}")
-    print(f"Modularity:          {stats.get('modularity', 'N/A')}")
-    print(f"Storylines updated:  {stats['updated']}")
-    print(f"Communities named:   {stats.get('communities_named', 'N/A (dry-run or Gemini unavailable)')}")
+    print(f"Storylines (nodes):     {stats['nodes']}")
+    print(f"Edges (active+dedup):   {stats['edges_loaded']}")
+    print(f"Edges (backbone):       {stats.get('n_edges_post_filter', 'N/A')}"
+          f" (p50={stats.get('backbone_weight_p50')}, p75={stats.get('backbone_weight_p75')}, "
+          f"fallback={stats.get('sparsification_used_fallback')})")
+    print(f"Communities found:      {stats['communities']}")
+    print(f"Modularity:             {stats.get('modularity', 'N/A')}")
+    print(f"Storylines updated:     {stats['updated']}")
+    print(f"Communities named:      {stats.get('communities_named', 'N/A (dry-run or Gemini unavailable)')}")
     if args.dry_run:
         print("\n[DRY RUN] No changes written to database.")
     print("\nDone!")
