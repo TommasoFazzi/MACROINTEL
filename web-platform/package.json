@@ -41,7 +41,9 @@
     "fast-uri": ">=3.1.2",
     "postcss": ">=8.5.10",
     "brace-expansion": ">=5.0.6",
-    "qs": ">=6.15.2"
+    "qs": ">=6.15.2",
+    "dompurify": ">=3.4.9",
+    "js-yaml": ">=4.2.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
