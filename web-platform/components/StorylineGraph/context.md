@@ -209,6 +209,7 @@ useGraphNetwork()
 
 ## Color Reference
 
-Same `COMMUNITY_PALETTE` and `COMMUNITY_OTHER` as before (see `lib/communityColors.ts`).
-Top 15 communities by node count get `COMMUNITY_PALETTE[rank]`; all others get `COMMUNITY_OTHER = '#2A3A4A'`.
+Same `COMMUNITY_PALETTE`, `COMMUNITY_OTHER`, and `SINGLETON_COLOR` as before (see `lib/communityColors.ts`).
+Top 15 communities by node count get `COMMUNITY_PALETTE[rank]`; out-of-palette communities get `COMMUNITY_OTHER = '#2A3A4A'` (the "Others" bucket).
+Isolated storylines (`community_id === null`, degree=0 — Phase 1F) get `SINGLETON_COLOR = '#6B7280'` (neutral gray, distinct from the Others bucket).
 Selected node color: `#FFFFFF`. Ego edges: `rgba(249,115,22,0.9)` (orange).

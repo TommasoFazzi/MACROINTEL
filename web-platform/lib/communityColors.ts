@@ -30,14 +30,20 @@ export const COMMUNITY_PALETTE: readonly string[] = [
   '#40C4FF', // 14 light-blue
 ] as const;
 
+// "Others" bucket — a real community that fell outside the top-N palette.
 export const COMMUNITY_OTHER = '#2A3A4A';
+
+// Singleton / isolated storyline (community_id === null, degree=0). Distinct
+// neutral gray so isolated nodes read differently from the "Others" bucket.
+// See Phase 1F task 1.23 / design.md § Decision 12.
+export const SINGLETON_COLOR = '#6B7280';
 
 /**
  * Return a deterministic colour for a community ID.
- * Null / undefined IDs get COMMUNITY_OTHER (neutral dark gray).
+ * Null / undefined IDs (isolated storylines) get SINGLETON_COLOR (neutral gray).
  */
 export function communityColor(id: number | null | undefined): string {
-  if (id == null) return COMMUNITY_OTHER;
+  if (id == null) return SINGLETON_COLOR;
   return COMMUNITY_PALETTE[((id % COMMUNITY_PALETTE.length) + COMMUNITY_PALETTE.length) % COMMUNITY_PALETTE.length];
 }
 

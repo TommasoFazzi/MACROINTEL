@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useSigma } from '@react-sigma/core';
 import { useGraphContext } from './GraphContext';
 import { useScheduledRefresh } from './useScheduledRefresh';
+import { SINGLETON_COLOR } from '@/lib/communityColors';
 
 const EGO_EDGE_BASE = 'rgba(249,115,22,'; // orange
 const FADED_EDGE = 'rgba(150,190,220,0.02)';
@@ -41,7 +42,7 @@ export default function GraphStyle() {
         }
 
         const baseColor =
-          communityColorMap.get(data.community_id as number) ?? (data.color as string) ?? '#2A3A4A';
+          communityColorMap.get(data.community_id as number) ?? (data.color as string) ?? SINGLETON_COLOR;
 
         // Dim mode — non-matching filter nodes get low alpha (ego/hover take over below)
         if (!isolate && highlightIds.size > 0 && !highlightIds.has(id) && !egoActive) {
