@@ -61,6 +61,14 @@ logger = get_logger(__name__)
 PER_ARTICLE_TIMEOUT = 30   # max seconds per single article extraction (Fix 1)
 DOMAIN_MAX_CONCURRENT = 2  # max concurrent requests per domain (Fix 3)
 
+# Max concurrent extractions. Each extraction runs lxml/libxml2 (via trafilatura
+# and newspaper3k) in its own thread. libxml2 is not safe under heavy concurrent
+# parsing — high thread counts can trigger a heap "double free or corruption (out)"
+# that aborts the whole process (uncatchable by try/except, kills the pipeline).
+# Default lowered to 4 (from 10) to shrink that race window; override via env if needed.
+import os as _os
+DEFAULT_MAX_CONCURRENT = int(_os.getenv("INGESTION_MAX_CONCURRENT", "4"))
+
 # Pool di User-Agent realistici per evitare blocchi
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -111,17 +119,18 @@ PDF_LANDING_PAGE_DOMAINS = [
 class ContentExtractor:
     """Extracts full-text content from article URLs."""
 
-    def __init__(self, timeout: int = 10, user_agent: str = None, max_concurrent: int = 10):
+    def __init__(self, timeout: int = 10, user_agent: str = None, max_concurrent: int = None):
         """
         Initialize the ContentExtractor.
 
         Args:
             timeout: Request timeout in seconds
             user_agent: Custom user agent string
-            max_concurrent: Max concurrent extractions for async batch
+            max_concurrent: Max concurrent extractions for async batch.
+                None → DEFAULT_MAX_CONCURRENT (env INGESTION_MAX_CONCURRENT, default 4).
         """
         self.timeout = timeout
-        self.max_concurrent = max_concurrent
+        self.max_concurrent = max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
         self.user_agent = user_agent or self._get_random_ua()
 
         # Standard requests session

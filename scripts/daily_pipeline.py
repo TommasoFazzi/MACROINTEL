@@ -86,6 +86,26 @@ class PipelineResult:
 # Pipeline Configuration
 # =============================================================================
 
+def _report_time_window_flags() -> str:
+    """
+    Build optional --from-time/--to-time flags for the global daily report.
+
+    Reads REPORT_FROM_TIME / REPORT_TO_TIME (set by the workflow). When provided,
+    these anchor the report's article window to a fixed interval (e.g. the 09:00
+    report window) instead of "last N days from now" — keeping news coherent with
+    the previous evening's macro data on a late/recovery re-run. Empty → no flags
+    (default last-N-days behavior preserved).
+    """
+    flags = ""
+    from_time = (os.getenv("REPORT_FROM_TIME") or "").strip()
+    to_time = (os.getenv("REPORT_TO_TIME") or "").strip()
+    if from_time:
+        flags += f" --from-time {from_time}"
+    if to_time:
+        flags += f" --to-time {to_time}"
+    return flags
+
+
 DEFAULT_STEPS = [
     PipelineStep(
         name="ingestion",
@@ -148,7 +168,8 @@ DEFAULT_STEPS = [
     ),
     PipelineStep(
         name="generate_report",
-        command="python scripts/generate_report.py --macro-first --skip-article-signals",
+        command="python scripts/generate_report.py --macro-first --skip-article-signals"
+                + _report_time_window_flags(),
         description="Generazione report giornaliero",
         timeout_seconds=900,  # 15 min
         continue_on_failure=False

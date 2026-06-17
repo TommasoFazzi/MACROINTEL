@@ -2,6 +2,15 @@ name: Daily Intelligence Pipeline
 
 on:
   workflow_dispatch: # triggered by Hetzner cron at 07:00 UTC (09:00 CEST)
+    inputs:
+      from_time:
+        description: "Report article window start (ISO YYYY-MM-DDTHH:MM). Empty = default last-N-days behavior."
+        required: false
+        default: ""
+      to_time:
+        description: "Report article window end (ISO YYYY-MM-DDTHH:MM). Empty = default last-N-days behavior."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -112,6 +121,10 @@ jobs:
           BREVO_SMTP_PASS: ${{ secrets.BREVO_SMTP_PASS }}
           BREVO_FROM_EMAIL: ${{ secrets.BREVO_FROM_EMAIL }}
           BREVO_FROM_NAME: ${{ secrets.BREVO_FROM_NAME }}
+          # Optional report article time-window (anchors news to the 09:00 report
+          # window so news + macro stay coherent on a late/recovery re-run).
+          REPORT_FROM_TIME: ${{ github.event.inputs.from_time }}
+          REPORT_TO_TIME: ${{ github.event.inputs.to_time }}
         run: |
           mkdir -p logs reports data
           python scripts/daily_pipeline.py
