@@ -42,6 +42,17 @@ try:
 except ImportError:
     METRICS_AVAILABLE = False
 
+# Phase 1E (task 1.17) — Leiden + CPM for the 4-way shadow comparison framework.
+# Optional dep: guarded like LOUVAIN_AVAILABLE so the script still runs (Louvain
+# only) where leidenalg/igraph aren't installed. Prod container has both (Phase 0.2).
+# Verify with: docker compose -p app exec backend python -c "import leidenalg, igraph"
+try:
+    import igraph as ig
+    import leidenalg
+    LEIDEN_AVAILABLE = True
+except ImportError:
+    LEIDEN_AVAILABLE = False
+
 try:
     from src.llm.llm_factory import LLMFactory
     _llm_model = LLMFactory.get("t5")
@@ -49,7 +60,7 @@ try:
 except Exception:
     GEMINI_AVAILABLE = False
 
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_values, Json
 from src.storage.database import DatabaseManager
 from src.utils.logger import get_logger
 
@@ -226,17 +237,52 @@ def _isolated_node_ids(all_ids: list, edges: list[tuple]) -> list:
     return [n for n in all_ids if n not in connected]
 
 
+def _score_dict(
+    name: str,
+    partition: dict,
+    n_active: int,
+    modularity: float,
+    sil,
+    coh_med,
+    runtime_ms: int,
+    gamma_used=None,
+    gamma_sweep_range=None,
+) -> dict:
+    """Assemble the unified, JSON-serializable score schema shared by the Louvain
+    and Leiden scorers (Phase 1E task 1.20). Keys match the shadow_partitions JSONB
+    schema in design.md § Decision 22.
+    """
+    freq = Counter(partition.values())
+    n_comm = len(freq)
+    max_size = max(freq.values()) if freq else 0
+    return {
+        "name": name,
+        "n_edges": None,  # filled by callers that know the edge count
+        "n_communities": n_comm,
+        "n_singletons": sum(1 for c in freq.values() if c == 1),
+        "max_community_size": max_size,
+        "avg_community_size": round(n_active / n_comm, 2) if n_comm else 0.0,
+        "modularity": round(modularity, 4),
+        "silhouette": sil,
+        "coherence_med": coh_med,
+        "runtime_ms": runtime_ms,
+        "gamma_used": gamma_used,
+        "gamma_sweep_range": gamma_sweep_range,
+    }
+
+
 def _run_louvain_and_score(
     db: DatabaseManager,
     all_ids: list,
     edges: list[tuple],
     resolution: float,
+    name: str = "louvain",
 ) -> dict:
-    """Build the graph from `edges`, run Louvain, compute silhouette + coherence.
-
-    Used by `--compare-sparsification` to score full-graph vs backbone partitions
-    side-by-side in a single dry run, without DB writes.
+    """Build the graph from `edges`, run Louvain, return the unified score schema
+    (Phase 1E task 1.20). `gamma_used`/`gamma_sweep_range` are None (Louvain has no
+    γ-sweep). Used by `--compare-sparsification` and `compute_shadow_partitions`.
     """
+    t0 = time.time()
     G = nx.Graph()
     G.add_nodes_from(all_ids)
     for s, t, w in edges:
@@ -250,19 +296,263 @@ def _run_louvain_and_score(
     freq = Counter(partition.values())
     rank = {old_id: new_id for new_id, (old_id, _) in enumerate(freq.most_common())}
     partition = {node: rank[cid] for node, cid in partition.items()}
-    freq = Counter(partition.values())
 
     sil, coh_med = _compute_quality_metrics(db, partition)
+    runtime_ms = int((time.time() - t0) * 1000)
 
+    result = _score_dict(name, partition, len(all_ids), modularity, sil, coh_med, runtime_ms)
+    result["n_edges"] = len(edges)
+    return result
+
+
+def _run_leiden_cpm_and_score(
+    db: DatabaseManager,
+    all_ids: list,
+    edges: list[tuple],
+    cfg,
+    name: str = "leiden",
+) -> dict:
+    """Run the Leiden+CPM adaptive γ-sweep and return the unified score schema
+    (Phase 1E task 1.20). `gamma_used` and `gamma_sweep_range` are populated.
+    """
+    t0 = time.time()
+    partition, sweep_stats, gamma_used, gamma_range = _run_leiden_cpm_adaptive_sweep(
+        db, all_ids, edges, cfg
+    )
+    runtime_ms = int((time.time() - t0) * 1000)
+
+    result = _score_dict(
+        name,
+        partition,
+        len(all_ids),
+        sweep_stats.get("modularity", 0.0),
+        sweep_stats.get("silhouette"),
+        sweep_stats.get("community_coherence_med"),
+        runtime_ms,
+        gamma_used=round(gamma_used, 6),
+        gamma_sweep_range=[round(g, 6) for g in gamma_range],
+    )
+    result["n_edges"] = len(edges)
+    result["gate_failed"] = sweep_stats.get("gate_failed", False)
+    return result
+
+
+def _build_igraph(all_ids: list, edges: list[tuple]) -> "ig.Graph":
+    """Build a weighted undirected igraph.Graph from a node list + edge tuples,
+    preserving the original storyline IDs as the vertex ``name`` attribute.
+
+    igraph indexes vertices 0..n-1 internally; we map storyline_id → index so the
+    partition can be translated back to storyline IDs by the callers.
+    """
+    idx_of = {sid: i for i, sid in enumerate(all_ids)}
+    g = ig.Graph(n=len(all_ids), directed=False)
+    g.vs["name"] = list(all_ids)
+    ig_edges = []
+    weights = []
+    for s, t, w in edges:
+        si, ti = idx_of.get(s), idx_of.get(t)
+        if si is None or ti is None:
+            continue  # endpoint not in the active node set — skip defensively
+        ig_edges.append((si, ti))
+        weights.append(w)
+    if ig_edges:
+        g.add_edges(ig_edges)
+        g.es["weight"] = weights
+    return g
+
+
+def _run_leiden_cpm(all_ids: list, edges: list[tuple], resolution_param: float) -> dict:
+    """Run Leiden + CPM on the graph defined by (all_ids, edges) and return a
+    partition dict ``{storyline_id: community_id}`` — parallel to
+    ``community_louvain.best_partition`` (Phase 1E task 1.18, design.md § Decision 1).
+
+    Uses ``leidenalg.find_partition(g, CPMVertexPartition, weights='weight',
+    resolution_parameter=γ, seed=42)``. seed=42 makes the partition deterministic:
+    two consecutive runs on the same graph give the same partition. Community IDs
+    are renumbered by descending size (largest = 0), matching the Louvain path.
+
+    γ (resolution_parameter) is NOT dimensionless in CPM — it is an internal
+    weight-density threshold, hence the adaptive per-run sweep (task 1.19).
+    """
+    if not LEIDEN_AVAILABLE:
+        raise RuntimeError(
+            "leidenalg and python-igraph are required for Leiden+CPM. "
+            "Run: pip install leidenalg python-igraph"
+        )
+
+    g = _build_igraph(all_ids, edges)
+    weights = g.es["weight"] if g.ecount() > 0 else None
+    part = leidenalg.find_partition(
+        g,
+        leidenalg.CPMVertexPartition,
+        weights=weights,
+        resolution_parameter=resolution_param,
+        seed=42,
+    )
+
+    # membership[i] = community index of vertex i → translate via vertex name.
+    names = g.vs["name"]
+    raw = {names[i]: cid for i, cid in enumerate(part.membership)}
+
+    # Renumber by descending community size (largest = 0) — stable color/ID story.
+    freq = Counter(raw.values())
+    rank = {old: new for new, (old, _) in enumerate(freq.most_common())}
+    return {node: rank[cid] for node, cid in raw.items()}
+
+
+def _partition_size_stats(partition: dict, n_active: int) -> dict:
+    """Community-size summary for a partition (shared by Leiden sweep + scorers)."""
+    freq = Counter(partition.values())
+    n_comm = len(freq)
+    max_size = max(freq.values()) if freq else 0
     return {
-        "n_edges": len(edges),
-        "n_communities": len(freq),
+        "n_communities": n_comm,
         "n_singletons": sum(1 for c in freq.values() if c == 1),
-        "max_community_size": max(freq.values()) if freq else 0,
-        "modularity": round(modularity, 4),
-        "silhouette": sil,
-        "community_coherence_med": coh_med,
+        "max_community_size": max_size,
+        "avg_community_size": round(n_active / n_comm, 2) if n_comm else 0.0,
+        "max_community_ratio": round(max_size / n_active, 4) if n_active else 0.0,
     }
+
+
+def _run_leiden_cpm_adaptive_sweep(
+    db: DatabaseManager, all_ids: list, edges: list[tuple], cfg
+) -> tuple:
+    """Adaptive γ-sweep for Leiden+CPM (Phase 1E task 1.19, design.md § Decision 1).
+
+    γ is NOT dimensionless in CPM — it is a weight-density threshold, so the sweep
+    is derived per-run from the *current* edge set's weight distribution:
+
+        median_w     = median(edge weights)
+        gamma_range  = geomspace(0.1*median_w, 2.0*median_w, 8)  clamped into the
+                       community.resolution_sweep bounding box [min, max]
+
+    For each γ it runs Leiden+CPM and scores modularity + silhouette + coherence,
+    then picks the winner via the scale-invariant composite gate:
+        avg_community_size ∈ [80, 240]  AND  max_size_ratio ≤ 0.20  AND  coherence ≥ 0.45
+    If no γ passes the gate, returns the partition with the highest coherence_med
+    and flags ``gate_failed=True``.
+
+    Returns:
+        (partition, partition_stats, gamma_used, gamma_sweep_range)
+        - partition: {storyline_id: community_id} of the winner
+        - partition_stats: dict (size stats + modularity/silhouette/coherence + gate_failed)
+        - gamma_used: the γ that produced the winner
+        - gamma_sweep_range: list[float] of the 8 γ values tried (for audit)
+    """
+    if not LEIDEN_AVAILABLE:
+        raise RuntimeError("leidenalg/python-igraph required for the Leiden γ-sweep")
+    if not METRICS_AVAILABLE:
+        raise RuntimeError("numpy required for the Leiden γ-sweep")
+
+    n_active = len(all_ids)
+    weights = np.array([w for _, _, w in edges], dtype=float)
+    if weights.size == 0:
+        # No edges → single γ at the config centerpoint, degenerate partition.
+        gamma = float(cfg.community.resolution_parameter)
+        partition = _run_leiden_cpm(all_ids, edges, gamma)
+        stats = _partition_size_stats(partition, n_active)
+        stats.update({"modularity": 0.0, "silhouette": None,
+                      "community_coherence_med": None, "gate_failed": True})
+        return partition, stats, gamma, [gamma]
+
+    median_w = float(np.median(weights))
+    lo_box = min(cfg.community.resolution_sweep)
+    hi_box = max(cfg.community.resolution_sweep)
+    lo = float(np.clip(0.1 * median_w, lo_box, hi_box))
+    hi = float(np.clip(2.0 * median_w, lo_box, hi_box))
+    if hi <= lo:  # degenerate clamp (median outside box) — fall back to the box
+        lo, hi = lo_box, hi_box
+    gamma_range = [float(g) for g in np.geomspace(lo, hi, num=8)]
+
+    g_ig = _build_igraph(all_ids, edges)
+    ig_weights = g_ig.es["weight"] if g_ig.ecount() > 0 else None
+
+    qg = cfg.community.quality_gate
+    candidates = []  # (passes_gate, coherence_sort_key, gamma, partition, stats)
+    for gamma in gamma_range:
+        partition = _run_leiden_cpm(all_ids, edges, gamma)
+        size_stats = _partition_size_stats(partition, n_active)
+        sil, coh_med = _compute_quality_metrics(db, partition)
+        # Newman modularity (comparable to the Louvain path) on the igraph.
+        membership = [partition[name] for name in g_ig.vs["name"]]
+        try:
+            modularity = float(g_ig.modularity(membership, weights=ig_weights))
+        except Exception:
+            modularity = 0.0
+
+        stats = {**size_stats, "modularity": round(modularity, 4),
+                 "silhouette": sil, "community_coherence_med": coh_med}
+
+        # Decision 22 composite gate: avg_community_size ∈ [80, 240] and
+        # max_size_ratio ≤ 0.20 are the ex-ante shadow-observation constants
+        # (NOT the tunable applied quality_gate); coherence floor is from config.
+        passes = (
+            80 <= size_stats["avg_community_size"] <= 240
+            and size_stats["max_community_ratio"] <= 0.20
+            and coh_med is not None and coh_med >= qg.coherence_median_min
+        )
+        coh_key = coh_med if coh_med is not None else -1.0
+        candidates.append((passes, coh_key, gamma, partition, stats))
+
+    passing = [c for c in candidates if c[0]]
+    if passing:
+        # Among gate-passers, prefer the highest coherence.
+        _, _, gamma_used, partition, stats = max(passing, key=lambda c: c[1])
+        stats["gate_failed"] = False
+    else:
+        # Nobody passed — fall back to highest coherence, flag the failure.
+        _, _, gamma_used, partition, stats = max(candidates, key=lambda c: c[1])
+        stats["gate_failed"] = True
+        logger.warning(
+            "Leiden γ-sweep: no γ passed the composite gate (tried %s) — "
+            "falling back to highest-coherence γ=%.5f",
+            [round(g, 5) for g in gamma_range], gamma_used,
+        )
+
+    return partition, stats, gamma_used, gamma_range
+
+
+def compute_shadow_partitions(
+    db: DatabaseManager,
+    all_ids: list,
+    active_edges: list[tuple],
+    backbone_edges: list[tuple],
+    cfg,
+) -> list:
+    """Compute the 4-way shadow comparison partitions (Phase 1E task 1.21,
+    design.md § Decision 22): Louvain-full, Louvain-backbone, Leiden-full,
+    Leiden-backbone. Returns a list of unified score dicts (JSON-serializable),
+    one per partition.
+
+    These are pure metrics — only ``louvain_full`` is the partition actually
+    applied to ``storylines.community_id`` by the caller. Leiden is skipped (with
+    a logged warning) when leidenalg/igraph are unavailable, so the framework
+    degrades gracefully to the 2 Louvain partitions.
+    """
+    resolution = cfg.community.resolution
+    results = []
+
+    results.append(_run_louvain_and_score(db, all_ids, active_edges, resolution, name="louvain_full"))
+    results.append(_run_louvain_and_score(db, all_ids, backbone_edges, resolution, name="louvain_backbone"))
+
+    if LEIDEN_AVAILABLE and METRICS_AVAILABLE:
+        try:
+            results.append(_run_leiden_cpm_and_score(db, all_ids, active_edges, cfg, name="leiden_full"))
+            results.append(_run_leiden_cpm_and_score(db, all_ids, backbone_edges, cfg, name="leiden_backbone"))
+        except Exception as e:
+            logger.warning("Leiden shadow partitions failed (%s) — keeping Louvain-only shadow", e)
+    else:
+        logger.warning(
+            "leidenalg/igraph (or numpy) unavailable — shadow comparison runs Louvain-only "
+            "(2 partitions instead of 4). Install deps for the full 4-way framework."
+        )
+
+    logger.info(
+        "Shadow partitions (%d): %s",
+        len(results),
+        ", ".join(f"{r['name']}(n={r['n_communities']}, coh={r['coherence_med']})" for r in results),
+    )
+    return results
 
 
 def compare_sparsification(
@@ -368,7 +658,7 @@ def compare_sparsification(
     print(f"  {'-'*32} {'-'*14} {'-'*14} {'-'*14}")
     metrics = [
         "n_edges", "n_communities", "n_singletons", "max_community_size",
-        "modularity", "silhouette", "community_coherence_med",
+        "avg_community_size", "modularity", "silhouette", "coherence_med",
     ]
     for m in metrics:
         f = full_result.get(m)
@@ -434,6 +724,8 @@ def compute_and_save_communities(
         "backbone_weight_p75": None,
         "sparsification_used_fallback": False,
         "sparsification_applied": apply_sparsification,
+        # Phase 1E task 1.21 — 4-way shadow comparison partitions (JSONB)
+        "shadow_partitions": None,
     }
 
     # Load edges from DB
@@ -507,6 +799,20 @@ def compute_and_save_communities(
         backbone_stats["used_fallback"],
         "APPLIED" if apply_sparsification else "shadow",
     )
+
+    # Phase 1E task 1.21 — 4-way shadow comparison (design.md § Decision 22).
+    # Computes Louvain/Leiden × full/backbone partitions as pure metrics and
+    # persists them to narrative_run_metrics.shadow_partitions JSONB. Does NOT
+    # touch community_id (that's the applied Louvain partition below). Skipped on
+    # dry_run and when the framework is disabled in config.
+    if cfg.community.shadow_comparison.enabled and not dry_run:
+        try:
+            stats["shadow_partitions"] = compute_shadow_partitions(
+                db, all_ids, active_edges, backbone_edges, cfg
+            )
+        except Exception as e:
+            logger.warning("Shadow comparison failed (%s) — continuing without it", e)
+            stats["shadow_partitions"] = None
 
     # Build undirected weighted graph. In shadow mode (default) Louvain uses the
     # full active_edges set — disparity backbone is observed but not enforced,
@@ -864,50 +1170,67 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
     """
     if dry_run:
         return
-    try:
+
+    base_cols = [
+        "run_id", "pipeline_step",
+        "n_storylines_total", "n_storylines_active",
+        "n_edges_pre_filter", "n_edges_post_filter",
+        "n_communities", "n_singletons", "max_community_size",
+        "silhouette", "community_coherence_med",
+        "tcs", "tcs_overlap_size", "tcs_unreliable",
+        "modularity", "runtime_seconds",
+        "backbone_weight_p50", "backbone_weight_p75",
+    ]
+    base_vals = [
+        stats.get("run_id"), "community_detection",
+        stats.get("storylines_total"),
+        stats.get("nodes"),
+        stats.get("edges_pre_filter"),
+        # Phase 1D: n_edges_post_filter = disparity backbone size
+        # (was: dedup edge count; that's now reflected in edges_loaded).
+        stats.get("n_edges_post_filter"),
+        stats.get("communities"),
+        stats.get("n_singletons"),
+        stats.get("max_community_size"),
+        stats.get("silhouette"),
+        stats.get("community_coherence_med"),
+        stats.get("tcs"),
+        stats.get("tcs_overlap_size"),
+        stats.get("tcs_unreliable"),
+        stats.get("modularity"),
+        stats.get("runtime_seconds"),
+        stats.get("backbone_weight_p50"),
+        stats.get("backbone_weight_p75"),
+    ]
+
+    def _insert(cols, vals):
+        placeholders = ", ".join(["%s"] * len(cols))
+        sql = (
+            f"INSERT INTO narrative_run_metrics ({', '.join(cols)}) "
+            f"VALUES ({placeholders})"
+        )
         with db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO narrative_run_metrics (
-                        run_id, pipeline_step,
-                        n_storylines_total, n_storylines_active,
-                        n_edges_pre_filter, n_edges_post_filter,
-                        n_communities, n_singletons, max_community_size,
-                        silhouette, community_coherence_med,
-                        tcs, tcs_overlap_size, tcs_unreliable,
-                        modularity, runtime_seconds,
-                        backbone_weight_p50, backbone_weight_p75
-                    ) VALUES (
-                        %s, 'community_detection',
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s
-                    )
-                    """,
-                    (
-                        stats.get("run_id"),
-                        stats.get("storylines_total"),
-                        stats.get("nodes"),
-                        stats.get("edges_pre_filter"),
-                        # Phase 1D: n_edges_post_filter = disparity backbone size
-                        # (was: dedup edge count; that's now reflected in
-                        # edges_loaded, mirrored to n_storylines_active context).
-                        stats.get("n_edges_post_filter"),
-                        stats.get("communities"),
-                        stats.get("n_singletons"),
-                        stats.get("max_community_size"),
-                        stats.get("silhouette"),
-                        stats.get("community_coherence_med"),
-                        stats.get("tcs"),
-                        stats.get("tcs_overlap_size"),
-                        stats.get("tcs_unreliable"),
-                        stats.get("modularity"),
-                        stats.get("runtime_seconds"),
-                        stats.get("backbone_weight_p50"),
-                        stats.get("backbone_weight_p75"),
-                    ),
-                )
+                cur.execute(sql, vals)
             conn.commit()
+
+    # Phase 1E task 1.21 — include shadow_partitions JSONB when present. If the
+    # column is missing (migration 046 not applied yet), fall back to the base
+    # column set so we never lose the rest of the run metrics.
+    shadow = stats.get("shadow_partitions")
+    try:
+        if shadow is not None:
+            try:
+                _insert(base_cols + ["shadow_partitions"], base_vals + [Json(shadow)])
+            except Exception as e:
+                msg = str(e).lower()
+                if "shadow_partitions" in msg and ("does not exist" in msg or "undefinedcolumn" in msg):
+                    logger.debug("shadow_partitions column missing — persisting metrics without it (apply migration 046)")
+                    _insert(base_cols, base_vals)
+                else:
+                    raise
+        else:
+            _insert(base_cols, base_vals)
         logger.info("Persisted run metrics to narrative_run_metrics")
     except Exception as e:
         msg = str(e).lower()
