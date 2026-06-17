@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { GraphNetwork } from '@/types/stories';
+import { SINGLETON_COLOR } from '@/lib/communityColors';
 
 const LAYOUT_STORAGE_KEY = 'story-graph-layout-v4';
 const LAYOUT_HASH_KEY = 'story-graph-hash-v4';
@@ -61,7 +62,11 @@ export default function GraphDataLoader({
 
     // Build nodes
     for (const node of graphData.nodes) {
-      const color = communityColorMap.get(node.community_id ?? -1) ?? '#2A3A4A';
+      // Isolated storylines (community_id === null) get the neutral singleton gray.
+      const color =
+        node.community_id == null
+          ? SINGLETON_COLOR
+          : communityColorMap.get(node.community_id) ?? SINGLETON_COLOR;
       const size = 4 + node.momentum_score * 12;
       const saved = savedPositions[String(node.id)];
       graph.addNode(String(node.id), {

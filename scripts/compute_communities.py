@@ -203,6 +203,29 @@ def _disparity_filter_backbone(
     return backbone, stats
 
 
+def _isolated_node_ids(all_ids: list, edges: list[tuple]) -> list:
+    """Return the storyline IDs in `all_ids` that have degree=0 in `edges`
+    (Phase 1F task 1.23, design.md § Decision 12).
+
+    These are storylines no edge survived the weight/backbone filter for; they
+    are not part of any community structure and receive community_id = NULL
+    rather than a one-off Louvain singleton cluster.
+
+    Args:
+        all_ids: candidate node IDs (all active storylines).
+        edges: list of (source_id, target_id, weight) tuples actually fed to
+               community detection.
+
+    Returns:
+        list of IDs from `all_ids` that appear in no edge, preserving order.
+    """
+    connected = set()
+    for s, t, _ in edges:
+        connected.add(s)
+        connected.add(t)
+    return [n for n in all_ids if n not in connected]
+
+
 def _run_louvain_and_score(
     db: DatabaseManager,
     all_ids: list,
@@ -401,6 +424,7 @@ def compute_and_save_communities(
         "storylines_total": 0,
         "edges_pre_filter": 0,
         "n_singletons": 0,
+        "n_isolated": 0,  # Phase 1F task 1.23 — degree=0 storylines → community_id NULL
         "max_community_size": 0,
         "runtime_seconds": 0.0,
         "run_id": run_id,
@@ -499,8 +523,25 @@ def compute_and_save_communities(
     )
 
     # Compute modularity score (higher = better community structure; target > 0.4)
+    # Computed on the full partition (incl. isolated nodes) — Louvain's own metric.
     modularity = community_louvain.modularity(partition, G, weight='weight')
     stats["modularity"] = round(modularity, 4)
+
+    # Phase 1F task 1.23 — singleton isolation (design.md § Decision 12).
+    # Storylines with degree=0 (no edge survived min_weight/backbone) are not part
+    # of any community structure; Louvain assigns each its own singleton cluster.
+    # We pull them OUT of the partition so they get community_id = NULL (set below),
+    # instead of polluting community_id with one-off cluster numbers and inflating
+    # the n_singletons / coherence metrics with non-community noise.
+    isolated_ids = _isolated_node_ids(all_ids, edges_for_louvain)
+    if isolated_ids:
+        for n in isolated_ids:
+            partition.pop(n, None)
+        logger.info(
+            "Singleton isolation: %d storylines with degree=0 → community_id = NULL",
+            len(isolated_ids),
+        )
+    stats["n_isolated"] = len(isolated_ids)
 
     # Renumber: community with most members = 0, then descending by size
     freq = Counter(partition.values())
@@ -539,19 +580,27 @@ def compute_and_save_communities(
     # Save to DB using a single batch UPDATE
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            execute_values(cur, """
-                UPDATE storylines AS s
-                SET community_id = v.cid
-                FROM (VALUES %s) AS v(sid, cid)
-                WHERE s.id = v.sid
-            """, [(sid, cid) for sid, cid in partition.items()])
-
-            # Null out any storyline not in partition (e.g. archived since last run)
             if partition:
+                execute_values(cur, """
+                    UPDATE storylines AS s
+                    SET community_id = v.cid
+                    FROM (VALUES %s) AS v(sid, cid)
+                    WHERE s.id = v.sid
+                """, [(sid, cid) for sid, cid in partition.items()])
+
+                # Null out any storyline not in partition: archived since last run,
+                # OR isolated degree=0 storylines pulled out above (Phase 1F task 1.23).
                 cur.execute(
                     "UPDATE storylines SET community_id = NULL "
                     "WHERE id != ALL(%s) AND community_id IS NOT NULL",
                     (list(partition.keys()),)
+                )
+            else:
+                # Degenerate run: every node was isolated (or no communities). Clear
+                # all stale community_ids so nothing carries over from a prior run.
+                cur.execute(
+                    "UPDATE storylines SET community_id = NULL "
+                    "WHERE community_id IS NOT NULL"
                 )
         conn.commit()
 
@@ -960,6 +1009,7 @@ def main():
           f" (p50={stats.get('backbone_weight_p50')}, p75={stats.get('backbone_weight_p75')}, "
           f"fallback={stats.get('sparsification_used_fallback')})")
     print(f"Communities found:      {stats['communities']}")
+    print(f"Isolated (degree=0):    {stats.get('n_isolated', 0)} → community_id NULL")
     print(f"Modularity:             {stats.get('modularity', 'N/A')}")
     print(f"Storylines updated:     {stats['updated']}")
     print(f"Communities named:      {stats.get('communities_named', 'N/A (dry-run or Gemini unavailable)')}")
