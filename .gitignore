@@ -97,3 +97,6 @@ CLAUDE.md
 
 # OpenSpec planning files (local-only, not for VCS)
 openspec/
+
+# Session handoff doc (regenerated on demand, local-only)
+handoff.md
