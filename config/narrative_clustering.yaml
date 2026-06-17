@@ -67,6 +67,8 @@ community:
     coherence_median_min: 0.45
     epr_min: 0.5
   shadow_mode: true                 # active when --shadow flag used
+  shadow_comparison:                # Phase 1E (Decision 22) — 4-way shadow framework
+    enabled: true                   # set false for instant reversibility (Louvain-only)
 
 sparsification:                     # activated in Phase 1D (task 1.14-1.16)
   algorithm: disparity_filter

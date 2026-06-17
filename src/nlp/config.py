@@ -89,6 +89,13 @@ class QualityGateConfig(_StrictBase):
     epr_min: float = 0.5
 
 
+class ShadowComparisonConfig(_StrictBase):
+    # Phase 1E (Decision 22) — 4-way shadow comparison framework toggle. When
+    # disabled, compute_communities.py skips the shadow partitions and only runs
+    # the applied algorithm (instant reversibility, no DB schema change).
+    enabled: bool = True
+
+
 class CommunityConfig(_StrictBase):
     algorithm: str = "louvain"
     min_weight: float = 0.05               # Louvain edge filter (legacy)
@@ -99,6 +106,7 @@ class CommunityConfig(_StrictBase):
     )
     quality_gate: QualityGateConfig = Field(default_factory=QualityGateConfig)
     shadow_mode: bool = True
+    shadow_comparison: ShadowComparisonConfig = Field(default_factory=ShadowComparisonConfig)
 
 
 class SparsificationConfig(_StrictBase):

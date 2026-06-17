@@ -137,6 +137,15 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - **Note on numbering gap**: migrations 040/041/042 reserved for later phases (`entity_canonical_map`, `storyline_edges_decay_view`, `community_color_persistence`). Runner uses sorted glob + `schema_migrations` tracking → gaps are safe.
   - Rollback: see commented section at bottom of the migration file.
 
+### Narrative Clustering Upgrade (2026-06-17 / Phase 1E)
+
+- `046_shadow_partitions.sql` — 4-way shadow comparison framework persistence (design.md § Decision 22):
+  1. `narrative_run_metrics.shadow_partitions JSONB` — array of partition score dicts (`louvain_full`, `louvain_backbone`, `leiden_full`, `leiden_backbone`) per `community_detection` run. Pure observation metrics — only `louvain_full` is applied to `storylines.community_id`. Each dict: `{name, n_edges, n_communities, n_singletons, max_community_size, avg_community_size, modularity, silhouette, coherence_med, runtime_ms, gamma_used, gamma_sweep_range}`. Replaces the legacy `shadow_diff_report` (043) single-shadow approach.
+  2. GIN index `idx_narrative_run_metrics_shadow_partitions` for dashboard JSONB queries.
+  3. View `v_shadow_partitions_unnested` — flattens the JSONB array to one row per `(run, partition)` via `CROSS JOIN LATERAL jsonb_to_recordset`, for the Phase 1E Streamlit dashboard (task 1.22a).
+  - Additive only (`ADD COLUMN IF NOT EXISTS` / `CREATE OR REPLACE VIEW`); validated end-to-end in a ROLLBACK transaction on `pgvector:pg17`.
+  - Rollback: see commented section at bottom of the migration file.
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -150,6 +159,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 038: **Applied** (2026-05-14) — historical context columns. Backfill run: 378 rows seeded, 2413 rows updated.
 - 039: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/039_macro_pct_change_12m.sql`. Then re-run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
 - 043: **Not yet applied** — clustering upgrade Phase 1B observability tables (additive only, no data migration). Apply via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/043_narrative_run_metrics.sql`. Producers (compute_communities.py, narrative_processor.py) start populating these in Phase 1C (tasks 1.8-1.13).
+- 046: **Not yet applied** — clustering upgrade Phase 1E shadow_partitions JSONB + view (additive only, requires 043 applied first). Apply via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/046_shadow_partitions.sql`. Producer (compute_communities.py `compute_shadow_partitions`) populates it once both 043 and 046 are applied; until then `_persist_run_metrics` degrades gracefully (persists base metrics without the column).
 
 ## Execution Order
 
@@ -169,6 +179,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 038 (Historical Context Columns — requires 037 applied first for country_code column)
   → 039 (pct_change_12m YoY column — no external dependencies, requires 038)
   → 043 (clustering upgrade observability — additive, no external dependencies; 040/041/042 reserved for later phases)
+  → 046 (clustering upgrade Phase 1E shadow_partitions — additive, requires 043 first; 044/045 reserved for Phase 2/4)
 ```
 
 Run a single migration:
