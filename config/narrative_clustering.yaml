@@ -58,7 +58,19 @@ community:
   resolution: 0.8                   # current default in compute_communities.py
   # Leiden+CPM-specific (activated in Phase 1E, task 1.17-1.22):
   resolution_parameter: 0.01        # CPM γ centerpoint
-  resolution_sweep: [0.005, 0.01, 0.02, 0.03, 0.05]
+  # Bounding box for the adaptive γ-sweep (Decision 1):
+  #   gamma_range = geomspace(0.1·median_w, 2.0·median_w, 8) clamped into [min, max].
+  # Prod observation 2026-06-18 (median_w backbone ≈ 0.130): the formula wants
+  # gamma up to 2·0.130 = 0.26, but the legacy max=0.05 clamped the sweep, forcing
+  # Leiden into 325-489 over-fragmented communities (avg 3.8-5.7 storylines).
+  # Raised max to 0.30 to let the adaptive formula reach its natural high end.
+  #
+  # MONITORING (post-deploy): if the winning γ stabilizes well inside the box
+  # (e.g. around 0.18-0.22) → we've found the data's structural optimum, fine.
+  # If it keeps pinning to the new max 0.30 → the box still clamps and we should
+  # raise it further (next step: 0.50). If it pins to the lower end → consider
+  # lowering min from 0.001. Re-evaluate after 14-28 days of shadow data.
+  resolution_sweep: [0.001, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30]
   quality_gate:
     n_communities_min: 20
     n_communities_max: 60
