@@ -277,10 +277,14 @@ def _run_louvain_and_score(
     edges: list[tuple],
     resolution: float,
     name: str = "louvain",
+    embedding_cache: tuple | None = None,
 ) -> dict:
     """Build the graph from `edges`, run Louvain, return the unified score schema
     (Phase 1E task 1.20). `gamma_used`/`gamma_sweep_range` are None (Louvain has no
     γ-sweep). Used by `--compare-sparsification` and `compute_shadow_partitions`.
+
+    embedding_cache: optional pre-fetched (current_by_id, summary_by_id) tuple
+        passed through to `_compute_quality_metrics` (Fix A — Phase 1E perf).
     """
     t0 = time.time()
     G = nx.Graph()
@@ -297,7 +301,7 @@ def _run_louvain_and_score(
     rank = {old_id: new_id for new_id, (old_id, _) in enumerate(freq.most_common())}
     partition = {node: rank[cid] for node, cid in partition.items()}
 
-    sil, coh_med = _compute_quality_metrics(db, partition)
+    sil, coh_med = _compute_quality_metrics(db, partition, embedding_cache=embedding_cache)
     runtime_ms = int((time.time() - t0) * 1000)
 
     result = _score_dict(name, partition, len(all_ids), modularity, sil, coh_med, runtime_ms)
@@ -311,13 +315,17 @@ def _run_leiden_cpm_and_score(
     edges: list[tuple],
     cfg,
     name: str = "leiden",
+    embedding_cache: tuple | None = None,
 ) -> dict:
     """Run the Leiden+CPM adaptive γ-sweep and return the unified score schema
     (Phase 1E task 1.20). `gamma_used` and `gamma_sweep_range` are populated.
+
+    embedding_cache: optional pre-fetched (current_by_id, summary_by_id) tuple
+        passed through to the γ-sweep (Fix A — Phase 1E perf).
     """
     t0 = time.time()
     partition, sweep_stats, gamma_used, gamma_range = _run_leiden_cpm_adaptive_sweep(
-        db, all_ids, edges, cfg
+        db, all_ids, edges, cfg, embedding_cache=embedding_cache
     )
     runtime_ms = int((time.time() - t0) * 1000)
 
@@ -415,7 +423,11 @@ def _partition_size_stats(partition: dict, n_active: int) -> dict:
 
 
 def _run_leiden_cpm_adaptive_sweep(
-    db: DatabaseManager, all_ids: list, edges: list[tuple], cfg
+    db: DatabaseManager,
+    all_ids: list,
+    edges: list[tuple],
+    cfg,
+    embedding_cache: tuple | None = None,
 ) -> tuple:
     """Adaptive γ-sweep for Leiden+CPM (Phase 1E task 1.19, design.md § Decision 1).
 
@@ -472,7 +484,7 @@ def _run_leiden_cpm_adaptive_sweep(
     for gamma in gamma_range:
         partition = _run_leiden_cpm(all_ids, edges, gamma)
         size_stats = _partition_size_stats(partition, n_active)
-        sil, coh_med = _compute_quality_metrics(db, partition)
+        sil, coh_med = _compute_quality_metrics(db, partition, embedding_cache=embedding_cache)
         # Newman modularity (comparable to the Louvain path) on the igraph.
         membership = [partition[name] for name in g_ig.vs["name"]]
         try:
@@ -532,13 +544,38 @@ def compute_shadow_partitions(
     resolution = cfg.community.resolution
     results = []
 
-    results.append(_run_louvain_and_score(db, all_ids, active_edges, resolution, name="louvain_full"))
-    results.append(_run_louvain_and_score(db, all_ids, backbone_edges, resolution, name="louvain_backbone"))
+    # Fix A (Phase 1E perf): pre-fetch embeddings ONCE for all 4 partitions
+    # (or 10 quality_metrics calls counting the γ-sweep). Without this cache,
+    # each call hit the DB for ~1.1MB pgvector data on 1843 storylines,
+    # exhausting the SimpleConnectionPool(maxconn=10) and crashing Leiden with
+    # "connection already closed" mid-sweep (prod run 2026-06-18).
+    t_cache0 = time.time()
+    embedding_cache = _fetch_storyline_embeddings(db, all_ids)
+    n_cur, n_sum = len(embedding_cache[0]), len(embedding_cache[1])
+    logger.info(
+        "Embedding cache pre-fetched: current=%d, summary=%d storylines (%.2fs)",
+        n_cur, n_sum, time.time() - t_cache0,
+    )
+
+    results.append(_run_louvain_and_score(
+        db, all_ids, active_edges, resolution, name="louvain_full",
+        embedding_cache=embedding_cache,
+    ))
+    results.append(_run_louvain_and_score(
+        db, all_ids, backbone_edges, resolution, name="louvain_backbone",
+        embedding_cache=embedding_cache,
+    ))
 
     if LEIDEN_AVAILABLE and METRICS_AVAILABLE:
         try:
-            results.append(_run_leiden_cpm_and_score(db, all_ids, active_edges, cfg, name="leiden_full"))
-            results.append(_run_leiden_cpm_and_score(db, all_ids, backbone_edges, cfg, name="leiden_backbone"))
+            results.append(_run_leiden_cpm_and_score(
+                db, all_ids, active_edges, cfg, name="leiden_full",
+                embedding_cache=embedding_cache,
+            ))
+            results.append(_run_leiden_cpm_and_score(
+                db, all_ids, backbone_edges, cfg, name="leiden_backbone",
+                embedding_cache=embedding_cache,
+            ))
         except Exception as e:
             logger.warning("Leiden shadow partitions failed (%s) — keeping Louvain-only shadow", e)
     else:
@@ -1077,19 +1114,23 @@ def _vec_to_array(value):
     return np.asarray(value, dtype=np.float32) if value else None
 
 
-def _compute_quality_metrics(db: DatabaseManager, partition: dict) -> tuple:
-    """Return (silhouette, community_coherence_med) — Phase 1C task 1.9.
+def _fetch_storyline_embeddings(db: DatabaseManager, storyline_ids: list) -> tuple:
+    """Fetch (current_embedding, summary_vector) for a list of storyline IDs.
 
-    silhouette: sklearn silhouette_score on current_embedding, cosine metric.
-                None when sklearn missing, <2 communities, or <(k+1) samples.
-    community_coherence_med: median of per-community medians of pairwise cosine
-                similarity on summary_vector. None when <2 communities qualify
-                (need ≥2 members with summary_vector each).
+    Returns (current_by_id, summary_by_id) — two dicts keyed by storyline_id, with
+    numpy float32 vectors as values. Rows with NULL embeddings are silently
+    skipped. Used by `_compute_quality_metrics` when the caller hasn't already
+    cached the embeddings (Fix A — Phase 1E perf).
+
+    Caching matters: a single shadow run calls quality metrics ~10× (2 Louvain
+    + 8 Leiden γ-sweep), and each call previously hit the DB for ~1.1MB of
+    pgvector data on 1843 storylines. Pre-fetching once cuts DB roundtrips from
+    10 to 1 and removes a connection-pool exhaustion failure mode that was
+    crashing Leiden with "connection already closed" in prod (2026-06-18 run).
     """
-    if not METRICS_AVAILABLE or not partition:
-        return None, None
+    if not METRICS_AVAILABLE or not storyline_ids:
+        return {}, {}
 
-    storyline_ids = list(partition.keys())
     rows = []
     with db.get_connection() as conn:
         with conn.cursor() as cur:
@@ -1109,6 +1150,36 @@ def _compute_quality_metrics(db: DatabaseManager, partition: dict) -> tuple:
             current_by_id[sid] = ca
         if sa is not None:
             summary_by_id[sid] = sa
+    return current_by_id, summary_by_id
+
+
+def _compute_quality_metrics(
+    db: DatabaseManager,
+    partition: dict,
+    embedding_cache: tuple | None = None,
+) -> tuple:
+    """Return (silhouette, community_coherence_med) — Phase 1C task 1.9.
+
+    silhouette: sklearn silhouette_score on current_embedding, cosine metric.
+                None when sklearn missing, <2 communities, or <(k+1) samples.
+    community_coherence_med: median of per-community medians of pairwise cosine
+                similarity on summary_vector. None when <2 communities qualify
+                (need ≥2 members with summary_vector each).
+
+    embedding_cache: optional (current_by_id, summary_by_id) tuple — when given,
+                skip the DB fetch and reuse the cached embeddings (Fix A,
+                Phase 1E perf). Callers that score many partitions in a row
+                (shadow comparison, γ-sweep) should pre-fetch once via
+                `_fetch_storyline_embeddings` and pass the result here.
+    """
+    if not METRICS_AVAILABLE or not partition:
+        return None, None
+
+    storyline_ids = list(partition.keys())
+    if embedding_cache is not None:
+        current_by_id, summary_by_id = embedding_cache
+    else:
+        current_by_id, summary_by_id = _fetch_storyline_embeddings(db, storyline_ids)
 
     # ---- silhouette ----
     silhouette = None

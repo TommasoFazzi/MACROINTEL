@@ -45,8 +45,14 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def stub_quality(monkeypatch):
     """Replace _compute_quality_metrics (DB-backed) with a deterministic stub:
-    silhouette = 0.1, coherence = 0.50 (passes the 0.45 gate)."""
-    monkeypatch.setattr(cc, "_compute_quality_metrics", lambda db, partition: (0.1, 0.50))
+    silhouette = 0.1, coherence = 0.50 (passes the 0.45 gate). Accepts the
+    optional `embedding_cache` kwarg added by Fix A (Phase 1E perf)."""
+    monkeypatch.setattr(
+        cc, "_compute_quality_metrics",
+        lambda db, partition, embedding_cache=None: (0.1, 0.50),
+    )
+    # Also stub the embedding fetch so compute_shadow_partitions can run with db=None.
+    monkeypatch.setattr(cc, "_fetch_storyline_embeddings", lambda db, ids: ({}, {}))
 
 
 def _karate_edges():
@@ -124,7 +130,10 @@ def test_gamma_range_differs_dense_vs_sparse(stub_quality):
 def test_gate_failed_when_coherence_low(monkeypatch):
     cfg = load_clustering_config()
     # Force coherence below the 0.45 gate for every γ → gate_failed must be True.
-    monkeypatch.setattr(cc, "_compute_quality_metrics", lambda db, p: (0.0, 0.10))
+    monkeypatch.setattr(
+        cc, "_compute_quality_metrics",
+        lambda db, p, embedding_cache=None: (0.0, 0.10),
+    )
     all_ids, edges = _karate_edges()
     _, stats, _, _ = cc._run_leiden_cpm_adaptive_sweep(cfg=cfg, db=None, all_ids=all_ids, edges=edges)
     assert stats["gate_failed"] is True
