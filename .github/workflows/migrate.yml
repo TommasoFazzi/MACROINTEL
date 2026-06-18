@@ -23,6 +23,11 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
+          # 30min (default 10min): community detection with the Phase 1E 4-way
+          # shadow framework + LLM community naming (~29 names × 1.5s rate-limit)
+          # can run 10-15min; the previous 10min cap killed the prod run on
+          # 2026-06-18 mid-way through naming.
+          command_timeout: 30m
           script: |
             cd /opt/intelligence-ita/repo
 
