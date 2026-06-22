@@ -140,7 +140,12 @@ DEFAULT_STEPS = [
     ),
     PipelineStep(
         name="community_detection",
-        command="python scripts/compute_communities.py --min-weight 0.25 --resolution 0.8 --max-name 60",
+        # No CLI flags: defaults come from config/narrative_clustering.yaml
+        # (min_weight=0.05, resolution=0.8). The legacy hardcoded --min-weight=0.25
+        # silently overrode the config and was producing 110+ over-fragmented
+        # communities in nightly runs (Phase 1E shadow data 2026-06-19..22 was
+        # falsified by it). Stay aligned with the YAML — it's the source of truth.
+        command="python scripts/compute_communities.py",
         description="Community detection (Louvain) sul grafo narrativo",
         timeout_seconds=600,  # 10 min: ~60 LLM calls × ~5s each
         continue_on_failure=True  # Non blocca il report se fallisce
