@@ -1,0 +1,250 @@
+name: Security Nightly — Claude Auto-Remediation
+
+# Ogni notte alle 05:00 UTC (07:00 ora italiana):
+#   1. Fetch Dependabot alerts aperti
+#   2. Claude analizza, applica fix possibili, documenta quelli bloccati
+#   3. Se ci sono modifiche → apre una PR verso main
+#   4. Tu la rivedi e mergi manualmente
+#
+# Guardrail:
+#   - Claude NON può pushare su main direttamente (solo branch security/...)
+#   - Claude NON può modificare file fuori da: requirements.txt,
+#     requirements-prod.txt, web-platform/package.json,
+#     web-platform/package-lock.json, CLAUDE.md (accepted CVE notes)
+#   - Timeout 20 minuti — non va mai in loop infinito
+#   - PR body documenta ogni decisione (fix applicato / bloccato / accettato)
+#
+# Per runnare manualmente: Actions tab → Security Nightly → Run workflow
+
+on:
+  schedule:
+    - cron: "0 5 * * *"  # 05:00 UTC = 07:00 CET
+  workflow_dispatch:
+
+permissions:
+  contents: write       # necessario per push del branch security/...
+  pull-requests: write  # necessario per gh pr create
+  security-events: read # necessario per leggere Dependabot alerts
+
+jobs:
+  security-remediation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch open Dependabot alerts
+        id: alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ALERTS=$(gh api repos/${{ github.repository }}/dependabot/alerts \
+            --jq '[.[] | select(.state=="open") | {
+              number: .number,
+              severity: .security_vulnerability.severity,
+              package: .dependency.package.name,
+              ecosystem: .dependency.package.ecosystem,
+              manifest: .dependency.manifest_path,
+              summary: .security_vulnerability.advisory.summary,
+              patched_in: .security_vulnerability.first_patched_version.identifier,
+              cvss: .security_vulnerability.cvss.score
+            }]')
+
+          echo "$ALERTS" > /tmp/dependabot_alerts.json
+          OPEN_COUNT=$(echo "$ALERTS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+          echo "open_count=$OPEN_COUNT" >> $GITHUB_OUTPUT
+
+          echo "=== Open Dependabot alerts: $OPEN_COUNT ==="
+          echo "$ALERTS" | python3 -c "
+          import json, sys
+          alerts = json.load(sys.stdin)
+          for a in sorted(alerts, key=lambda x: {'critical':0,'high':1,'medium':2,'low':3}.get(x['severity'],4)):
+              patched = a['patched_in'] or 'no fix available'
+              print(f\"  [{a['severity'].upper():8}] #{a['number']} {a['package']} (fix: {patched}) — {a['summary'][:60]}\")
+          "
+
+      - name: Skip if no open alerts
+        if: steps.alerts.outputs.open_count == '0'
+        run: |
+          echo "No open Dependabot alerts — nothing to do. Exiting cleanly."
+          exit 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "claude-security-bot"
+          git config user.email "claude-security-bot@users.noreply.github.com"
+
+      - name: Create security branch
+        run: |
+          BRANCH="security/$(date +%Y-%m-%d)"
+          # Se il branch esiste già (es. workflow runnato due volte oggi), aggiunge -2, -3, ...
+          BASE_BRANCH=$BRANCH
+          COUNTER=2
+          while git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; do
+            BRANCH="${BASE_BRANCH}-${COUNTER}"
+            COUNTER=$((COUNTER + 1))
+          done
+          git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Run Claude security remediation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERTS_FILE: /tmp/dependabot_alerts.json
+        run: |
+          # Costruisce il prompt con gli alert reali + contesto progetto
+          ALERTS_JSON=$(cat /tmp/dependabot_alerts.json)
+          TODAY=$(date +%Y-%m-%d)
+
+          claude --model claude-sonnet-4-6 --no-update-notification -p "
+          You are a security engineer performing nightly vulnerability remediation for the INTELLIGENCE_ITA project.
+          Today is $TODAY.
+
+          ## Open Dependabot Alerts
+          \`\`\`json
+          $ALERTS_JSON
+          \`\`\`
+
+          ## Project context (CRITICAL — read before touching anything)
+
+          **Accepted CVEs — DO NOT attempt to fix these, they are documented blockers:**
+          - fastapi==0.128.0 — CVE-2026-48710: fix requires fastapi>=0.134, blocked by openbb-core cap (fastapi<0.129.0)
+          - starlette==0.50.0 — same CVE, blocked by fastapi==0.128.0
+          - transformers==4.57.6 — Trainer ACE CVE: fix requires 5.x, blocked by sentence-transformers<5.0.0; risk accepted (inference-only, Trainer never used)
+          - postcss@8.4.31 — pinned by next@16.x, unfixable without Next.js upstream bump
+
+          **Dependency constraints:**
+          - openbb-core drives many version caps. If a package is capped by openbb-core, document it and skip.
+          - python-multipart must stay >=0.0.27,<0.0.28 (openbb-core==1.6.9 requirement).
+          - python-igraph must stay >=0.11,<1.0 (leidenalg compatibility).
+          - Do NOT change pinned torch/scipy/numpy unless the alert is critical and you verify ARM64 wheel availability.
+
+          **Files you are allowed to modify:**
+          - requirements.txt
+          - requirements-prod.txt
+          - web-platform/package.json
+          - web-platform/package-lock.json
+
+          **Files you must NOT touch:**
+          - Any .py source files
+          - Any workflow .yml files
+          - Dockerfile, docker-compose.yml
+          - migrations/
+
+          ## Your task
+
+          For each open alert:
+          1. Check if it is already an accepted/blocked CVE (listed above) → if so, skip it and note it.
+          2. Check if a patched version exists (patched_in field in the alert).
+          3. Check if bumping to the patched version is compatible with other pinned deps.
+          4. If safe to fix: update the version in requirements.txt AND requirements-prod.txt (keep them in sync).
+             For Node packages: update web-platform/package.json overrides section and regenerate package-lock.json with \`cd web-platform && npm install --legacy-peer-deps\`.
+          5. If blocked by a constraint: add or update a comment on that line explaining why.
+
+          After applying all fixes, write a file called /tmp/pr_body.md with:
+          - A table of all alerts with columns: #, Package, Severity, Action (Fixed / Blocked / Already accepted)
+          - For blocked ones: one-line reason
+          - For fixed ones: old version → new version
+
+          Be thorough but conservative: when in doubt about compatibility, mark as blocked and explain why.
+          Start working now.
+          " --allowedTools "Read,Edit,Write,Bash" 2>&1 | tee /tmp/claude_output.log
+
+      - name: Check for file changes
+        id: changes
+        run: |
+          git diff --name-only > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          CHANGED=$(git diff --name-only | wc -l | tr -d ' ')
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Commit changes
+        if: steps.changes.outputs.changed != '0'
+        run: |
+          git add requirements.txt requirements-prod.txt \
+            web-platform/package.json web-platform/package-lock.json 2>/dev/null || true
+          git commit -m "security: vulnerability fixes $(date +%Y-%m-%d)"
+
+      - name: Push branch
+        if: steps.changes.outputs.changed != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin "$BRANCH"
+
+      - name: Build PR body
+        if: steps.changes.outputs.changed != '0'
+        run: |
+          # Usa il body scritto da Claude, con fallback se mancante
+          if [ -f /tmp/pr_body.md ]; then
+            PR_BODY=$(cat /tmp/pr_body.md)
+          else
+            PR_BODY="Security vulnerability fixes — see changed files for details."
+          fi
+
+          CHANGED_FILES=$(cat /tmp/changed_files.txt | sed 's/^/- /')
+
+          cat > /tmp/final_pr_body.md << EOF
+          ## Security vulnerability fixes — $(date +%Y-%m-%d)
+
+          $PR_BODY
+
+          ---
+          **Changed files:**
+          $CHANGED_FILES
+
+          **Alert source:** Dependabot (open alerts at time of run: ${{ steps.alerts.outputs.open_count }})
+
+          > Generated by the nightly security remediation workflow. Review diffs before merging.
+          EOF
+
+      - name: Open pull request
+        if: steps.changes.outputs.changed != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "security: vulnerability fixes $(date +%Y-%m-%d)" \
+            --body-file /tmp/final_pr_body.md \
+            --base main \
+            --head "$BRANCH" \
+            --label "security" 2>/dev/null || \
+          gh pr create \
+            --title "security: vulnerability fixes $(date +%Y-%m-%d)" \
+            --body-file /tmp/final_pr_body.md \
+            --base main \
+            --head "$BRANCH"
+
+      - name: Report — no changes needed
+        if: steps.changes.outputs.changed == '0'
+        run: |
+          echo "=== Claude ran but found nothing to fix ==="
+          echo "Either all alerts are blocked/accepted CVEs, or no patched versions are available."
+          echo "See Claude output above for details."
+          cat /tmp/claude_output.log | tail -30
+
+      - name: Upload Claude output as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-security-log-${{ github.run_id }}
+          path: /tmp/claude_output.log
+          retention-days: 30
