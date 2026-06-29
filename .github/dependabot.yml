@@ -19,6 +19,8 @@ updates:
       - dependency-name: "python-multipart"
       - dependency-name: "transformers"
       - dependency-name: "torch"
+      - dependency-name: "starlette"
+      - dependency-name: "tornado"
 
   - package-ecosystem: "npm"
     directory: "/web-platform"
