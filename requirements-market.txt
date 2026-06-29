@@ -14,7 +14,7 @@ openbb-commodity==1.4.2
 openbb-fixedincome==1.5.1
 openbb-index==1.5.1
 openbb-oecd==1.5.1
-python-multipart==0.0.27  # openbb-core==1.6.9 requires >=0.0.27,<0.0.28
+python-multipart==0.0.31  # openbb-core==1.6.9 requires >=0.0.27,<0.0.28
 
 # Market data
 yfinance==0.2.66
