@@ -106,7 +106,7 @@ openbb-government-us==1.5.2
 openbb-imf==2.0.0
 openbb-index==1.5.1
 openbb-intrinio==1.5.1
-openbb-news==1.5.1
+openbb-news==1.6.2
 openbb-oecd==1.5.1
 openbb-platform-api==1.2.3
 openbb-polygon==1.5.1
