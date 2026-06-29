@@ -89,7 +89,7 @@ openbb-benzinga==1.5.1
 openbb-bls==1.2.1
 openbb-cftc==1.2.1
 openbb-commodity==1.4.2
-openbb-congress-gov==1.1.1
+openbb-congress-gov==1.2.3
 openbb-core==1.6.9
 openbb-crypto==1.5.1
 openbb-currency==1.5.1
