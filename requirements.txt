@@ -90,7 +90,7 @@ openbb-benzinga==1.5.1
 openbb-bls==1.2.1
 openbb-cftc==1.2.1
 openbb-commodity==1.4.2
-openbb-congress-gov==1.2.3
+openbb-congress-gov==1.1.1  # capped: >=1.2.x requires openbb-core>=1.6.10, conflicts with pin ==1.6.9
 openbb-core==1.6.9
 openbb-crypto==1.5.1
 openbb-currency==1.5.1
@@ -107,7 +107,7 @@ openbb-government-us==1.5.2
 openbb-imf==2.0.0
 openbb-index==1.5.1
 openbb-intrinio==1.5.1
-openbb-news==1.6.2
+openbb-news==1.5.1  # capped: >=1.6.x requires openbb-core>=1.6.10, conflicts with pin ==1.6.9
 openbb-oecd==1.5.1
 openbb-platform-api==1.2.3
 openbb-polygon==1.5.1

@@ -1,8 +1,3 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -14,13 +9,19 @@ updates:
       timezone: "Europe/Rome"
     open-pull-requests-limit: 5
     ignore:
+      # Blocked by openbb-core==1.6.9 version cap — do not auto-bump
       - dependency-name: "fastapi"
       - dependency-name: "starlette"
       - dependency-name: "python-multipart"
-      - dependency-name: "transformers"
-      - dependency-name: "torch"
-      - dependency-name: "starlette"
       - dependency-name: "tornado"
+      # openbb-* plugins: any version bump beyond current pins requires
+      # openbb-core>=1.6.10 which pulls fastapi==0.136 — incompatible with our stack
+      - dependency-name: "openbb"
+      - dependency-name: "openbb-*"
+      # Blocked by sentence-transformers<5.0.0 cap
+      - dependency-name: "transformers"
+      # No ARM64 wheel guarantee — bump manually after verification
+      - dependency-name: "torch"
 
   - package-ecosystem: "npm"
     directory: "/web-platform"
@@ -30,3 +31,9 @@ updates:
       time: "06:00"
       timezone: "Europe/Rome"
     open-pull-requests-limit: 5
+    ignore:
+      # Major version bumps — require manual testing of the frontend
+      - dependency-name: "lucide-react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "shadcn"
+        update-types: ["version-update:semver-major"]
