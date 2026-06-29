@@ -18,7 +18,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
   - Embeddings: `generate_embedding()`, `generate_chunk_embeddings()` - 384-dim (`paraphrase-multilingual-MiniLM-L12-v2`)
   - Batch Processing: `process_article()`, `process_batch()`
 
-- `narrative_processor.py` - **Narrative Engine** (~1498 lines)
+- `narrative_processor.py` - **Narrative Engine** (~1798 lines)
   - `NarrativeProcessor` class - Full storyline lifecycle
   - **Key tunable thresholds** — externalized to `config/narrative_clustering.yaml` (Phase 1A); loaded in `__init__` via `src/nlp/config.py :: load_clustering_config()` and exposed as instance attributes for backward compat. Current Phase 1A values preserve previous code behavior; Phase 2B sweep / Phase 1E Leiden / Phase 2D HDBSCAN adaptive will retune them.
     - `self.MICRO_CLUSTER_THRESHOLD = 0.90` ← `micro_cluster.threshold`
@@ -65,8 +65,11 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
     - `_clean_entity(entity: str)` — Static method: normalizes entity text by stripping quotes, brackets, trailing punctuation, excess whitespace. Called before `_is_garbage_entity` during storyline creation.
     - `_sanitize_entities_batch(entities: list[str])` — Applies `_clean_entity` + `_is_garbage_entity` to a list, returns cleaned survivors.
   - **Helper:**
-    - `_extract_entity_list(entities_json)` — Handles both new format (`clean.all`) and old format (`by_type.GPE/ORG/PERSON`)
-  - **Module-level constants:** `_SCOPE_KEYWORDS` (compiled regex with geopolitical terms), `_OFF_TOPIC_PATTERNS` (list of compiled regexes for sports/entertainment/celebrity/food/tourism)
+    - `_extract_entity_list(entities_json)` — Handles both new format (`clean.all`) and old format (`by_type.GPE/ORG/PERSON`); applies clean → garbage filter → **media_artifacts blocklist filter** → dedup, returns top 15 entities
+  - **Entity blocklist filter** (Fix `fix-clustering-singleton-bias`):
+    - `_load_entity_blocklist(path=None)` — Module-level helper: loads the `media_artifacts` section of `config/entity_blocklist.yaml` (Reuters, TASS, AP, Bloomberg, Xinhua, AFP, ANSA, Kyodo, EFE, dpa, etc.) as a lower-cased `set[str]` for O(1) membership lookup. Other sections (`generic_terms`, `noise`, `numbers_years`) are intentionally NOT loaded — they may contain legitimate-actor names in geopolitical context (e.g. "President", "China"). On missing/malformed YAML, logs a warning and returns `set()` (engine continues without source filtering).
+    - `_ENTITY_BLOCKLIST: set[str]` — Module-level constant populated at import time. Consulted in `_extract_entity_list` to reject media/agency entities from `key_entities` before they reach the storyline graph (where they would inflate Jaccard edge weights via shared-source bias).
+  - **Module-level constants:** `_SCOPE_KEYWORDS` (compiled regex with geopolitical terms), `_OFF_TOPIC_PATTERNS` (list of compiled regexes for sports/entertainment/celebrity/food/tourism), `_ENTITY_BLOCKLIST` (set, see above)
 
 - `relevance_filter.py` - **LLM Relevance Classification** (Filtro 2) (~160 lines)
   - `RelevanceFilter(scope: str = "global")` — uses `LLMFactory.get("t5")` (Gemini 2.5 Flash-Lite, timeout=15s)
@@ -129,3 +132,4 @@ If a storyline has no summary yet (LLM not yet run), it passes validation and is
 - **IDF weights are critical for rebuild scripts**: `scripts/rebuild_graph_edges.py` must load IDF weights via `processor._load_entity_idf(cur)` and pass them to `_update_graph_connections(sid, idf_weights)`. Without IDF weights, the fallback threshold is 0.30 (vs 0.05 with TF-IDF), resulting in ~90% fewer edges.
 - **Bidirectional edge deduplication**: Graph builder checks for reverse edges and keeps only the direction with higher weight. Migration 016 also cleans pre-existing bidirectional duplicates.
 - **DB-level candidate pre-filtering**: Graph builder uses `EXISTS (SELECT 1 FROM jsonb_array_elements_text(key_entities) ...)` to reduce candidates from thousands to ~10-50 per storyline, eliminating the previous O(n²) timeout issue.
+- **`entity_blocklist.yaml` is loaded ONLY by narrative_processor `_load_entity_blocklist()` (added by `fix-clustering-singleton-bias`)**: before this fix the YAML was only consulted by `scripts/backfill_entities.py`, `clean_entities.py`, `deep_clean_entities.py` on the `entities` table — narrative_processor wrote unfiltered `key_entities` (with Reuters/TASS/AP/Bloomberg/Xinhua/AFP) into `storylines`, polluting Jaccard edge weights downstream. The hook is module-level (one load at import); pipeline must be restarted to pick up YAML changes.

@@ -14,9 +14,11 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
 from collections import defaultdict, Counter
 import numpy as np
+import yaml
 from psycopg2.extras import Json, execute_values
 
 try:
@@ -38,6 +40,43 @@ logger = get_logger(__name__)
 
 # Model name constant
 EMBEDDING_MODEL_NAME = 'paraphrase-multilingual-MiniLM-L12-v2'
+
+
+def _default_blocklist_path() -> Path:
+    """Resolve `config/entity_blocklist.yaml` relative to the repo root."""
+    return Path(__file__).resolve().parents[2] / "config" / "entity_blocklist.yaml"
+
+
+def _load_entity_blocklist(path: Optional[Path] = None) -> Set[str]:
+    """Load the `media_artifacts` section of `config/entity_blocklist.yaml`
+    as a lower-cased set for O(1) membership lookup.
+
+    Only `media_artifacts` is loaded (Reuters, TASS, AP, Bloomberg, Xinhua,
+    AFP, etc.) — `generic_terms`, `noise`, and `numbers_years` are
+    intentionally excluded to avoid false positives on legitimate actors.
+
+    Returns empty set + logger.warning if the file is missing or unreadable;
+    the narrative engine continues to function (source-bias re-enters edges).
+    """
+    p = path if path is not None else _default_blocklist_path()
+    if not p.exists():
+        logger.warning(
+            "entity_blocklist.yaml not found at %s — narrative engine "
+            "will not filter source entities",
+            p,
+        )
+        return set()
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError) as exc:
+        logger.warning("Failed to parse entity_blocklist.yaml (%s) — "
+                       "narrative engine will not filter source entities", exc)
+        return set()
+    media = data.get("media_artifacts") or []
+    return {str(item).strip().lower() for item in media if item}
+
+
+_ENTITY_BLOCKLIST: Set[str] = _load_entity_blocklist()
 
 # ---------------------------------------------------------------------------
 # Post-clustering relevance validation
@@ -1741,7 +1780,7 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                 raw.extend(by_type.get(etype, []))
             raw = raw[:20]
 
-        # Sanitize: clean + filter garbage + deduplicate
+        # Sanitize: clean + filter garbage + filter source artifacts + deduplicate
         seen = set()
         result = []
         for entity in raw:
@@ -1749,6 +1788,8 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
             if NarrativeProcessor._is_garbage_entity(cleaned):
                 continue
             key = cleaned.lower()
+            if key in _ENTITY_BLOCKLIST:
+                continue
             if key in seen:
                 continue
             seen.add(key)
