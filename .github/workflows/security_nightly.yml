@@ -17,9 +17,7 @@ name: Security Nightly — Claude Auto-Remediation
 # Per runnare manualmente: Actions tab → Security Nightly → Run workflow
 
 on:
-  schedule:
-    - cron: "0 5 * * *"  # 05:00 UTC = 07:00 CET
-  workflow_dispatch:
+  workflow_dispatch:  # solo manuale — Dependabot sostituisce questo workflow
 
 permissions:
   contents: write       # necessario per push del branch security/...
