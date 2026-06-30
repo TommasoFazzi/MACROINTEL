@@ -301,10 +301,11 @@ def _run_louvain_and_score(
     rank = {old_id: new_id for new_id, (old_id, _) in enumerate(freq.most_common())}
     partition = {node: rank[cid] for node, cid in partition.items()}
 
-    sil, coh_med = _compute_quality_metrics(db, partition, embedding_cache=embedding_cache)
+    sil, coh_med, coh_med_k5 = _compute_quality_metrics(db, partition, embedding_cache=embedding_cache)
     runtime_ms = int((time.time() - t0) * 1000)
 
     result = _score_dict(name, partition, len(all_ids), modularity, sil, coh_med, runtime_ms)
+    result["coherence_med_k5"] = coh_med_k5
     result["n_edges"] = len(edges)
     return result
 
@@ -342,6 +343,11 @@ def _run_leiden_cpm_and_score(
     )
     result["n_edges"] = len(edges)
     result["gate_failed"] = sweep_stats.get("gate_failed", False)
+    # Fix 2 (fix-clustering-singleton-bias): persist debiased coherence + which
+    # fallback path the γ-sweep took, so we can audit micro-cluster bias from
+    # narrative_run_metrics.shadow_partitions over time.
+    result["coherence_med_k5"] = sweep_stats.get("community_coherence_med_k5")
+    result["fallback_path"] = sweep_stats.get("fallback_path")
     return result
 
 
@@ -480,11 +486,19 @@ def _run_leiden_cpm_adaptive_sweep(
     ig_weights = g_ig.es["weight"] if g_ig.ecount() > 0 else None
 
     qg = cfg.community.quality_gate
-    candidates = []  # (passes_gate, coherence_sort_key, gamma, partition, stats)
+    # Fix 2 (fix-clustering-singleton-bias): fallback no longer uses coh_med
+    # directly, because median-over-all-pairs is dominated by micro-clusters
+    # (high pairwise sim by chance on size=2 cluster) and pushes the sweep
+    # toward high γ → fragmentation. We rank fallback by coh_med_k5 (median
+    # over clusters with ≥5 members), and if no γ produces any such cluster
+    # we degrade to max(modularity) as a tertiary tie-breaker.
+    candidates = []  # (passes_gate, coh_med, coh_med_k5, modularity, gamma, partition, stats)
     for gamma in gamma_range:
         partition = _run_leiden_cpm(all_ids, edges, gamma)
         size_stats = _partition_size_stats(partition, n_active)
-        sil, coh_med = _compute_quality_metrics(db, partition, embedding_cache=embedding_cache)
+        sil, coh_med, coh_med_k5 = _compute_quality_metrics(
+            db, partition, embedding_cache=embedding_cache
+        )
         # Newman modularity (comparable to the Louvain path) on the igraph.
         membership = [partition[name] for name in g_ig.vs["name"]]
         try:
@@ -493,33 +507,53 @@ def _run_leiden_cpm_adaptive_sweep(
             modularity = 0.0
 
         stats = {**size_stats, "modularity": round(modularity, 4),
-                 "silhouette": sil, "community_coherence_med": coh_med}
+                 "silhouette": sil, "community_coherence_med": coh_med,
+                 "community_coherence_med_k5": coh_med_k5}
 
-        # Decision 22 composite gate: avg_community_size ∈ [80, 240] and
-        # max_size_ratio ≤ 0.20 are the ex-ante shadow-observation constants
-        # (NOT the tunable applied quality_gate); coherence floor is from config.
+        # Decision 22 composite gate (unchanged): avg_community_size ∈ [80, 240],
+        # max_size_ratio ≤ 0.20, coherence_med ≥ config floor.
         passes = (
             80 <= size_stats["avg_community_size"] <= 240
             and size_stats["max_community_ratio"] <= 0.20
             and coh_med is not None and coh_med >= qg.coherence_median_min
         )
-        coh_key = coh_med if coh_med is not None else -1.0
-        candidates.append((passes, coh_key, gamma, partition, stats))
+        candidates.append((passes, coh_med, coh_med_k5, modularity, gamma, partition, stats))
 
     passing = [c for c in candidates if c[0]]
     if passing:
-        # Among gate-passers, prefer the highest coherence.
-        _, _, gamma_used, partition, stats = max(passing, key=lambda c: c[1])
-        stats["gate_failed"] = False
-    else:
-        # Nobody passed — fall back to highest coherence, flag the failure.
-        _, _, gamma_used, partition, stats = max(candidates, key=lambda c: c[1])
-        stats["gate_failed"] = True
-        logger.warning(
-            "Leiden γ-sweep: no γ passed the composite gate (tried %s) — "
-            "falling back to highest-coherence γ=%.5f",
-            [round(g, 5) for g in gamma_range], gamma_used,
+        # Among gate-passers, prefer the highest coh_med (unchanged behavior).
+        _, _, _, _, gamma_used, partition, stats = max(
+            passing, key=lambda c: c[1] if c[1] is not None else -1.0
         )
+        stats["gate_failed"] = False
+        stats["fallback_path"] = "gate_passed"
+    else:
+        # Nobody passed. Try coh_med_k5 (Fix 2 — debiased against micro-clusters).
+        with_k5 = [c for c in candidates if c[2] is not None]
+        if with_k5:
+            _, _, _, _, gamma_used, partition, stats = max(
+                with_k5, key=lambda c: c[2]
+            )
+            stats["gate_failed"] = True
+            stats["fallback_path"] = "coh_med_k5"
+            logger.warning(
+                "Leiden γ-sweep: no γ passed the composite gate (tried %s) — "
+                "falling back to highest coh_med_k5 γ=%.5f (k_min=5)",
+                [round(g, 5) for g in gamma_range], gamma_used,
+            )
+        else:
+            # Tertiary fallback: no γ produced any cluster with ≥5 members.
+            # Pick max(modularity) — at least globally cohesive partition.
+            _, _, _, _, gamma_used, partition, stats = max(
+                candidates, key=lambda c: c[3]
+            )
+            stats["gate_failed"] = True
+            stats["fallback_path"] = "modularity_tertiary"
+            logger.warning(
+                "Leiden γ-sweep: tertiary fallback — no γ produced any cluster "
+                "with ≥5 members (tried %s); selecting max(modularity) γ=%.5f",
+                [round(g, 5) for g in gamma_range], gamma_used,
+            )
 
     return partition, stats, gamma_used, gamma_range
 
@@ -896,10 +930,11 @@ def compute_and_save_communities(
     stats["n_singletons"] = sum(1 for cnt in freq.values() if cnt == 1)
     stats["max_community_size"] = max(freq.values()) if freq else 0
 
-    # Phase 1C task 1.9 — silhouette + community_coherence_med
-    sil, coh_med = _compute_quality_metrics(db, partition)
+    # Phase 1C task 1.9 — silhouette + community_coherence_med (+ k5 variant for audit)
+    sil, coh_med, coh_med_k5 = _compute_quality_metrics(db, partition)
     stats["silhouette"] = sil
     stats["community_coherence_med"] = coh_med
+    stats["community_coherence_med_k5"] = coh_med_k5
 
     # Phase 1C task 1.11 — TCS NMI on intersection with previous run
     tcs, overlap_size, unreliable = _compute_tcs_on_intersection(db, run_id, partition)
@@ -1157,23 +1192,24 @@ def _compute_quality_metrics(
     db: DatabaseManager,
     partition: dict,
     embedding_cache: tuple | None = None,
+    k_min: int = 5,
 ) -> tuple:
-    """Return (silhouette, community_coherence_med) — Phase 1C task 1.9.
+    """Return (silhouette, community_coherence_med, community_coherence_med_k{k_min}).
 
     silhouette: sklearn silhouette_score on current_embedding, cosine metric.
                 None when sklearn missing, <2 communities, or <(k+1) samples.
     community_coherence_med: median of per-community medians of pairwise cosine
-                similarity on summary_vector. None when <2 communities qualify
-                (need ≥2 members with summary_vector each).
+                similarity on summary_vector, over communities with ≥2 members.
+                None when <1 community qualifies.
+    community_coherence_med_k{k_min}: same as community_coherence_med but
+                restricted to communities with ≥k_min members. Used by the Leiden
+                γ-sweep fallback to avoid micro-cluster bias (Fix 2).
 
     embedding_cache: optional (current_by_id, summary_by_id) tuple — when given,
-                skip the DB fetch and reuse the cached embeddings (Fix A,
-                Phase 1E perf). Callers that score many partitions in a row
-                (shadow comparison, γ-sweep) should pre-fetch once via
-                `_fetch_storyline_embeddings` and pass the result here.
+                skip the DB fetch and reuse the cached embeddings.
     """
     if not METRICS_AVAILABLE or not partition:
-        return None, None
+        return None, None, None
 
     storyline_ids = list(partition.keys())
     if embedding_cache is not None:
@@ -1187,7 +1223,6 @@ def _compute_quality_metrics(
         emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
         labels = [partition[sid] for sid in emb_ids]
         distinct_labels = set(labels)
-        # silhouette requires 2 <= n_labels < n_samples
         if 2 <= len(distinct_labels) < len(emb_ids):
             X = np.stack([current_by_id[sid] for sid in emb_ids])
             try:
@@ -1195,39 +1230,43 @@ def _compute_quality_metrics(
             except Exception as e:
                 logger.debug("silhouette_score failed: %s", e)
 
-    # ---- community_coherence_med ----
+    # ---- coherence: collect per-community embeddings ----
     community_members = {}
     for sid, cid in partition.items():
         if sid in summary_by_id:
             community_members.setdefault(cid, []).append(summary_by_id[sid])
 
-    per_community_medians = []
+    per_community_medians = []  # all communities with ≥2 members
+    per_community_medians_k = []  # only communities with ≥k_min members
     for cid, embs in community_members.items():
         if len(embs) < 2:
             continue
         M = np.stack(embs)
-        # Cosine similarity matrix (manual to avoid extra sklearn dependency depth)
         norms = np.linalg.norm(M, axis=1, keepdims=True)
         norms[norms == 0] = 1e-10
         Mn = M / norms
         sim = Mn @ Mn.T
-        # Upper triangle (i < j) — pairwise similarities only
         iu = np.triu_indices(len(embs), k=1)
         sims = sim[iu]
-        if sims.size:
-            per_community_medians.append(float(np.median(sims)))
+        if not sims.size:
+            continue
+        med = float(np.median(sims))
+        per_community_medians.append(med)
+        if len(embs) >= k_min:
+            per_community_medians_k.append(med)
 
     coherence_med = float(np.median(per_community_medians)) if per_community_medians else None
+    coherence_med_k = float(np.median(per_community_medians_k)) if per_community_medians_k else None
 
     if silhouette is not None:
         logger.info("silhouette=%.4f (cosine, %d storylines)", silhouette, len(emb_ids))
     if coherence_med is not None:
         logger.info(
-            "community_coherence_med=%.4f (median of %d community medians)",
-            coherence_med, len(per_community_medians),
+            "community_coherence_med=%.4f (median of %d community medians, k_min=%d → %d qualify)",
+            coherence_med, len(per_community_medians), k_min, len(per_community_medians_k),
         )
 
-    return silhouette, coherence_med
+    return silhouette, coherence_med, coherence_med_k
 
 
 def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> None:
