@@ -18,6 +18,11 @@ freezegun==1.4.0           # Mock datetime
 openai>=1.30.0             # LLM-as-judge (gpt-4o-mini, vendor diverso da Gemini per evitare self-serving bias)
 pytest-json-report>=1.5.0  # JSON output per slow evals nightly + regression check
 
+# Clustering diagnostics (scripts/diagnose_clustering_signal.py — offline, read-only)
+# Entrambe OPZIONALI: lo script è self-contained (numpy/scipy/sklearn). Assenti → degrada pulito.
+diptest>=0.9.0             # cross-check p-value Hartigan per S6 (fallback: KDE-prominence puro-numpy)
+matplotlib>=3.8.0          # figure del report visivo (--no-viz per saltarle)
+
 # Code quality (opzionali, utili per CI/CD futuro)
 # black==24.1.1            # Code formatter
 # flake8==7.0.0            # Linter

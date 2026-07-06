@@ -17,6 +17,9 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 ### Setup & Verification
 - `check_setup.py` - Verify system configuration (Python, env, DB, spaCy, models)
 
+### Diagnostics / Analysis
+- `diagnose_clustering_signal.py` - **Read-only** clustering signal diagnostics (OpenSpec `redesign-narrative-clustering-signal`, protocollo S1–S7). Caratterizza **entrambi** i layer: community (hubness, silhouette live vs k-means, whitening, co-association 4-way + consenso EAC con taglio max-lifetime, cross-space ARI/NMI) e storyline / fix B (frammentazione, match-replay con dip-test→antimodo KDE `τ*`, proxy di coerenza non-circolare in spazio `summary_vector`). Validazione proxy-only a triangolo (stabilità/separazione/frammentazione), silhouette segnalato in-space. Scrive JSON + figure PNG opzionali in `artifacts/`, **mai** sul DB. Deterministico (seed fissi). Deps: `diptest` (S6), `matplotlib` (figure; `--no-viz` per saltarle). Run su PROD: `docker compose -p app exec backend python scripts/diagnose_clustering_signal.py --no-viz`.
+
 ### Pipeline Execution
 - `daily_pipeline.py` - **Orchestrator**: runs full pipeline in one command
   - **5 core steps** (always run unless filtered): 1.ingestion → 2.nlp_processing → 3.load_to_database → **4.narrative_processing** → 5.generate_report (market_data step removed — now handled by evening workflow)

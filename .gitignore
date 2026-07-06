@@ -1,3 +1,6 @@
+# Clustering diagnostics output (scripts/diagnose_clustering_signal.py) — run-specific
+artifacts/
+
 # Python
 __pycache__/
 *.py[cod]
