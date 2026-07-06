@@ -221,4 +221,4 @@ xx_ent_wiki_sm @ https://github.com/explosion/spacy-models/releases/download/xx_
 yarl==1.22.0
 tvDatafeed @ git+https://github.com/rongardF/tvdatafeed.git
 yfinance==0.2.66
-zipp==3.23.0
+zipp==4.1.0
