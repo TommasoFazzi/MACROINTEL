@@ -117,7 +117,8 @@ class HubnessStats(BaseModel):
 
 
 class SignalAlignment(BaseModel):
-    silhouette_raw: float | None
+    silhouette_raw: float | None             # stored community_id (often NULL on prod)
+    silhouette_graph_louvain: float | None   # fresh Louvain on the graph = space-A baseline
     silhouette_whitened: float | None
     silhouette_delta: float | None
     silhouette_kmeans: dict[int, float] | None
@@ -541,17 +542,29 @@ def _all_but_the_top(X, k):
     return Xc - proj
 
 
-def s2_s3_alignment(snap: Snapshot, sample_size: int):
+def s2_s3_alignment(snap: Snapshot, cfg, sample_size: int):
     emb_ids = [i for i in snap.ids if i in snap.cur_emb]
     if len(emb_ids) < 20:
         return None, {}, None
     X = np.stack([snap.cur_emb[i] for i in emb_ids])
 
-    # ---- S2 live vs k-means ----
+    # ---- space-A partition: stored community_id if present, else a fresh Louvain ----
+    # community_id is frequently NULL on prod between runs (nulled at the start of
+    # compute_communities and only the applied partition is written back), so we
+    # recompute a graph partition to have a space-A baseline regardless.
     live_labels = [snap.community_id[i] for i in emb_ids]
     have_live = all(l is not None for l in live_labels)
     sil_raw = _silhouette(X, live_labels) if have_live else None
 
+    sil_graph, glabels = None, None
+    active = set(emb_ids)
+    g_edges = [(s, t, w) for s, t, w in snap.edges if s in active and t in active]
+    if g_edges:
+        gpart = _louvain(emb_ids, g_edges, cfg.community.resolution)
+        glabels = [gpart.get(i, -1) for i in emb_ids]
+        sil_graph = _silhouette(X, glabels)
+
+    # ---- S2 k-means baseline (space B) ----
     sil_kmeans, best_k, best_sil, best_labels = {}, None, -2.0, None
     for k in KMEANS_KS:
         if k >= len(emb_ids):
@@ -563,18 +576,21 @@ def s2_s3_alignment(snap: Snapshot, sample_size: int):
             if s > best_sil:
                 best_sil, best_k, best_labels = s, k, km.labels_
 
-    # ---- S3 whitening (secondary anisotropy check) ----
+    # ---- S3 whitening (anisotropy check) on the space-A partition under test ----
+    base_labels = live_labels if have_live else glabels
+    base_sil = sil_raw if have_live else sil_graph
     sil_white = None
-    if have_live:
+    if base_labels is not None:
         Xw = _all_but_the_top(X, k=10)
-        sil_white = _silhouette(Xw, live_labels)
-    delta = (sil_white - sil_raw) if (sil_white is not None and sil_raw is not None) else None
+        sil_white = _silhouette(Xw, base_labels)
+    delta = (sil_white - base_sil) if (sil_white is not None and base_sil is not None) else None
 
     # ---- Jaccard↔cosine correlation (stratified sample) ----
     pearson, n_pairs = _jaccard_cosine_corr(snap, emb_ids, X, sample_size)
 
     alignment = SignalAlignment(
         silhouette_raw=(round(sil_raw, 4) if sil_raw is not None else None),
+        silhouette_graph_louvain=(round(sil_graph, 4) if sil_graph is not None else None),
         silhouette_whitened=(round(sil_white, 4) if sil_white is not None else None),
         silhouette_delta=(round(delta, 4) if delta is not None else None),
         silhouette_kmeans=(sil_kmeans or None),
@@ -886,14 +902,16 @@ def build_interpretation(rep: ClusteringDiagnosticsReport) -> str:
     a = rep.alignment
     if a and a.silhouette_kmeans:
         best = max(a.silhouette_kmeans.values())
-        if a.silhouette_raw is not None:
-            delta = best - a.silhouette_raw
-            verdict = "struttura NELLO spazio-embedding" if delta > 0.15 else "nessun vantaggio netto"
-            lines.append(f"S2 separazione: k-means best={best:+.3f} vs live={a.silhouette_raw:+.3f} "
+        base = a.silhouette_raw if a.silhouette_raw is not None else a.silhouette_graph_louvain
+        base_lbl = "live" if a.silhouette_raw is not None else "grafo (louvain fresh)"
+        if base is not None:
+            delta = best - base
+            verdict = "struttura NELLO spazio-embedding" if delta > 0.15 else "vantaggio modesto"
+            lines.append(f"S2 separazione: k-means best={best:+.3f} vs {base_lbl}={base:+.3f} "
                          f"(Δ={delta:+.3f}) → {verdict}. [silhouette in-space/circolare]")
         else:
             lines.append(f"S2 separazione: k-means best={best:+.3f} (k={a.kmeans_best_k}); "
-                         f"live silhouette non calcolabile (community_id non popolato su questo snapshot).")
+                         f"baseline grafo non calcolabile su questo snapshot.")
     if a and a.jaccard_cosine_pearson is not None:
         lines.append(f"    Jaccard↔cosine Pearson={a.jaccard_cosine_pearson:+.3f} (n={a.n_pairs_sampled}).")
     if a and a.silhouette_delta is not None:
@@ -1028,7 +1046,7 @@ def main():
 
     kmeans_labels = None
     try:
-        rep.alignment, _ctx, kmeans_labels = s2_s3_alignment(snap, args.sample_size)
+        rep.alignment, _ctx, kmeans_labels = s2_s3_alignment(snap, cfg, args.sample_size)
     except Exception as e:
         warnings.append(f"S2/S3 failed: {e}"); logger.exception("S2/S3")
 
