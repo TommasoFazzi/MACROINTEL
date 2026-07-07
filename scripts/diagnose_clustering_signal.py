@@ -117,7 +117,8 @@ class HubnessStats(BaseModel):
 
 
 class SignalAlignment(BaseModel):
-    silhouette_raw: float | None             # stored community_id (often NULL on prod)
+    silhouette_raw: float | None             # stored community_id, on the populated subset
+    n_with_community_id: int                 # size of that subset (transparency)
     silhouette_graph_louvain: float | None   # fresh Louvain on the graph = space-A baseline
     silhouette_whitened: float | None
     silhouette_delta: float | None
@@ -548,13 +549,18 @@ def s2_s3_alignment(snap: Snapshot, cfg, sample_size: int):
         return None, {}, None
     X = np.stack([snap.cur_emb[i] for i in emb_ids])
 
-    # ---- space-A partition: stored community_id if present, else a fresh Louvain ----
-    # community_id is frequently NULL on prod between runs (nulled at the start of
-    # compute_communities and only the applied partition is written back), so we
-    # recompute a graph partition to have a space-A baseline regardless.
-    live_labels = [snap.community_id[i] for i in emb_ids]
-    have_live = all(l is not None for l in live_labels)
-    sil_raw = _silhouette(X, live_labels) if have_live else None
+    # ---- space-A partition: stored community_id (on the populated subset) ----
+    # A handful of storylines are always NULL between nightly runs (just-created,
+    # not yet assigned) — filtering to the populated subset (instead of an all()
+    # check over the whole snapshot) avoids one straggler nulling the live
+    # silhouette entirely. Falls back to a fresh Louvain (space-A baseline) only
+    # when too few storylines carry a live community_id to be meaningful.
+    live_ids = [i for i in emb_ids if snap.community_id.get(i) is not None]
+    have_live = len(live_ids) >= max(20, int(0.5 * len(emb_ids)))
+    sil_raw = None
+    if have_live:
+        live_rows = [r for r, i in enumerate(emb_ids) if i in set(live_ids)]
+        sil_raw = _silhouette(X[live_rows], [snap.community_id[emb_ids[r]] for r in live_rows])
 
     sil_graph, glabels = None, None
     active = set(emb_ids)
@@ -577,12 +583,15 @@ def s2_s3_alignment(snap: Snapshot, cfg, sample_size: int):
                 best_sil, best_k, best_labels = s, k, km.labels_
 
     # ---- S3 whitening (anisotropy check) on the space-A partition under test ----
-    base_labels = live_labels if have_live else glabels
-    base_sil = sil_raw if have_live else sil_graph
     sil_white = None
-    if base_labels is not None:
+    base_sil = sil_raw if have_live else sil_graph
+    if have_live:
+        live_rows = [r for r, i in enumerate(emb_ids) if snap.community_id.get(i) is not None]
+        Xw_live = _all_but_the_top(X[live_rows], k=10)
+        sil_white = _silhouette(Xw_live, [snap.community_id[emb_ids[r]] for r in live_rows])
+    elif glabels is not None:
         Xw = _all_but_the_top(X, k=10)
-        sil_white = _silhouette(Xw, base_labels)
+        sil_white = _silhouette(Xw, glabels)
     delta = (sil_white - base_sil) if (sil_white is not None and base_sil is not None) else None
 
     # ---- Jaccard↔cosine correlation (stratified sample) ----
@@ -590,6 +599,7 @@ def s2_s3_alignment(snap: Snapshot, cfg, sample_size: int):
 
     alignment = SignalAlignment(
         silhouette_raw=(round(sil_raw, 4) if sil_raw is not None else None),
+        n_with_community_id=len(live_ids),
         silhouette_graph_louvain=(round(sil_graph, 4) if sil_graph is not None else None),
         silhouette_whitened=(round(sil_white, 4) if sil_white is not None else None),
         silhouette_delta=(round(delta, 4) if delta is not None else None),
@@ -903,7 +913,8 @@ def build_interpretation(rep: ClusteringDiagnosticsReport) -> str:
     if a and a.silhouette_kmeans:
         best = max(a.silhouette_kmeans.values())
         base = a.silhouette_raw if a.silhouette_raw is not None else a.silhouette_graph_louvain
-        base_lbl = "live" if a.silhouette_raw is not None else "grafo (louvain fresh)"
+        base_lbl = (f"live (n={a.n_with_community_id})" if a.silhouette_raw is not None
+                    else "grafo (louvain fresh)")
         if base is not None:
             delta = best - base
             verdict = "struttura NELLO spazio-embedding" if delta > 0.15 else "vantaggio modesto"
