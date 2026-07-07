@@ -60,7 +60,7 @@ htmldate==1.9.4
 httpcore==1.0.9
 httplib2==0.31.0
 httpx==0.28.1
-huggingface-hub==0.36.0
+huggingface-hub==1.22.0
 idna==3.15
 importlib_metadata==8.7.1
 iniconfig==2.3.0
@@ -165,7 +165,7 @@ safetensors==0.7.0
 sqlparse>=0.4.4
 scikit-learn==1.9.0
 scipy==1.16.3
-sentence-transformers==5.1.2
+sentence-transformers==5.6.0
 setuptools==80.9.0
 sgmllib3k==1.0.0
 six==1.17.0
@@ -186,13 +186,13 @@ threadpoolctl==3.6.0
 tinysegmenter==0.3
 tld==0.13.2
 tldextract==5.3.0
-tokenizers==0.22.1
+tokenizers==0.22.2
 toml==0.10.2
 torch==2.10.0
 tornado==6.5.7
 tqdm==4.67.1
 trafilatura==2.0.0
-transformers==4.57.6  # pinned: CVE Trainer ACE requires 5.x; sentence-transformers==5.1.2 caps at <5.0.0; risk accepted: Trainer never used (inference-only via SentenceTransformer)
+transformers==5.3.0  # CVE-2026-4372 fix; sentence-transformers>=5.3.0 supports transformers<6.0.0; Trainer still never used (inference-only)
 typer-slim==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
