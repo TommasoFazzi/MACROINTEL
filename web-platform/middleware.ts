@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes } from 'crypto';
 
 export function middleware(_req: NextRequest) {
-  const nonce = randomBytes(16).toString('base64');
+  const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64');
 
   const csp = [
     "default-src 'self'",
