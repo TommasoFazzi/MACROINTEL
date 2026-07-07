@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { headers } from "next/headers";
 import "./globals.css";
 
 const inter = Inter({
@@ -69,11 +70,13 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
+
   return (
     <html lang="en">
       <head>
@@ -85,8 +88,9 @@ export default function RootLayout({
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-MBHW2XG1Q3"
           strategy="afterInteractive"
+          nonce={nonce}
         />
-        <Script id="google-analytics" strategy="afterInteractive">
+        <Script id="google-analytics" strategy="afterInteractive" nonce={nonce}>
           {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
@@ -94,7 +98,7 @@ export default function RootLayout({
             gtag('config', 'G-MBHW2XG1Q3');
           `}
         </Script>
-        <Script id="json-ld-org" type="application/ld+json" strategy="afterInteractive">
+        <Script id="json-ld-org" type="application/ld+json" strategy="afterInteractive" nonce={nonce}>
           {JSON.stringify({
             "@context": "https://schema.org",
             "@graph": [
