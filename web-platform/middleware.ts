@@ -12,6 +12,9 @@ export function middleware(_req: NextRequest) {
     "connect-src 'self' *.mapbox.com api.mapbox.com events.mapbox.com *.google-analytics.com *.analytics.google.com *.googletagmanager.com",
     "worker-src blob:",
     "font-src 'self' data:",
+    // frame-ancestors and form-action do not inherit from default-src — must be explicit
+    "frame-ancestors 'none'",
+    "form-action 'self'",
   ].join('; ');
 
   const response = NextResponse.next();
