@@ -31,6 +31,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
     - `self.MOMENTUM_DECAY_FACTOR = 0.7` — hardcoded constant; Phase 2F replaces with EWMA + burst (`momentum.*`)
     - `self.LLM_RATE_LIMIT_SECONDS = 0.1` — hardcoded constant (Tier 4 fixed operational cap)
   - `src/nlp/config.py` (new): Pydantic models (`NarrativeClusteringConfig` + sub-models with `extra='forbid'`) + cached `load_clustering_config(path=None, force_reload=False)` + `reset_cache()` for tests.
+    - `ThemeClusteringConfig` (`theme_clustering` section, `narrative-clustering-embedding-based`): `k_current` (default 18, validated on prod), `k_sweep_range`, `warm_start`, `outlier_threshold`, `refit_cadence_days`, `hdbscan_shadow: HDBSCANShadowConfig` (`enabled`, `min_cluster_size`, `min_samples` — distinct from `hdbscan.min_cluster_size_base` used by storyline micro-clustering). Consumed by `scripts/theme_clustering.py`, not by `narrative_processor.py`.
   - **Public interface:**
     - `process_daily_batch(days, dry_run)` — Main orchestrator: micro-clustering → matching → HDBSCAN discovery → LLM evolution → **post-clustering validation** → graph → decay
   - **Stage 1 — Micro-clustering:**

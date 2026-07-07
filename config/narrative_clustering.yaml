@@ -52,7 +52,9 @@ decay:
   edge_weight_change_threshold: 0.02
 
 community:
-  algorithm: louvain                # Phase 1A transitional; switches to leiden_cpm in Phase 1E
+  algorithm: louvain                # kmeans_embedding is the target champion (narrative-clustering-
+                                     # embedding-based); stays louvain until shadow-period promotion
+                                     # (design.md § Decision 7 / tasks.md group 8)
   # Louvain-specific (active until Phase 1E):
   min_weight: 0.05                  # current default in compute_communities.py
   resolution: 0.8                   # current default in compute_communities.py
@@ -82,6 +84,17 @@ community:
   shadow_comparison:                # Phase 1E (Decision 22) — 4-way shadow framework
     enabled: true                   # set false for instant reversibility (Louvain-only)
 
+theme_clustering:                   # narrative-clustering-embedding-based change
+  k_current: 18                     # validated on prod: silhouette peak at k=18-19 (S2 diagnostics)
+  k_sweep_range: [10, 30]           # explored only on drift-triggered retune, never in the daily path
+  warm_start: true                  # periodic re-fit inits k-means from previous active centroids
+  outlier_threshold: 0.15           # cos_sim(nearest centroid) below this -> community_id NULL
+  refit_cadence_days: 7             # periodic re-fit cadence (weekly); drift can trigger it early
+  hdbscan_shadow:
+    enabled: true
+    min_cluster_size: 5            # NOT the same as hdbscan.min_cluster_size_base (storyline micro-clustering)
+    min_samples: 5
+
 sparsification:                     # activated in Phase 1D (task 1.14-1.16)
   algorithm: disparity_filter
   alpha: 0.3
@@ -95,9 +108,19 @@ source_diversity:                   # activated in Phase 3C (task 3.8-3.10)
   enabled: true
   epsilon: 0.1
 
-community_lineage:                  # activated in Phase 4A (task 4.0-4.0c)
+community_lineage:                  # originally designed in Phase 4A (task 4.0-4.0c) for the
+                                     # entity-graph, never activated there. Reused here for k-means
+                                     # centroid lineage (narrative-clustering-embedding-based,
+                                     # design.md § Decision 4) — Hungarian matching on centroids
+                                     # instead of Louvain/Leiden communities.
+                                     #
+                                     # weighted_jaccard REDEFINED: there is no entity graph for
+                                     # centroids, so this weight now applies to "member_overlap"
+                                     # (Jaccard on member storylines between old/new centroid, not
+                                     # on entities). Same key name, different meaning — see
+                                     # design.md § Decision 4 for the rationale.
   composite_weights:
-    weighted_jaccard: 0.45
+    weighted_jaccard: 0.45          # reinterpreted as member_overlap (storyline Jaccard)
     centroid_cosine: 0.40
     inclusion: 0.15
   tau_match: 0.45

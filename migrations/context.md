@@ -146,6 +146,15 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - Additive only (`ADD COLUMN IF NOT EXISTS` / `CREATE OR REPLACE VIEW`); validated end-to-end in a ROLLBACK transaction on `pgvector:pg17`.
   - Rollback: see commented section at bottom of the migration file.
 
+### Narrative Clustering Embedding-Based (2026-07-07)
+
+- `045_narrative_themes.sql` — Persistent centroid registry for k-means-on-embedding theme clustering (`openspec/changes/narrative-clustering-embedding-based/`, design.md § Decision 3):
+  1. `narrative_themes` — one row per k-means centroid, with `persistent_id SERIAL PRIMARY KEY` surviving active-window rotation and periodic re-fits (unlike `storylines.community_id`, which is window-scoped). Columns: `centroid vector(384)`, `lifecycle_status` (`emerging`/`active`/`dormant`/`retired`), `label` (LLM name, propagated to `storylines.community_name`), `first_seen`/`last_seen`, `last_refit_run_id` (logical FK to `narrative_run_metrics.run_id`, same non-physical-FK pattern as 043), `n_members_last_refit`, `source_persistent_ids INTEGER[]` (merge lineage), `split_from_persistent_id` (split lineage, self-FK).
+  2. Index on `lifecycle_status` for the daily nearest-centroid path's "active centroids" query.
+  3. `storylines.community_id_kmeans_shadow INTEGER` — **temporary** shadow-period sink (design.md § Open Question 1, resolved): k-means writes here before promotion; `community_id_shadow` (043) stays HDBSCAN's column throughout — no role inversion. Dropped in a future migration once promoted.
+  - **Migration 046 explicitly NOT touched**: the predecessor design (`redesign-narrative-clustering-signal`) had assumed `shadow_partitions` was never created, but it already exists and is complete (verified by reading the file) — this change only adds 045.
+  - Rollback: see commented section at bottom of the migration file.
+
 ## Applied in Production
 
 Migrations applied to the Hetzner production database (as of 2026-03-24):
@@ -160,6 +169,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 039: **Not yet applied** — apply after deploy: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/039_macro_pct_change_12m.sql`. Then re-run backfill: `docker compose -p app exec backend python scripts/backfill_macro_history.py --compute`
 - 043: **Not yet applied** — clustering upgrade Phase 1B observability tables (additive only, no data migration). Apply via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/043_narrative_run_metrics.sql`. Producers (compute_communities.py, narrative_processor.py) start populating these in Phase 1C (tasks 1.8-1.13).
 - 046: **Not yet applied** — clustering upgrade Phase 1E shadow_partitions JSONB + view (additive only, requires 043 applied first). Apply via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/046_shadow_partitions.sql`. Producer (compute_communities.py `compute_shadow_partitions`) populates it once both 043 and 046 are applied; until then `_persist_run_metrics` degrades gracefully (persists base metrics without the column).
+- 045: **Applied to local dev DB only** (2026-07-07, via `scripts/run_migrations.py` against a fresh Docker Postgres on `127.0.0.1:5433` — see `docker-compose.override.yml`, local-only port remap since Homebrew Postgres@14 already holds 5432). **Not yet applied to prod.** Apply to prod via `migrate.yml` workflow or: `docker compose -p app exec -T postgres psql -U intelligence_user -d intelligence_ita < migrations/045_narrative_themes.sql`.
 
 ## Execution Order
 

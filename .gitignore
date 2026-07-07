@@ -103,3 +103,6 @@ openspec/
 
 # Session handoff doc (regenerated on demand, local-only)
 handoff.md
+
+# Local docker-compose port overrides (machine-specific, not for VCS)
+docker-compose.override.yml

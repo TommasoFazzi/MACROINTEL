@@ -109,6 +109,21 @@ class CommunityConfig(_StrictBase):
     shadow_comparison: ShadowComparisonConfig = Field(default_factory=ShadowComparisonConfig)
 
 
+class HDBSCANShadowConfig(_StrictBase):
+    enabled: bool = True
+    min_cluster_size: int = 5
+    min_samples: int = 5
+
+
+class ThemeClusteringConfig(_StrictBase):
+    k_current: int = 18
+    k_sweep_range: List[int] = Field(default_factory=lambda: [10, 30])
+    warm_start: bool = True
+    outlier_threshold: float = 0.15
+    refit_cadence_days: int = 7
+    hdbscan_shadow: HDBSCANShadowConfig = Field(default_factory=HDBSCANShadowConfig)
+
+
 class SparsificationConfig(_StrictBase):
     algorithm: str = "disparity_filter"
     alpha: float = 0.3
@@ -174,6 +189,7 @@ class NarrativeClusteringConfig(_StrictBase):
     momentum: MomentumConfig = Field(default_factory=MomentumConfig)
     decay: DecayConfig = Field(default_factory=DecayConfig)
     community: CommunityConfig = Field(default_factory=CommunityConfig)
+    theme_clustering: ThemeClusteringConfig = Field(default_factory=ThemeClusteringConfig)
     sparsification: SparsificationConfig = Field(default_factory=SparsificationConfig)
     summary_cache: SummaryCacheConfig = Field(default_factory=SummaryCacheConfig)
     source_diversity: SourceDiversityConfig = Field(default_factory=SourceDiversityConfig)
