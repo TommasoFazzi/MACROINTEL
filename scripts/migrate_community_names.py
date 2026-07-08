@@ -63,12 +63,12 @@ def _name_community(cid: int, titles: list[str], model) -> str | None:
 
 
 def migrate_community_names(dry_run: bool = False, limit: int = 0) -> dict:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set in environment")
 
     genai.configure(api_key=api_key, transport='rest')
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     db = DatabaseManager()
     stats = {"total": 0, "named": 0, "failed": 0, "skipped_dry_run": 0}

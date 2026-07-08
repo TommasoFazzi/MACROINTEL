@@ -30,7 +30,7 @@ feeds:
     subcategory: "cybersecurity"
 
   - name: "Defense One - All Content"
-    url: "https://www.defenseone.com/rss/"
+    url: "https://www.defenseone.com/rss/all/"
     category: "intelligence"
     subcategory: "defense"
 
@@ -109,7 +109,7 @@ feeds:
 
   # THINK TANKS
   - name: "CSIS - Center for Strategic and International Studies"
-    url: "https://www.csis.org/analysis/feed"
+    url: "https://www.csis.org/rss.xml"
     category: "intelligence"
     subcategory: "think_tank"
 
@@ -145,7 +145,7 @@ feeds:
 
   # AMERICAS
   - name: "Americas Quarterly"
-    url: "https://www.americasquarterly.org/feed/"
+    url: "https://www.as-coa.org/rss.xml"
     category: "intelligence"
     subcategory: "americas"
 
@@ -295,12 +295,6 @@ feeds:
   # CLUSTER E — Geopolitics / Security (CEE)
   - name: "NewStrategyCenter"
     url: "https://newstrategycenter.ro/feed/"
-    category: "intelligence"
-    subcategory: "romania_geopolitics"
-    language: "en"
-
-  - name: "GlobalFocus"
-    url: "https://globalfocus.ro/feed/"
     category: "intelligence"
     subcategory: "romania_geopolitics"
     language: "en"

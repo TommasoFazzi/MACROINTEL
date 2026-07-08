@@ -70,7 +70,7 @@ class GeminiClient(BaseLLMClient):
 
     def __init__(self, model: str, timeout: int) -> None:
         import google.generativeai as genai
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not set")
         genai.configure(api_key=api_key)
@@ -160,7 +160,7 @@ class ClaudeClient(BaseLLMClient):
 
     def __init__(self, model: str, timeout: int) -> None:
         import anthropic
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY is not set")
         self._client = anthropic.Anthropic(api_key=api_key)
@@ -265,7 +265,7 @@ class OpenAICompatibleClient(BaseLLMClient):
 
     def __init__(self, model: str, base_url: str, timeout: int, api_key_env: str) -> None:
         from openai import OpenAI
-        api_key = os.environ.get(api_key_env)
+        api_key = os.environ.get(api_key_env, "").strip()
         if not api_key:
             raise ValueError(f"{api_key_env} is not set")
         self._client = OpenAI(api_key=api_key, base_url=base_url)

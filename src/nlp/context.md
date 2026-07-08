@@ -84,6 +84,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
   - `SCOPE_DESCRIPTION` / `OUT_OF_SCOPE` — Platform scope boundaries (global)
   - Conservative: borderline cases → RELEVANT (prefer false positives over missing intelligence)
   - **invoke**: `python scripts/process_nlp.py --scope ceseo` for Romania vertical; default unchanged
+  - **Fixed 2026-07-08:** both prompt templates embedded a literal `{"relevant": true}` JSON example that broke `str.format()` (unescaped single braces treated as field refs) — raised `KeyError` on every call since the filter's introduction (2026-02-17), silently caught by `scripts/process_nlp.py`'s outer `try/except` and defaulting to "proceed with all articles" every run. Now double-braced (`{{"relevant": true}}`). See CLAUDE.md LLM Integration pitfalls.
 
 **Note:** `story_manager.py` (legacy narrative engine) has been **deleted**. `narrative_processor.py` is the sole storyline engine.
 
@@ -92,7 +93,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
 | Layer | File | Stage | Method |
 |-------|------|-------|--------|
 | Filtro 1 | `src/ingestion/pipeline.py` | Ingestion | Keyword blocklist (sports/entertainment/food) |
-| Filtro 2 | `relevance_filter.py` | NLP processing | LLM classification (Gemini 2.0 Flash) |
+| Filtro 2 | `relevance_filter.py` | NLP processing | LLM classification (T5, Gemini 2.5 Flash-Lite) |
 | Filtro 4 | `narrative_processor.py` | Post-clustering | Regex scope keywords + off-topic patterns → archive |
 
 **Filtro 4 logic (two conditions must both be true to archive):**

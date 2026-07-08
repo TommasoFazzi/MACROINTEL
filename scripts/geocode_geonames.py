@@ -10,7 +10,7 @@ Resolution pipeline per entity:
      → 0 matches: go to Gemini
      → 1 unique match globally: accept (skip Gemini — unambiguous)
      → >1 matches: go to Gemini for spatial context
-  2. Gemini 2.0 Flash CoT → { reasoning, clean_name, country_code, feature_type }
+  2. Gemini (T4a, LLMFactory) CoT → { reasoning, clean_name, country_code, feature_type }
   3. Filtered GeoNames lookup using Gemini output
   4. Fallback → Photon API (for highly specific locations not in GeoNames)
   5. UPDATE entities SET latitude, longitude, geo_status='FOUND'
@@ -63,19 +63,17 @@ logger = get_logger(__name__)
 
 ENTITY_TYPES_GEO = {'GPE', 'LOC', 'FAC'}  # types eligible for geocoding
 
-# Gemini setup (uses gemini-2.0-flash as per CLAUDE.md NLP layer convention)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Gemini setup — routed via LLMFactory T4a (gemini-2.5-flash-lite), not hardcoded
+from src.llm.llm_factory import LLMFactory
+
 GEMINI_AVAILABLE = False
-_llm_model = None
+_llm_client = None
 
 try:
-    import google.generativeai as genai
-    if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY, transport='rest')
-        _llm_model = genai.GenerativeModel('gemini-2.0-flash')
-        GEMINI_AVAILABLE = True
-except ImportError:
-    pass
+    _llm_client = LLMFactory.get("t4a")
+    GEMINI_AVAILABLE = True
+except Exception as e:
+    logger.warning(f"LLMFactory T4a unavailable, Gemini disambiguation disabled: {e}")
 
 GEMINI_DELAY = 0.2          # 200ms between Gemini calls → ~5 req/sec (safe under 1500 RPM)
 PHOTON_URL = os.environ.get("PHOTON_URL", "https://photon.komoot.io/api")
@@ -228,7 +226,7 @@ def _lookup_gazetteer_filtered(
 
 def _gemini_resolve(entity_name: str, article_titles: list[str]) -> Optional[dict]:
     """
-    Call Gemini 2.0 Flash with CoT to resolve entity name to canonical geo.
+    Call Gemini (T4a) with CoT to resolve entity name to canonical geo.
     Returns parsed dict or None on failure.
     """
     if not GEMINI_AVAILABLE:
@@ -252,17 +250,12 @@ def _gemini_resolve(entity_name: str, article_titles: list[str]) -> Optional[dic
     )
 
     try:
-        response = _llm_model.generate_content(
+        raw = _llm_client.generate(
             prompt,
-            generation_config={
-                "response_mime_type": "application/json",
-                "response_schema": GEMINI_RESPONSE_SCHEMA,
-                "max_output_tokens": 200,
-                "temperature": 0.1,
-            },
-            request_options={"timeout": 15},
-        )
-        raw = response.text.strip()
+            response_schema=GEMINI_RESPONSE_SCHEMA,
+            max_tokens=200,
+            temperature=0.1,
+        ).strip()
         # Strip accidental markdown fences
         raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
         result = json.loads(raw)
@@ -527,7 +520,7 @@ def run_geocoding(
     db = DatabaseManager()
 
     if not GEMINI_AVAILABLE:
-        logger.warning("GEMINI_API_KEY not set or google-generativeai not installed — Gemini disabled")
+        logger.warning("LLMFactory T4a unavailable (GEMINI_API_KEY not set?) — Gemini disabled")
         logger.warning("Falling back to GeoNames direct + Photon only")
 
     # Query entities to process

@@ -94,12 +94,12 @@ def migrate_storylines(
     if status_filter is None:
         status_filter = ['active', 'emerging', 'stabilized']
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set in environment")
 
     genai.configure(api_key=api_key, transport='rest')
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     logger.info("Loading embedding model %s...", EMBEDDING_MODEL_NAME)
     embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)

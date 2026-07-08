@@ -41,7 +41,7 @@ CLASSIFICATION_PROMPT = (
     "- Se l'articolo è chiaramente fuori ambito → relevant: false\n"
     "- Se è borderline (es. sport usato come leva geopolitica, salute pubblica come arma strategica) → relevant: true\n"
     "- Se hai dubbi, preferisci relevant: true (meglio un falso positivo che perdere intelligence)\n\n"
-    'Rispondi SOLO con JSON: {"relevant": true} oppure {"relevant": false}\n\n'
+    'Rispondi SOLO con JSON: {{"relevant": true}} oppure {{"relevant": false}}\n\n'
     "TITOLO: {title}\n"
     "FONTE: {source}\n"
     "TESTO (primi 300 caratteri): {snippet}"
@@ -67,7 +67,7 @@ _CESEO_SCOPE_PROMPT = (
     "REGOLE:\n"
     "- Se il tema ha anche un impatto indiretto sull'economia rumena o sulle aziende italiane → relevant: true\n"
     "- Se hai dubbi, preferisci relevant: true\n\n"
-    'Rispondi SOLO con JSON: {"relevant": true} oppure {"relevant": false}\n\n'
+    'Rispondi SOLO con JSON: {{"relevant": true}} oppure {{"relevant": false}}\n\n'
     "TITOLO: {title}\n"
     "FONTE: {source}\n"
     "TESTO (primi 300 caratteri): {snippet}"

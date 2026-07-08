@@ -59,7 +59,7 @@ def extract_intelligence_content(text: str) -> str:
 
 
 def generate_title(model: genai.GenerativeModel, report_date: str, focus_areas: list, bluf: str) -> str:
-    """Generate a headline title via Gemini 2.0 Flash."""
+    """Generate a headline title via Gemini 2.5 Flash-Lite."""
     prompt = (
         "You are an intelligence editor writing a headline for a daily geopolitical briefing.\n"
         f"Date: {report_date}\n"
@@ -99,7 +99,7 @@ def main():
         sys.exit(1)
 
     genai.configure(api_key=api_key, transport='rest')
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     db = DatabaseManager()
 

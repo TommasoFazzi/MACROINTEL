@@ -12,11 +12,13 @@ Large Language Model integration layer for intelligence report generation, RAG-b
 | T1 | Gemini 3.1 Pro (`gemini-3.1-pro-preview`) | google-generativeai | macro_analysis, strategic_report, report_compare |
 | T2 | Claude Sonnet 4.6 | anthropic | Oracle agentic loop + synthesis |
 | T3 | DeepSeek V3.2 | openai-compatible | structured_analysis, macro_signals, article_signals |
-| T4a | Gemini 2.5 Flash-Lite | google-generativeai | query_analyzer |
+| T4a | Gemini 2.5 Flash-Lite | google-generativeai | query_analyzer, geocode_geonames (entity disambiguation) |
 | T4b | Mistral Codestral 2 | openai-compatible | sql_generation (query_router) |
 | T5 | Gemini 2.5 Flash-Lite | google-generativeai | relevance_filter, bullet_generator, report_title, communities |
 
 `GeminiClient.generate_content_raw(prompt, generation_config)` — compatibility shim for `report_generator.py` call sites that pass raw `generation_config` dicts. Remove once full migration to `generate()` is complete.
+
+**API keys are always `.strip()`-ped on read** (all 4 clients: `GeminiClient`, `ClaudeClient`, `OpenAICompatibleClient`) — GitHub Actions secrets can carry trailing whitespace/newlines when pasted, which silently produces a "key looks right but 401s" failure. Fixed 2026-07-08 for `OpenAICompatibleClient` (was root-causing a T3/DeepSeek 401 in `extract_macro_signals()`); `GeminiClient`/`ClaudeClient` also patched preventively (only 5 older standalone files had been covered by the 2026-02-23 fix, not this factory). Any new client added here must follow the same pattern.
 
 **T3 JSON schema tradeoff**: DeepSeek V3.2 via OpenAI-compatible API has no `response_schema` enforcement. Mitigation: schema injected as JSON example in prompt + single Pydantic retry via `OpenAICompatibleClient.generate_with_schema_retry()`. Monitor `ValidationError` rate in logs (target < 5%).
 
