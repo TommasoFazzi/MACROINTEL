@@ -19,6 +19,9 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - `parse_all_feeds(category)` - Sync wrapper (`asyncio.run()`) for standalone use only
   - `scrape_fallback(feed_name)` - Sync BeautifulSoup fallback for broken RSS
   - `FALLBACK_SCRAPERS` - Config for sites needing HTML scraping (Defense One, CFR, CSIS, ECFR, ISS Africa)
+    - **CFR selector fixed 2026-07-09**: CFR restructured their site, retiring `/article/`, `/blog/`, `/report/` paths in favor of a single `/articles/` (plural) path for all content types. Selector updated accordingly. The RSS URL in `feeds.yaml` (`cfr.org/feed/all`) 404s — CFR has no public RSS anymore — so this fallback is the *only* path for CFR content, triggered on every run via the RSS-failure branch in `parse_feed`/`_fetch_and_parse_feed`. This is expected, not a bug.
+    - **ISW (`ISW - Ukraine Conflict`, `ISW - Iran Update`) intentionally has no RSS**: `feeds.yaml` points directly at the HTML analysis page (`understandingwar.org/analysis/...`), which `feedparser` always fails to parse as XML ("not well-formed" warning is expected noise on every run) before falling through to the Scrapling Tier-1 fallback configured here. See also `content_extractor.py`'s `SCRAPLING_TIER1_DOMAINS` comment.
+    - **Janes Defence Weekly has no fallback and no working RSS** (`feeds.yaml:105`, 404) — reliably produces 0 articles. No public feed found (likely a paid-service RSS retirement); left as-is pending a manual decision on whether to build a dedicated scraper or drop the source.
   - `cloudscraper` support for anti-bot protected sites (403 bypass)
   - User-Agent rotation on every request to avoid blocks
 
@@ -88,7 +91,7 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
 ## Data Flow
 
 - **Input**:
-  - `config/feeds.yaml` - RSS feed URLs and metadata (~33 feeds, includes think tank RSS: RAND, EveryCRSReport)
+  - `config/feeds.yaml` - RSS feed URLs and metadata (56 feeds, includes think tank RSS: RAND, EveryCRSReport)
   - Live RSS/Atom feeds from web
   - Article URLs for full-text extraction
 

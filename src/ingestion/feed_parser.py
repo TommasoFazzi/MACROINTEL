@@ -75,8 +75,9 @@ FALLBACK_SCRAPERS = {
     },
     'Council on Foreign Relations': {
         'url': 'https://www.cfr.org/latest',
-        # CFR uses link-based selection - articles, blogs, reports
-        'selector': 'a[href*="/article/"], a[href*="/blog/"], a[href*="/report/"]',
+        # CFR restructured site (2026-07): /article/, /blog/, /report/ paths retired
+        # in favor of a single /articles/ (plural) path for all content types.
+        'selector': 'a[href*="/articles/"]',
         'title_sel': None,  # Links are self-contained
         'link_sel': None,   # Links are self-contained
         'category': 'intelligence',
