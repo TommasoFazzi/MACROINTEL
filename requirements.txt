@@ -76,7 +76,7 @@ lxml_html_clean==0.4.4
 MarkupSafe==3.0.3
 mpmath==1.3.0
 multidict==6.7.0
-multitasking==0.0.12
+multitasking==0.0.13
 murmurhash==1.0.15
 narwhals==2.15.0
 networkx==3.6
