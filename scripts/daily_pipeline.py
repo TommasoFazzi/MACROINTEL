@@ -9,6 +9,7 @@ Esegue la pipeline giornaliera completa:
 3. NLP Processing
 4. Database Loading
 5. Narrative Processing (clustering e storyline evolution)
+5.5. Theme Clustering Shadow (k-means-on-embedding champion/HDBSCAN challenger, shadow-only)
 6. Report Generation
 7. Weekly Report (solo domenica)
 8. Monthly Recap (prima domenica del mese)
@@ -149,6 +150,17 @@ DEFAULT_STEPS = [
         description="Community detection (Louvain) sul grafo narrativo",
         timeout_seconds=600,  # 10 min: ~60 LLM calls × ~5s each
         continue_on_failure=True  # Non blocca il report se fallisce
+    ),
+    PipelineStep(
+        name="theme_clustering_shadow",
+        # No --promoted flag: shadow period only. Writes to
+        # storylines.community_id_kmeans_shadow and narrative_run_metrics,
+        # never touches the live storylines.community_id (still Louvain's).
+        # See openspec/changes/narrative-clustering-embedding-based tasks.md 8.3.
+        command="python scripts/theme_clustering.py",
+        description="k-means-on-embedding theme clustering (shadow period, champion/challenger)",
+        timeout_seconds=900,  # 15 min: periodic re-fit days add HDBSCAN + LLM naming calls
+        continue_on_failure=True  # Shadow-only step, must never block the report
     ),
     PipelineStep(
         name="entity_extraction",
