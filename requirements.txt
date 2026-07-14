@@ -124,7 +124,7 @@ pandas==2.3.3
 pandas-market-calendars>=4.3
 peewee==3.18.3
 pgvector==0.4.1
-pillow==12.2.0
+pillow==12.3.0
 platformdirs==4.5.1
 pluggy==1.6.0
 preshed==3.0.12
@@ -192,7 +192,7 @@ torch==2.10.0
 tornado==6.5.7
 tqdm==4.67.1
 trafilatura==2.0.0
-transformers==5.3.0  # CVE-2026-4372 fix; sentence-transformers>=5.3.0 supports transformers<6.0.0; Trainer still never used (inference-only)
+transformers==5.5.0  # CVE-2026-5241 fix; sentence-transformers>=5.3.0 supports transformers<6.0.0; Trainer still never used (inference-only)
 typer-slim==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
