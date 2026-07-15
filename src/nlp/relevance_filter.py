@@ -114,7 +114,7 @@ class RelevanceFilter:
         try:
             response = self._llm.generate(
                 prompt,
-                max_tokens=20,
+                max_tokens=50,
                 temperature=0.1,
                 json_mode=True,
             )
