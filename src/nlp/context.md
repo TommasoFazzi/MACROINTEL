@@ -78,6 +78,7 @@ Processing layer between ingestion and storage. Takes JSON output from `src/inge
   - `classify_article(article)` — Returns `True` (relevant) or `False` (not relevant); parses `{"relevant": bool}` JSON response; on LLM error defaults to `True` (conservative)
   - `filter_batch(articles)` — Classifies a batch, returns `(relevant_articles, filtered_out_articles)` tuple; tags articles with `relevance_label` field; rate-limited at 0.15s between calls
   - JSON mode enabled — eliminates fragile NOT_RELEVANT text parsing; timeout=15s prevents 900s hangs
+  - `max_tokens=50` (bumped from 20 on 2026-07-15 — the old budget occasionally truncated the JSON response mid-string, raising a `json.loads` error caught by the same defaulting `except`)
   - `CLASSIFICATION_PROMPT` — Global Italian-language system prompt (geopolitics scope)
   - `_CESEO_SCOPE_PROMPT` — CESEO Romania scope prompt: classifies economic/business/energy/banking/infrastructure RO content as relevant; sport/lifestyle → not_relevant
   - `_SCOPE_PROMPTS` — dict mapping scope name → prompt template

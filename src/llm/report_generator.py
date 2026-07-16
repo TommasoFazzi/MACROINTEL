@@ -2987,7 +2987,6 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
             "RO_10Y_YIELD":      "10Y RON Yield",
             "ROBOR_3M":          "ROBOR 3M",
             "RO_10Y_DE_SPREAD":  "Spread vs DE",
-            "BET_INDEX":         "BET Index",
         }
 
         try:
