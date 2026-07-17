@@ -10,18 +10,9 @@ const STATS: Array<[string, string]> = [
 
 export default function Hero() {
   return (
-    <section
-      style={{
-        position: 'relative',
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        overflow: 'hidden',
-      }}
-    >
+    <section className="relative flex min-h-screen flex-col justify-center overflow-hidden">
       {/* Background world map (cinematic tone) */}
-      <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+      <div className="absolute inset-0 z-0">
         <Image
           src="/assets/world-map-hero.jpg"
           alt=""
@@ -29,113 +20,40 @@ export default function Hero() {
           priority
           quality={75}
           sizes="100vw"
-          style={{
-            objectFit: 'cover',
-            filter: 'brightness(0.45) saturate(1.4)',
-          }}
+          className="object-cover [filter:brightness(0.45)_saturate(1.4)]"
         />
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background:
-              'linear-gradient(180deg, rgba(10,22,40,0.3) 0%, rgba(10,22,40,0.97) 65%, #0A1628 100%)',
-          }}
-        />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(10,22,40,0.3)_0%,rgba(10,22,40,0.97)_65%,#0A1628_100%)]" />
       </div>
 
       {/* Content */}
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 2,
-          maxWidth: 1200,
-          margin: '0 auto',
-          padding: '80px 40px 0',
-          width: '100%',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
-          gap: 64,
-          alignItems: 'center',
-        }}
-      >
+      <div className="relative z-[2] mx-auto grid w-full max-w-[1200px] grid-cols-[repeat(auto-fit,minmax(380px,1fr))] items-center gap-16 px-10 pt-20">
         {/* Left column */}
         <div className="animate-fadeInUp">
           {/* Classification tag */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                background: 'rgba(239,68,68,0.1)',
-                border: '1px solid rgba(239,68,68,0.25)',
-                borderRadius: 4,
-                padding: '4px 10px',
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: '#ef4444',
-                  display: 'inline-block',
-                  animation: 'pulse-dot 2s ease-in-out infinite',
-                }}
-              />
-              <span
-                style={{
-                  fontFamily: 'var(--font-geist-mono), monospace',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
-                  color: '#ef4444',
-                }}
-              >
+          <div className="mb-6 flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5 rounded border border-red-500/25 bg-red-500/10 px-2.5 py-1">
+              <span className="inline-block h-1.5 w-1.5 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-red-500" />
+              <span className="font-mono text-[10px] font-bold tracking-[0.12em] text-red-500">
                 LIVE
               </span>
             </div>
-            <span
-              style={{
-                fontFamily: 'var(--font-geist-mono), monospace',
-                fontSize: 10,
-                color: '#64748b',
-                letterSpacing: '0.1em',
-              }}
-            >
+            <span className="font-mono text-[10px] tracking-[0.1em] text-[#64748b]">
               SYSTEM OPERATIONAL // MACROINTEL v2.0
             </span>
           </div>
 
-          <h1
-            style={{
-              fontSize: 'clamp(40px, 6vw, 72px)',
-              fontWeight: 800,
-              lineHeight: 1.05,
-              letterSpacing: '-0.02em',
-              marginBottom: 24,
-            }}
-          >
-            <span style={{ display: 'block', color: '#ededed' }}>Global risk</span>
-            <span style={{ display: 'block' }} className="gradient-text">
+          <h1 className="mb-6 text-[clamp(40px,6vw,72px)] font-extrabold leading-[1.05] tracking-[-0.02em]">
+            <span className="block text-foreground">Global risk</span>
+            <span className="gradient-text block">
               intelligence
             </span>
           </h1>
 
-          <p
-            style={{
-              fontSize: 16,
-              lineHeight: 1.7,
-              color: '#94a3b8',
-              marginBottom: 36,
-              maxWidth: 460,
-            }}
-          >
+          <p className="mb-9 max-w-[460px] text-base leading-[1.7] text-muted-foreground">
             Geopolitical analysis, cybersecurity monitoring, and macro-economic trends — powered by AI. 40+ sources distilled into structured, actionable intelligence.
           </p>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 48 }}>
+          <div className="mb-12 flex flex-wrap gap-3">
             <Link className="btn-primary orange-glow" href="https://macrointel.net/dashboard">
               Open Platform
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -148,30 +66,13 @@ export default function Hero() {
           </div>
 
           {/* Stats row */}
-          <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+          <div className="flex flex-wrap gap-8">
             {STATS.map(([val, lbl]) => (
               <div key={lbl}>
-                <div
-                  style={{
-                    fontFamily: 'var(--font-geist-mono), monospace',
-                    fontSize: 22,
-                    fontWeight: 700,
-                    color: '#FF6B35',
-                    lineHeight: 1,
-                  }}
-                >
+                <div className="font-mono text-[22px] font-bold leading-none text-primary">
                   {val}
                 </div>
-                <div
-                  style={{
-                    fontFamily: 'var(--font-geist-mono), monospace',
-                    fontSize: 10,
-                    color: '#64748b',
-                    letterSpacing: '0.1em',
-                    marginTop: 4,
-                    textTransform: 'uppercase',
-                  }}
-                >
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[#64748b]">
                   {lbl}
                 </div>
               </div>
@@ -180,85 +81,33 @@ export default function Hero() {
         </div>
 
         {/* Right column: Narrative Graph preview */}
-        <div style={{ position: 'relative', animation: 'fadeIn 1.2s ease-out' }}>
-          <div
-            style={{
-              position: 'relative',
-              borderRadius: 12,
-              overflow: 'hidden',
-              border: '1px solid rgba(255,107,53,0.2)',
-              animation: 'borderGlow 3s ease infinite',
-            }}
-          >
-            <div
-              style={{
-                background: '#0f1a2b',
-                padding: '8px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
-              }}
-            >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: '#FF6B35',
-                  animation: 'pulse-dot 2s ease-in-out infinite',
-                }}
-              />
-              <span
-                style={{
-                  fontFamily: 'var(--font-geist-mono), monospace',
-                  fontSize: 10,
-                  color: '#FF6B35',
-                  fontWeight: 700,
-                  letterSpacing: '0.1em',
-                }}
-              >
+        <div className="relative animate-[fadeIn_1.2s_ease-out]">
+          <div className="relative animate-[borderGlow_3s_ease_infinite] overflow-hidden rounded-xl border border-primary/20">
+            <div className="flex items-center gap-2 border-b border-white/[0.06] bg-[#0f1a2b] px-3.5 py-2">
+              <span className="h-2 w-2 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-primary" />
+              <span className="font-mono text-[10px] font-bold tracking-[0.1em] text-primary">
                 NARRATIVE GRAPH
               </span>
-              <span
-                style={{
-                  marginLeft: 'auto',
-                  fontFamily: 'var(--font-geist-mono), monospace',
-                  fontSize: 9,
-                  color: '#64748b',
-                }}
-              >
+              <span className="ml-auto font-mono text-[9px] text-[#64748b]">
                 NODES: 1238 · EDGES: 11760
               </span>
             </div>
-            <div style={{ position: 'relative', width: '100%', height: 380, background: '#0f1a2b' }}>
+            <div className="relative h-[380px] w-full bg-[#0f1a2b]">
               <Image
                 src="/assets/narrative-graph-hero.png"
                 alt="MACROINTEL Narrative Graph"
                 fill
                 sizes="(max-width: 768px) 100vw, 600px"
-                style={{ objectFit: 'contain', objectPosition: 'center' }}
+                className="object-contain object-center"
               />
             </div>
           </div>
           {/* Floating HUD chip */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: -16,
-              left: -16,
-              background: 'rgba(10,22,40,0.92)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 8,
-              padding: '10px 14px',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-            }}
-          >
-            <div style={{ fontFamily: 'var(--font-geist-mono), monospace', fontSize: 10, color: '#94a3b8', marginBottom: 4 }}>
+          <div className="absolute -bottom-4 -left-4 rounded-lg border border-white/[0.08] bg-[rgba(10,22,40,0.92)] px-3.5 py-2.5 backdrop-blur-md">
+            <div className="mb-1 font-mono text-[10px] text-muted-foreground">
               LAST SYNC
             </div>
-            <div style={{ fontFamily: 'var(--font-geist-mono), monospace', fontSize: 12, color: '#ededed', fontWeight: 600 }}>
+            <div className="font-mono text-xs font-semibold text-foreground">
               2026-04-29 14:32:07 ZULU
             </div>
           </div>
@@ -266,23 +115,11 @@ export default function Hero() {
       </div>
 
       {/* Scroll indicator */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 32,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 2,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <div style={{ fontFamily: 'var(--font-geist-mono), monospace', fontSize: 9, color: '#64748b', letterSpacing: '0.15em' }}>
+      <div className="absolute bottom-8 left-1/2 z-[2] flex -translate-x-1/2 flex-col items-center gap-1.5">
+        <div className="font-mono text-[9px] tracking-[0.15em] text-[#64748b]">
           SCROLL TO EXPLORE
         </div>
-        <div style={{ width: 1, height: 40, background: 'linear-gradient(180deg, rgba(255,107,53,0.6), transparent)' }} />
+        <div className="h-10 w-px bg-[linear-gradient(180deg,rgba(255,107,53,0.6),transparent)]" />
       </div>
     </section>
   );

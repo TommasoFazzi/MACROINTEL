@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { headers } from "next/headers";
+import CookieConsent from "@/components/CookieConsent";
 import "./globals.css";
 
 const inter = Inter({
@@ -85,6 +86,19 @@ export default async function RootLayout({
       <body
         className={`${inter.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <Script id="consent-default" strategy="beforeInteractive" nonce={nonce}>
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('consent', 'default', {
+              analytics_storage: 'denied',
+              ad_storage: 'denied',
+              ad_user_data: 'denied',
+              ad_personalization: 'denied',
+              wait_for_update: 500
+            });
+          `}
+        </Script>
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-MBHW2XG1Q3"
           strategy="afterInteractive"
@@ -117,6 +131,7 @@ export default async function RootLayout({
           })}
         </Script>
         {children}
+        <CookieConsent />
       </body>
     </html>
   );

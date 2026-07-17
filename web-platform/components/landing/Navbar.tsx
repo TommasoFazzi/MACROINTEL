@@ -27,19 +27,8 @@ export default function Navbar({ solid = false }: NavbarProps) {
 
   return (
     <nav
-      className={scrolled ? 'scrolled' : ''}
+      className={`fixed inset-x-0 top-0 z-[100] flex h-[60px] items-center border-b border-white/[0.06] px-8 transition-[background,backdrop-filter] duration-300 ease-in-out ${scrolled ? 'scrolled' : ''}`}
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 100,
-        height: 60,
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 32px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        transition: 'background 0.3s ease, backdrop-filter 0.3s ease',
         background: scrolled ? 'rgba(10,22,40,0.95)' : 'transparent',
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
         WebkitBackdropFilter: scrolled ? 'blur(12px)' : 'none',
@@ -47,54 +36,30 @@ export default function Navbar({ solid = false }: NavbarProps) {
     >
       <Link
         href="/"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          marginRight: 'auto',
-          textDecoration: 'none',
-          transition: 'opacity 0.2s ease',
-          opacity: logoHover ? 0.7 : 1,
-          cursor: 'pointer',
-        }}
+        className="mr-auto flex cursor-pointer items-center gap-2 no-underline transition-opacity duration-200 ease-in-out"
+        style={{ opacity: logoHover ? 0.7 : 1 }}
         onMouseEnter={() => setLogoHover(true)}
         onMouseLeave={() => setLogoHover(false)}
       >
-        <span
-          style={{
-            fontFamily: 'var(--font-geist-mono), monospace',
-            fontWeight: 700,
-            fontSize: 16,
-            letterSpacing: '0.05em',
-            color: '#ededed',
-          }}
-        >
-          MACRO<span style={{ color: '#FF6B35' }}>INTEL</span>
+        <span className="font-mono text-base font-bold tracking-[0.05em] text-foreground">
+          MACRO<span className="text-primary">INTEL</span>
         </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-geist-mono), monospace',
-            fontSize: 9,
-            color: '#64748b',
-            letterSpacing: '0.1em',
-            marginTop: 2,
-          }}
-        >
+        <span className="mt-0.5 font-mono text-[9px] tracking-[0.1em] text-[#64748b]">
           OSINT PLATFORM
         </span>
       </Link>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
+      <div className="flex items-center gap-7">
         {NAV_LINKS.map(([label, href]) => (
           <a
             key={label}
             href={href}
-            style={{ color: '#94a3b8', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}
+            className="text-[13px] font-medium text-muted-foreground no-underline"
           >
             {label}
           </a>
         ))}
       </div>
-      <div style={{ marginLeft: 32 }}>
+      <div className="ml-8">
         <Link
           className="btn-primary"
           href="https://macrointel.net/dashboard"

@@ -9,7 +9,7 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 ## Key Files
 
 ### App Structure
-- `app/layout.tsx` - Root Next.js layout (Google Analytics, GSC verification)
+- `app/layout.tsx` - Root Next.js layout (Google Analytics gated by Consent Mode v2, GSC verification, renders `<CookieConsent />`)
 - `app/globals.css` - Global styles with animations
 - `app/page.tsx` - Landing page (Navbar, Hero, Ticker, Products, Pipeline, Personas, Capabilities, **FAQ**, FinalCTA, Footer). Exports canonical metadata + 4 JSON-LD blocks (SoftwareApplication, Organization, WebSite, FAQPage — derived from `FAQS` constant) via inline `<script>` from `lib/landing/schema.ts`. Reference design: `Landing Page.html` alla root del repo.
 - `app/about/page.tsx` - **About page (`/about`)**: RSC, full metadata + JSON-LD `AboutPage`, usa `<Navbar solid />` esistente. Sezioni: `AboutHero`, `MissionVision`, `WhoItsFor` (6 persona dedicate diverse dalla landing), `Coverage` (8 topic 4×2), `AboutCTA`, `AboutFooter`. Reference design: `about.html` alla root del repo.
@@ -97,6 +97,7 @@ See `components/StorylineGraph/context.md` for full detail.
 - `components/HelpModal.tsx` - Generic help modal (reuses OracleGuideModal UI pattern). Props: `open, onClose, title, subtitle, intro?, sections: HelpSection[]`. Used by Dashboard, TacticalMap, StorylineGraph. No Oracle-specific `onQuerySelect` prop.
 - `DashboardSkeleton.tsx` - Loading skeletons (4-col grid)
 - `ErrorState.tsx` - Error handling states
+- **`components/CookieConsent.tsx`** (`'use client'`, 2026-07-17) — Google Consent Mode v2 banner. On mount: if `localStorage['mi_cookie_consent']` is `granted`/`denied`, silently replays that choice via `gtag('consent','update',...)`; otherwise shows the banner. Accept/Reject buttons call `gtag('consent','update',...)` + persist to `localStorage`. Also listens for a global `open-cookie-preferences` `window` event (dispatched by Footer's "Manage cookies" button) to reopen itself for consent revocation. Rendered once in `app/layout.tsx`, after `{children}`.
 
 #### Oracle Chat Components (`components/oracle/`)
 Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` is the thin shell that wires state.
@@ -124,6 +125,8 @@ Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` i
 #### Landing Components (`components/landing/`)
 Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cinematic / tactical HUD). Data e JSON-LD in `lib/landing/`.
 
+**Styling (2026-07-17)**: tutti i 14 componenti convertiti da inline `style={{}}` (158 occorrenze) a classi Tailwind. Rimasti inline solo i valori genuinamente dinamici a runtime — non esprimibili come classi statiche: colori per-item calcolati (`Pipeline` step color, `Products`/`AppFrame` `tagColor`/`labelColor`, `Capabilities` background alternato, `Ticker` `dot` color), stato React (`Navbar` `scrolled`/`logoHover` → background/backdrop-filter/opacity, `FAQ` `isOpen` → `max-height`/`color`/`rotate`). **Nota specificità CSS**: le utility class `.btn-primary`/`.btn-ghost` in `globals.css` non sono in un `@layer`, quindi battono sempre le utility Tailwind (che Tailwind v4 mette in `@layer utilities`, priorità più bassa a prescindere dall'ordine sorgente) — dove serve un override di padding/font-size su questi bottoni (`FinalCTA`, `Navbar`), va usato `style` inline, non una classe Tailwind.
+
 - `Navbar.tsx` (`'use client'`) — fixed top 60px, logo MACRO+INTEL, link Insights/Features/About, CTA "Open Platform"; scroll-aware (background blur dopo 40px)
 - `Hero.tsx` (RSC) — split 2-col, classification tag LIVE, headline 2-righe (seconda con `.gradient-text`), 2 CTA + stats row 4 KPI; preview destra "Narrative Graph" con HUD frame + chip "LAST SYNC ZULU"; background `next/image` `world-map-hero.jpg` cinematic
 - `Ticker.tsx` (`'use client'`) — live signal feed orizzontale infinito (8 SIGNALS), prop `show` (default `false`)
@@ -133,7 +136,7 @@ Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cin
 - `Capabilities.tsx` (RSC) — grid 3×2 di 6 capability con icona simbolica
 - `FinalCTA.tsx` (RSC) — `id="about"`, badge "NOW FULLY PUBLIC", headline 52px gradient, 3 CTA
 - `FAQ.tsx` (`'use client'`) — accordion 7 voci, `+ → ×` rotante 45°, `max-height: 0 ↔ 240px` con transizione. Dati da `FAQS` in `lib/landing/schema.ts`
-- `Footer.tsx` (RSC) — 3-col (brand+desc | Platform: dashboard/stories/map/oracle | Resources: insights/features/about) + bottom bar
+- `Footer.tsx` (`'use client'`, 2026-07-17: passato da RSC a client per il bottone "Manage cookies") — 3-col (brand+desc | Platform: dashboard/stories/map/oracle | Resources: insights/features/about + "Manage cookies" che dispatcha `open-cookie-preferences`) + bottom bar
 - `AppFrame.tsx` (RSC) — chrome stile macOS (3 dot semaforo + label colorata + badge); fallback gradient se `src` mancante
 - `DemoMap.tsx` / `DemoGraph.tsx` / `DemoBriefing.tsx` (RSC) — wrapper `AppFrame` con screenshot statico
 - `DemoOracle.tsx` (`'use client'`) — chat animata 4 fasi (delay 900ms → bubble domanda → typewriter 18ms/char → 3 source chips)
@@ -153,7 +156,7 @@ Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cin
 - Shadcn components: Button, Card, Skeleton, Table, Badge
 
 ### Configuration
-- `app/layout.tsx` - Root layout con Google Analytics (`G-MBHW2XG1Q3`), meta tag Google Search Console (`verification.google`), **JSON-LD Organization + WebSite structured data**
+- `app/layout.tsx` - Root layout con Google Analytics (`G-MBHW2XG1Q3`), meta tag Google Search Console (`verification.google`), **JSON-LD Organization + WebSite structured data**. **Consent Mode v2 (2026-07-17)**: script `beforeInteractive` imposta `analytics_storage`/`ad_storage`/`ad_user_data`/`ad_personalization` su `denied` di default (con `wait_for_update: 500`) *prima* che il tag GA venga caricato — GA parte comunque in modalità "cookieless ping" ma non traccia fino a consenso esplicito via `<CookieConsent />`. Nessuna pagina privacy policy dedicata esiste ancora (`/privacy` — non referenziata dal banner per evitare link 404).
 - `.env.local` - Environment variables:
   - `NEXT_PUBLIC_MAPBOX_TOKEN` - Mapbox API token (client-side, restrict by domain)
   - `INTELLIGENCE_API_URL` - Backend API URL (server-side only)
