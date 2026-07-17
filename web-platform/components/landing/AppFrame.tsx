@@ -14,10 +14,10 @@ export default function AppFrame({ src, label, labelColor = '#FF6B35', badge, al
   return (
     <div className="w-full overflow-hidden rounded-[10px] border border-white/[0.08] shadow-[0_24px_60px_rgba(0,0,0,0.6)]">
       <div className="flex items-center gap-2 border-b border-white/[0.06] bg-[#0d1520] px-3.5 py-[7px]">
-        <div className="flex gap-1.5">
-          <div className="h-2.5 w-2.5 rounded-full bg-red-500 opacity-70" />
-          <div className="h-2.5 w-2.5 rounded-full bg-amber-500 opacity-70" />
-          <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 opacity-70" />
+        <div className="flex gap-[5px]">
+          <div className="h-[9px] w-[9px] rounded-full bg-red-500 opacity-70" />
+          <div className="h-[9px] w-[9px] rounded-full bg-amber-500 opacity-70" />
+          <div className="h-[9px] w-[9px] rounded-full bg-emerald-500 opacity-70" />
         </div>
         <span className="ml-1 font-mono text-[10px] font-bold" style={{ color: labelColor }}>
           {label}

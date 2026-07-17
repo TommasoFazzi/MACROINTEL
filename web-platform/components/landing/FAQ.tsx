@@ -12,7 +12,7 @@ export default function FAQ() {
       <div className="mx-auto max-w-[780px] px-10">
         <div className="mb-14 text-center">
           <div className="section-label justify-center">FAQ</div>
-          <h2 className="text-4xl font-extrabold tracking-[-0.02em]">Common questions.</h2>
+          <h2 className="text-[40px] font-extrabold tracking-[-0.02em]">Common questions.</h2>
         </div>
         <div className="flex flex-col gap-0.5">
           {FAQS.map((faq, i) => {

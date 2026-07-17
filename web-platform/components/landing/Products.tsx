@@ -19,7 +19,7 @@ export default function Products() {
     <section id="products" className="bg-[#0d1520] py-[100px]">
       <div className="mx-auto max-w-[1200px] px-10">
         <div className="section-label">PLATFORM</div>
-        <h2 className="mb-2 text-4xl font-extrabold leading-[1.1] tracking-[-0.02em]">
+        <h2 className="mb-2 text-[40px] font-extrabold leading-[1.1] tracking-[-0.02em]">
           Four tools. One mission.
         </h2>
         <p className="mb-12 max-w-[480px] text-[15px] text-[#64748b]">

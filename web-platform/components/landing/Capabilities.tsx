@@ -6,7 +6,7 @@ export default function Capabilities() {
       <div className="mx-auto max-w-[1200px] px-10">
         <div className="mb-14 text-center">
           <div className="section-label justify-center">CAPABILITIES</div>
-          <h2 className="text-4xl font-extrabold tracking-[-0.02em]">
+          <h2 className="text-[40px] font-extrabold tracking-[-0.02em]">
             A complete intelligence platform.
           </h2>
         </div>
