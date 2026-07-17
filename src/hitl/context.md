@@ -46,9 +46,11 @@ Quality assurance layer between LLM report generation and final publication. Ena
 - `Home.py` - Streamlit home page (project root)
 - `pages/` - Multi-page dashboard structure:
   - `1_Daily_Briefing.py` - Report editor with split view
-  - `2_The_Oracle.py` - RAG query interface
   - `3_Intelligence_Scores.py` - Intelligence scores dashboard
     - Full scoring breakdown table (price, SMA200, PE, valuation)
     - Filtri: days, min_score, signal type, data quality
     - Export CSV, score distribution chart
+  - `4_Oracle_Admin.py` - Oracle 2.0 monitoring: active sessions, tool usage, latency percentiles (reads `oracle_query_log`)
+  - `5_Clustering_Shadow_Comparison.py` - Phase 1E Decision-22 dashboard: consumes `narrative_run_metrics.shadow_partitions` (migration 046) to compare the 4 shadow clustering partitions
+  - Note: `2_The_Oracle.py` (Oracle 1.0 RAG interface) was removed with the Oracle 2.0 migration
 - `scripts/run_dashboard.sh` - Dashboard launcher

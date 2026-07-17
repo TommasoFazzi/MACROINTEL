@@ -36,7 +36,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
 
 ## Key Files
 
-- `report_generator.py` - Daily/weekly report generation (~2700 lines)
+- `report_generator.py` - Daily/weekly report generation (~4250 lines)
   - `ReportGenerator` class - Main report generation engine
   - RAG pipeline: Query expansion → Semantic search → Reranking → LLM synthesis
   - **Narrative context** (`_get_narrative_context()`): Fetches top 10 storylines by momentum, their graph edges, and recent linked articles

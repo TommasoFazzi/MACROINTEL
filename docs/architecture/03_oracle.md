@@ -2,7 +2,7 @@
 
 `src/llm/oracle_orchestrator.py` — singleton via `get_oracle_orchestrator_singleton()`
 
-Oracle 2.0 is a native Gemini function-calling agentic engine with iterative tool use, session memory, time-weighted RAG, and Chain-of-Verification (CoVe) synthesis.
+Oracle 2.0 is a **Claude Sonnet 4.6 agentic engine** (Anthropic Messages API, iterative `tool_use`/`tool_result` loop) with session memory, time-weighted RAG, and Chain-of-Verification (CoVe) synthesis. Routing logic is encoded as 9 Standard Operating Procedures (SOPs) in the system prompt — the model itself decides which tools to call at each iteration (no separate router LLM call).
 
 ## Agentic Loop — Sequence Diagram
 
@@ -12,9 +12,9 @@ sequenceDiagram
     participant PROXY as Next.js Proxy
     participant API as oracle.py (FastAPI)
     participant OO as OracleOrchestrator
-    participant QR as QueryRouter
     participant MEM as ConversationMemory
-    participant Gemini as Gemini 2.5-flash
+    participant Claude as Claude Sonnet 4.6 (T2)
+    participant T5 as T5 Flash-Lite (summarizer)
     participant Tools as Tool Registry (9 tools)
     participant DB as PostgreSQL + pgvector
 
@@ -22,67 +22,65 @@ sequenceDiagram
     Note over PROXY: Adds X-API-Key header
     PROXY->>API: POST /api/v1/oracle/chat
     Note over API: Rate limit: 3/min per IP
-    API->>OO: process_query(query, session_id, filters, gemini_key)
-
-    OO->>QR: classify intent (Gemini 2.5-flash)
-    QR-->>OO: intent + QueryPlan + tool sequence
+    API->>OO: process_query(query, session_id, filters)
 
     OO->>MEM: load conversation history (TTL 2h)
+    Note over OO: ctx.to_messages_history() → plain dicts
 
     loop Agentic loop — max 4 iterations
-        OO->>Gemini: [system_prompt + history + tool_definitions]
-        Gemini-->>OO: tool_call(name, params) OR final_text
+        OO->>Claude: messages.create(system=9 SOPs, history, tools)
+        Claude-->>OO: tool_use block(s) OR final text
 
-        alt tool_call
-            OO->>Tools: execute(tool_name, params)
+        alt tool_use
+            OO->>Tools: execute(tool_name, params + rationale)
             Tools->>DB: semantic search / SQL / graph / spatial query
             DB-->>Tools: results + metadata
             Tools-->>OO: ToolResult (content + sources + citations)
-            OO->>MEM: append tool_call + result
-        else final_text
+            alt result > 1500 chars
+                OO->>T5: summarize (≤400 words, preserve numbers/names)
+            end
+            OO->>Claude: tool_result blocks (user message)
+        else final text
             Note over OO: Exit loop
         end
     end
 
-    OO->>Gemini: synthesize(results, CoVe instructions)
-    Note over OO,Gemini: CoVe: when structured data (macro_forecasts, country_profiles)\nand RAG disagree on quantitative KPIs:\nannotate both: "Dato strutturato [fonte]: X | Contesto narrativo [fonte]: Y"
-    Gemini-->>OO: final_answer + inline citations [N]
+    Note over OO,Claude: CoVe: when structured data (macro_forecasts, country_profiles)\nand RAG disagree on quantitative KPIs:\nannotate both: "Dato strutturato [fonte]: X | Contesto narrativo [fonte]: Y"
+    Note over OO: On max iterations: forced synthesis\nvia ClaudeClient.generate() (no tools)
 
     OO->>MEM: save exchange
-    OO->>DB: log_oracle_query() → oracle_query_log
-    OO-->>API: {answer, sources, query_plan, execution_steps, intent}
+    OO->>DB: log_oracle_query() → oracle_query_log (intent="agentic")
+    OO-->>API: {answer, sources, execution_steps}
     API-->>PROXY: OracleResponse JSON
     PROXY-->>U: rendered response + citations
 ```
 
 ---
 
-## Intent Classification → Tool Routing
+## Standard Operating Procedures → Tool Routing
 
-`src/llm/query_router.py` classifies into 6 intent types, each with a different tool sequence and RAG decay constant:
+The system prompt encodes 9 SOPs, each prescribing a tool sequence and an intent-based RAG time-decay constant. The legacy `QueryRouter` LLM classification step was removed — SOPs are followed natively by the agentic model:
 
 ```mermaid
 flowchart TD
-    Q[User Query] --> QR[QueryRouter\nGemini 2.5-flash intent classification]
+    Q[User Query] --> SP["System prompt: 9 SOPs\n(Claude follows the matching path)"]
 
-    QR --> FACT[FACTUAL\nk=0.03 decay]
-    QR --> ANAL[ANALYTICAL\nk=0.015 decay]
-    QR --> NAR[NARRATIVE\nk=0.02 decay]
-    QR --> MKT[MARKET\nk=0.04 decay]
-    QR --> COMP[COMPARATIVE\nk=0.025 decay]
-    QR --> OVW[OVERVIEW\nk=0.005 decay\nvector-only search]
-
-    FACT --> T1[RAGTool + ReferenceTool]
-    ANAL --> T2[RAGTool + SQLTool + AggregationTool]
-    NAR --> T3[GraphTool + RAGTool]
-    MKT --> T4[MarketTool + TickerThemesTool + SQLTool]
-    COMP --> T5[ReportCompareTool + RAGTool]
-    OVW --> T6[RAGTool]
+    SP --> FACT["PATH FACTUAL\nk=0.03 decay\nRAGTool + ReferenceTool"]
+    SP --> ANAL["PATH ANALYTICAL\nk=0.015 decay\nRAGTool + SQLTool + AggregationTool"]
+    SP --> OVW["PATH OVERVIEW\nk=0.005 decay\nRAGTool (vector-only)"]
+    SP --> MKT["PATH MARKET\nk=0.04 decay\nMarketTool + TickerThemesTool + SQLTool"]
+    SP --> REFP["PATH REFERENCE\nReferenceTool\n(profiles, forecasts, sanctions)"]
+    SP --> NARP["PATH NARRATIVE\nGraphTool + RAGTool"]
+    SP --> TICK["PATH TICKER\nTickerThemesTool + MarketTool"]
+    SP --> SPATP["PATH SPATIAL\nSpatialTool (PostGIS)"]
+    SP --> COMP["PATH COMPARATIVE\nReportCompareTool + RAGTool"]
 ```
 
 ---
 
 ## Tool Registry — 9 Tools
+
+All tools take a mandatory `rationale` first parameter (CoT forcing — empirical +20–35% SQL accuracy on Spider/BIRD benchmarks).
 
 ```mermaid
 flowchart LR
@@ -91,13 +89,15 @@ flowchart LR
         Hybrid vector+FTS search
         Over-fetch 3× top-K (anti-bias)
         Time-weighted: score × exp(-k × days)
-        Min floor: 0.15
+        RRF multi-query fusion → cross-encoder
         Authority reranking (intelligence_sources.authority_score)
         Historical query: reference_date = end_date"]
 
         SQL["**SQLTool**
+        LLM-generated SQL (T4b Mistral Codestral)
+        + few-shot examples per table
         5-layer safety:
-        1. ALLOWED_TABLES whitelist
+        1. sqlparse token-level detection
         2. Forbidden keywords
         3. Max 3 JOINs
         4. LIMIT enforcement
@@ -106,39 +106,43 @@ flowchart LR
         Uses v_sanctions_public (not raw table)"]
 
         AGG["**AggregationTool**
-        Macro-level trend summarization
-        Time-series aggregation
+        Pre-parametrized stats queries
+        trend_over_time, top_n, distribution
         Delta computation"]
 
         GRAPH["**GraphTool**
         Narrative graph queries
         Storyline neighbors + communities
-        Ego network traversal"]
+        Recursive CTE traversal"]
 
         MKT["**MarketTool**
+        Trade signals + macro indicators
         Ticker OHLCV prices
-        Fundamentals (PE, sector)
-        Market sentiment from articles"]
+        Fundamentals (PE, sector)"]
 
         TICK["**TickerThemesTool**
-        Theme clustering per ticker
+        Ticker → correlated storylines
         Sentiment from recent articles
         Whitelisted tickers only"]
 
         RPT["**ReportCompareTool**
         Delta analysis between 2 reports
-        Gemini 2.5-flash synthesis
+        LLM-synthesized (T1)
         4 sections: new, resolved, shifted, persistent"]
 
         REF["**ReferenceTool**
-        Cite articles/reports with URL + metadata
-        Safe queries (pre-approved SQL patterns)
-        Uses v_sanctions_public"]
+        8 parameterized lookups (no LLM SQL):
+        country profiles, IMF WEO forecasts
+        (vintage-aware), sanctions search
+        (v_sanctions_public, PII-sanitized),
+        trade flows. 10s statement timeout"]
 
         SPAT["**SpatialTool**
-        PostGIS queries on entities
+        PostGIS queries via pre-approved
+        template whitelist (no LLM SQL)
         Conflict events (UCDP GED)
-        ST_DWithin, ST_Intersects"]
+        ST_DWithin, ST_Intersects
+        SpatialQuerySpec Pydantic validation"]
     end
 ```
 
@@ -160,7 +164,7 @@ flowchart LR
     COMPARATIVE k=0.025
     OVERVIEW   k=0.005"]
 
-    DECAY --> FLOOR["min floor: 0.15\n(ensures old docs still surfaced)"]
+    DECAY --> FLOOR["min floor 0.15 — informational only\n(no hard filter: preserves high\ncross-encoder / low similarity chunks)"]
     FLOOR --> RANK[Final ranked results]
 ```
 
@@ -173,6 +177,7 @@ flowchart TD
     FIRST[First request] --> CHECK{Singleton\nexists?}
     CHECK -- No --> INIT["Initialize OracleOrchestrator
     Load 400MB embedding model
+    ClaudeClient (T2) + T5 summarizer
     Connect to DB pool
     Register 9 tools
     Thread-safe double-checked locking"]
@@ -184,5 +189,7 @@ flowchart TD
     SESSION -- Yes --> LOAD[Load existing history]
 
     NEW & LOAD --> PROC[Process query]
-    PROC --> CLEANUP[Background daemon:\nexpire sessions > TTL]
+    PROC --> CLEANUP[Background daemon:\nexpire sessions > TTL\ncleanup interval: 10 min]
 ```
+
+**Note (2026-04-17):** BYOK was removed — Oracle uses the server-side `ANTHROPIC_API_KEY` exclusively; passing a `gemini_api_key` in the request body returns HTTP 422.

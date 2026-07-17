@@ -2,42 +2,33 @@
 
 `web-platform/` — Next.js 16 / React 19 / TypeScript 5 / Tailwind CSS 4
 
-## Route Map & Authentication
+## Route Map
+
+All routes are **public** — `middleware.ts` is a no-op passthrough (JWT access control removed; `/access` is a legacy route that redirects to `/dashboard`).
 
 ```mermaid
 flowchart TD
-    subgraph Public["Public Routes (no auth)"]
+    subgraph Routes["Routes (all public)"]
         R0["/ — Landing page
         Hero, Features, ProductShowcase, StatsCounter, ICPSection"]
-        R_ACC["**/access** — JWT issuance
-        Validates ACCESS_CODES env var
-        Issues JWT → macrointel_access cookie (HttpOnly)"]
         R_INS["**/insights** — Public briefings
         Intelligence analysis open to all"]
         R_INS_D["**/insights/[slug]** — Briefing detail"]
-    end
-
-    subgraph Protected["Protected Routes (JWT required)"]
         R_DASH["**/dashboard** — Reports list
         StatsGrid + ReportsTable"]
         R_RPT["**/dashboard/report/[id]** — Report detail
         TOC + Content + Sources sidebar
         Optional: Compare mode (split layout)"]
         R_MAP["**/map** — Tactical map
-        Mapbox GL + entities + Tier 3 layers"]
+        Mapbox GL + entities + Tier 3 layers
+        ⚠️ temporarily disabled (2026-07-17):
+        renders Work-in-Progress banner, components intact"]
         R_ST["**/stories** — Narrative graph
         react-force-graph-2d Canvas
         Community coloring + momentum slider"]
         R_ORC["**/oracle** — Oracle 2.0 chat
-        BYOK Gemini key + session management"]
+        Session management (server-side API key)"]
     end
-
-    MW["**middleware.ts**
-    jose.jwtVerify(macrointel_access cookie)
-    JWT_SECRET env var
-    Redirect → /access?from=<path> if invalid"]
-
-    MW -->|Guards| Protected
 ```
 
 ---
@@ -127,7 +118,7 @@ flowchart TD
     subgraph Oracle
         ORCPAGE["/oracle"]
         ORCPAGE --> OH[OracleHeader\nlogo + guide + settings]
-        OH --> SETTINGS[OracleSettingsPanel\nBYOK key + filters + date range]
+        OH --> SETTINGS[OracleSettingsPanel\nfilters + date range]
         OH --> GUIDE[OracleGuideModal\n6 intent type cards]
         ORCPAGE --> EMPTY[OracleEmptyState\nwelcome grid + quick chips]
         ORCPAGE --> MSG["OracleMessage[]\nuser + assistant bubbles\ninline citations [N]"]
@@ -167,27 +158,3 @@ Ego network:   Selected node neighbors → white highlight
 **15-color COMMUNITY_PALETTE:**
 `#FF6B35, #00A8E8, #7B68EE, #00CED1, #FFD700, #FF69B4, #32CD32, #FF4500, #FF7F7F, #ADFF2F, #87CEEB, #DA70D6, #00FA9A, #FA8072, #4682B4`
 
----
-
-## Authentication Flow
-
-```mermaid
-sequenceDiagram
-    participant U as User Browser
-    participant MW as middleware.ts
-    participant ACC as /access page
-    participant API as /api/access/verify
-
-    U->>MW: GET /dashboard
-    MW->>MW: jwtVerify(macrointel_access cookie)
-    alt Cookie missing or invalid
-        MW-->>U: Redirect /access?from=/dashboard
-        U->>ACC: Fill access code
-        ACC->>API: POST {code}
-        API->>API: Validate against ACCESS_CODES env
-        API-->>ACC: Set-Cookie macrointel_access (JWT, HttpOnly)
-        ACC-->>U: Redirect /dashboard
-    else Cookie valid
-        MW-->>U: Allow request
-    end
-```

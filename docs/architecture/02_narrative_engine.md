@@ -1,8 +1,8 @@
 # Narrative Engine — Internal Architecture
 
-`src/nlp/narrative_processor.py` (~1498 lines)
+`src/nlp/narrative_processor.py` (~1800 lines)
 
-The Narrative Engine tracks geopolitical storylines across articles using a 6-stage pipeline. It runs as Step 5 of the daily pipeline.
+The Narrative Engine tracks geopolitical storylines across articles using a 6-stage pipeline. It runs as Step 4 of the daily pipeline. Clustering thresholds are externalized to `config/narrative_clustering.yaml` (Pydantic-validated loader in `src/nlp/config.py`).
 
 ## 6-Stage Pipeline
 
@@ -52,7 +52,7 @@ flowchart TD
     S3 --> S4
 
     S4["**Stage 4: LLM SUMMARY EVOLUTION**
-    Model: gemini-2.0-flash (timeout: 30s)
+    Model: gemini-2.5-flash (timeout: 30s)
     Italian-language prompt
     For each new/updated storyline:
     → Generate/refine title + summary
@@ -76,6 +76,8 @@ flowchart TD
     For each storyline pair (emerging + active + stabilized):
     weight = Σ(IDF(entity) × presence_indicator) / union_size
     Source: entity_idf materialized view
+    Media/agency entities blocklisted at extraction
+    (entity_blocklist.yaml media_artifacts — avoids shared-source bias)
     Edge threshold: 0.05 (with TF-IDF), 0.30 (without)
     → UPSERT storyline_edges table
     relation_type: 'thematic_overlap'"]
@@ -146,3 +148,42 @@ flowchart LR
 | `v_storyline_graph` | Edges between non-archived storylines + titles | API /stories/graph endpoint |
 | `entity_idf` (materialized) | IDF weights for all entities | Stage 5 graph builder |
 | `mv_entity_storyline_bridge` (materialized) | Per-entity: storyline count, max momentum, bridge score | intelligence_score computation |
+
+---
+
+## Community Layer — Live Louvain + Shadow k-means (Champion/Challenger)
+
+After the 6-stage pipeline, two clustering strategies run on the storyline set:
+
+```mermaid
+flowchart TD
+    G([storyline_edges graph + storyline embeddings]) --> LIVE
+    G --> SHADOW
+
+    LIVE["**LIVE: compute_communities.py**
+    Louvain on entity co-occurrence graph
+    → writes storylines.community_id
+    → T5 Flash-Lite generates community_name
+    + 4-way shadow metrics per run:
+      Louvain/Leiden-CPM × full graph/disparity-filter backbone
+      persisted to narrative_run_metrics.shadow_partitions"]
+
+    SHADOW["**SHADOW: theme_clustering.py**
+    k-means on current_embedding (384-dim)
+    Validated on prod: silhouette +0.171 vs Louvain −0.024 (Δ+0.195)
+    Daily: nearest-centroid assignment vs narrative_themes registry
+    Periodic: warm-start re-fit + Hungarian matching (centroid lineage)
+    Drift detection vs rolling 30d baseline → k re-sweep after 2 signals
+    HDBSCAN permanent challenger (community_id_shadow)
+    → writes ONLY community_id_kmeans_shadow until promotion"]
+
+    LIVE --> CID[storylines.community_id — served to API/frontend]
+    SHADOW --> VAL{"Validation triangle over 2 re-fits:
+    stability / separation / fragmentation
+    (scripts/diagnose_clustering_signal.py, read-only)"}
+    VAL -- pass --> PROMO[Promotion: run_theme_clustering promoted=True
+    writes community_id directly]
+    VAL -- not yet --> SHADOW
+```
+
+Key tables: `narrative_themes` (persistent centroid registry: lifecycle emerging/active/dormant/retired, merge/split lineage, LLM labels) and `narrative_run_metrics` (per-run silhouette, modularity, TCS via NMI, coherence, shadow partitions). Shadow metrics are visualized in the Streamlit page `pages/5_Clustering_Shadow_Comparison.py`.
