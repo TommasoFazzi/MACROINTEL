@@ -8,7 +8,7 @@ export default function Personas() {
         <div className="grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-center gap-16">
           <div>
             <div className="section-label">WHO IT&apos;S FOR</div>
-            <h2 className="mb-5 text-4xl font-extrabold leading-[1.1] tracking-[-0.02em]">
+            <h2 className="mb-5 text-[40px] font-extrabold leading-[1.1] tracking-[-0.02em]">
               Built for people who cannot afford to miss signals.
             </h2>
             <p className="mb-8 text-[15px] leading-[1.7] text-[#64748b]">
@@ -26,7 +26,7 @@ export default function Personas() {
               <div key={p.role} className="card flex items-start gap-4 px-[22px] py-5">
                 <span className="mt-px shrink-0 text-lg text-primary">{p.icon}</span>
                 <div>
-                  <div className="mb-1.5 text-sm font-semibold text-foreground">{p.role}</div>
+                  <div className="mb-[5px] text-sm font-semibold text-foreground">{p.role}</div>
                   <div className="text-[13px] leading-[1.55] text-[#64748b]">{p.desc}</div>
                 </div>
               </div>

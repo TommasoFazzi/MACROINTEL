@@ -8,7 +8,7 @@ export default function Pipeline() {
       <div className="mx-auto max-w-[1200px] px-10">
         <div className="mb-16 text-center">
           <div className="section-label justify-center">HOW IT WORKS</div>
-          <h2 className="mb-3 text-4xl font-extrabold tracking-[-0.02em]">
+          <h2 className="mb-3 text-[40px] font-extrabold tracking-[-0.02em]">
             From raw signal to structured intelligence.
           </h2>
           <p className="mx-auto max-w-[480px] text-[15px] text-[#64748b]">
