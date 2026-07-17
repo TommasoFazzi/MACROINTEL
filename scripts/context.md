@@ -6,7 +6,7 @@ Automation and utility scripts for pipeline execution, data management, and main
 ## Architecture Role
 Operational layer that orchestrates the core modules. Scripts tie together ingestion → NLP → database → LLM report generation.
 
-**Primary orchestrator**: `daily_pipeline.py` executes 6 core steps sequentially (+ conditional weekly/monthly) with logging, error handling, and configurable fail-fast behavior. Supports manual execution and automated scheduling.
+**Primary orchestrator**: `daily_pipeline.py` executes 12 core steps sequentially (+ conditional weekly/monthly) with logging, error handling, and configurable fail-fast behavior. Supports manual execution and automated scheduling.
 
 **Scheduling**: In production, the pipeline runs on Hetzner via **GitHub Actions** (`.github/workflows/pipeline.yml`, triggers daily at 8:00 UTC + manual). The macOS launchd plist files (`com.intelligence-ita.*.plist`) in this directory are **deprecated** — do not use them.
 

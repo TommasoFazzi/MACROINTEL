@@ -157,6 +157,9 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
 
 ## Applied in Production
 
+> ⚠️ **This list is stale (baseline 2026-03-24, partial updates after) — re-verify against the prod DB before relying on it.** Several "Not yet applied" entries below are almost certainly outdated: the features depending on them have been live in production for months — 034 (`v_sanctions_public` is used by Oracle tools in prod), 036–039 (Romania vertical + macro historical columns power the daily RO briefing), 043/046 (the daily pipeline's shadow-clustering steps write `narrative_run_metrics.shadow_partitions`). Verify with a read-only query, e.g.:
+> `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita -c "\dt narrative_themes" -c "\dv v_sanctions_public"`
+
 Migrations applied to the Hetzner production database (as of 2026-03-24):
 - 001 through 019: Applied
 - 020 through 025: Applied (confirmed via memory: 018, 019, 024)
@@ -189,7 +192,8 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 038 (Historical Context Columns — requires 037 applied first for country_code column)
   → 039 (pct_change_12m YoY column — no external dependencies, requires 038)
   → 043 (clustering upgrade observability — additive, no external dependencies; 040/041/042 reserved for later phases)
-  → 046 (clustering upgrade Phase 1E shadow_partitions — additive, requires 043 first; 044/045 reserved for Phase 2/4)
+  → 046 (clustering upgrade Phase 1E shadow_partitions — additive, requires 043 first; 044 reserved)
+  → 045 (narrative_themes centroid registry + community_id_kmeans_shadow — additive, numbered before 046 but written later; no dependency on 046)
 ```
 
 Run a single migration:

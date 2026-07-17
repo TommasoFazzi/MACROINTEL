@@ -18,9 +18,9 @@ flowchart LR
     RelevanceFilter"]
 
     LLM["**src/llm**
+    LLMFactory (5-tier)
     OracleOrchestrator
     ReportGenerator
-    QueryRouter
     tools/ (9 tools)"]
 
     MACRO["**src/macro**
@@ -98,15 +98,15 @@ flowchart TD
     end
 
     subgraph llm["src/llm/"]
-        OO[oracle_orchestrator.py\nOracleOrchestrator]
-        OE[oracle_engine.py\nOracleEngine legacy]
+        LF[llm_factory.py\nLLMFactory 5-tier]
+        OO[oracle_orchestrator.py\nOracleOrchestrator\nClaude Sonnet 4.6 agentic]
         RG[report_generator.py\nReportGenerator]
-        QR[query_router.py\nQueryRouter]
+        QR[query_router.py\nlegacy constants only\nQueryRouter class removed]
         CM[conversation_memory.py]
         SCH[schemas.py\nPydantic models]
         TOOLS[tools/\nRAG SQL Aggregation\nGraph Market Ticker\nReportCompare Reference Spatial]
-        OO --> QR & CM & TOOLS & SCH
-        RG --> SCH
+        OO --> CM & TOOLS & SCH & LF
+        RG --> SCH & LF
     end
 
     subgraph macro["src/macro/"]

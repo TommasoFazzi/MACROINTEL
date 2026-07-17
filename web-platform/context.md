@@ -13,7 +13,7 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 - `app/globals.css` - Global styles with animations
 - `app/page.tsx` - Landing page (Navbar, Hero, Ticker, Products, Pipeline, Personas, Capabilities, **FAQ**, FinalCTA, Footer). Exports canonical metadata + 4 JSON-LD blocks (SoftwareApplication, Organization, WebSite, FAQPage — derived from `FAQS` constant) via inline `<script>` from `lib/landing/schema.ts`. Reference design: `Landing Page.html` alla root del repo.
 - `app/about/page.tsx` - **About page (`/about`)**: RSC, full metadata + JSON-LD `AboutPage`, usa `<Navbar solid />` esistente. Sezioni: `AboutHero`, `MissionVision`, `WhoItsFor` (6 persona dedicate diverse dalla landing), `Coverage` (8 topic 4×2), `AboutCTA`, `AboutFooter`. Reference design: `about.html` alla root del repo.
-- `app/map/page.tsx` - Tactical map route (SSR metadata + dynamic import)
+- `app/map/page.tsx` - **DISABLED (2026-07-17)**: renders a full-page "Work in Progress" banner (MacroIntel tactical style, `robots: noindex`) instead of the map — section is stale and not maintained. `components/IntelligenceMap/` is untouched; to restore, revert this file to the previous Suspense + MapLoader version. Links to `/map` (dashboard, landing footer/CTA, StorylineDossier deep-links) intentionally left in place — they land on the banner.
 - `app/dashboard/page.tsx` - Dashboard route (SWR data fetching)
 - `app/dashboard/report/[id]/page.tsx` - **Report detail route (updated with comparison UI)**
 - `app/access/page.tsx` - Legacy route — redirects to `/dashboard` (platform is now fully public).
@@ -158,9 +158,7 @@ Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cin
   - `NEXT_PUBLIC_MAPBOX_TOKEN` - Mapbox API token (client-side, restrict by domain)
   - `INTELLIGENCE_API_URL` - Backend API URL (server-side only)
   - `INTELLIGENCE_API_KEY` - API authentication key (server-side only, via proxy)
-  - `JWT_SECRET` - Secret for signing access JWTs (middleware + verify route)
-  - `ACCESS_CODES` - Comma-separated valid access codes for `/access` page
-  - `ORACLE_REQUIRE_GEMINI_KEY` - `true` = BYOK enforced for Oracle
+  - ~~`JWT_SECRET`, `ACCESS_CODES`, `ORACLE_REQUIRE_GEMINI_KEY`~~ - **No longer used**: JWT access control and Oracle BYOK were removed (middleware is a no-op passthrough, platform fully public)
 - `next.config.ts` - Next.js configuration
 - `package.json` - Dependencies
 - `tsconfig.json` - TypeScript config

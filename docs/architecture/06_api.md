@@ -75,8 +75,9 @@ flowchart LR
 
     subgraph oracle_r["/api/v1/oracle"]
         O1["POST /chat
-        Oracle 2.0 agentic query
-        body: {query, session_id, filters, gemini_api_key?}
+        Oracle 2.0 agentic query (Claude Sonnet 4.6)
+        body: {query, session_id, filters}
+        BYOK removed — gemini_api_key returns 422
         Rate: 3/min | Timeout: 120s (proxy)"]
         O2["GET /health
         Oracle service health (no auth)"]
@@ -166,7 +167,7 @@ flowchart TD
 
 | Schema | Fields | Used By |
 |--------|--------|---------|
-| `OracleRequest` | query, session_id, filters (OracleActiveFilters), gemini_api_key | POST /oracle/chat |
+| `OracleRequest` | query, session_id, filters (OracleActiveFilters) — BYOK field removed | POST /oracle/chat |
 | `OracleActiveFilters` | mode, search_type, date_from, date_to, gpe_filter | Oracle request |
 | `OracleResponse` | answer, sources, query_plan, execution_steps, session_id | POST /oracle/chat |
 | `GraphNetwork` | nodes (StorylineNode[]), links (StorylineEdge[]), stats | GET /stories/graph |
