@@ -8,66 +8,41 @@ export default function FAQ() {
   const toggle = (i: number) => setOpen(open === i ? null : i);
 
   return (
-    <section id="faq" style={{ padding: '100px 0', background: '#0A1628' }}>
-      <div style={{ maxWidth: 780, margin: '0 auto', padding: '0 40px' }}>
-        <div style={{ textAlign: 'center', marginBottom: 56 }}>
-          <div className="section-label" style={{ justifyContent: 'center' }}>FAQ</div>
-          <h2 style={{ fontSize: 40, fontWeight: 800, letterSpacing: '-0.02em' }}>Common questions.</h2>
+    <section id="faq" className="bg-background py-[100px]">
+      <div className="mx-auto max-w-[780px] px-10">
+        <div className="mb-14 text-center">
+          <div className="section-label justify-center">FAQ</div>
+          <h2 className="text-4xl font-extrabold tracking-[-0.02em]">Common questions.</h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div className="flex flex-col gap-0.5">
           {FAQS.map((faq, i) => {
             const isOpen = open === i;
             return (
-              <div key={faq.q} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div key={faq.q} className="overflow-hidden border-b border-white/[0.06]">
                 <button
                   type="button"
                   onClick={() => toggle(i)}
                   aria-expanded={isOpen}
-                  style={{
-                    width: '100%',
-                    background: 'none',
-                    border: 'none',
-                    padding: '20px 0',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 16,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
+                  className="flex w-full cursor-pointer items-center justify-between gap-4 border-none bg-none py-5 text-left"
                 >
                   <span
-                    style={{
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: isOpen ? '#FF6B35' : '#ededed',
-                      transition: 'color 0.15s',
-                      lineHeight: 1.4,
-                    }}
+                    className="text-[15px] font-semibold leading-[1.4] transition-colors duration-150"
+                    style={{ color: isOpen ? '#FF6B35' : '#ededed' }}
                   >
                     {faq.q}
                   </span>
                   <span
-                    style={{
-                      color: isOpen ? '#FF6B35' : '#64748b',
-                      flexShrink: 0,
-                      fontSize: 18,
-                      transition: 'transform 0.25s, color 0.15s',
-                      display: 'inline-block',
-                      transform: isOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-                    }}
+                    className="inline-block shrink-0 text-lg transition-transform duration-[250ms]"
+                    style={{ color: isOpen ? '#FF6B35' : '#64748b', transform: isOpen ? 'rotate(45deg)' : 'rotate(0deg)' }}
                   >
                     +
                   </span>
                 </button>
                 <div
-                  style={{
-                    maxHeight: isOpen ? 240 : 0,
-                    overflow: 'hidden',
-                    transition: 'max-height 0.35s ease',
-                  }}
+                  className="overflow-hidden transition-[max-height] duration-[350ms] ease-in-out"
+                  style={{ maxHeight: isOpen ? 240 : 0 }}
                 >
-                  <p style={{ fontSize: 14, color: '#94a3b8', lineHeight: 1.75, paddingBottom: 20 }}>
+                  <p className="pb-5 text-sm leading-[1.75] text-muted-foreground">
                     {faq.a}
                   </p>
                 </div>

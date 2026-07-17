@@ -16,29 +16,17 @@ export default function Products() {
   const Demo = DEMOS[active];
 
   return (
-    <section id="products" style={{ padding: '100px 0', background: '#0d1520' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 40px' }}>
+    <section id="products" className="bg-[#0d1520] py-[100px]">
+      <div className="mx-auto max-w-[1200px] px-10">
         <div className="section-label">PLATFORM</div>
-        <h2 style={{ fontSize: 40, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 8, lineHeight: 1.1 }}>
+        <h2 className="mb-2 text-4xl font-extrabold leading-[1.1] tracking-[-0.02em]">
           Four tools. One mission.
         </h2>
-        <p style={{ color: '#64748b', fontSize: 15, marginBottom: 48, maxWidth: 480 }}>
+        <p className="mb-12 max-w-[480px] text-[15px] text-[#64748b]">
           From geopolitical mapping to AI-powered Q&amp;A — no manual aggregation required.
         </p>
 
-        <div
-          style={{
-            display: 'flex',
-            gap: 4,
-            marginBottom: 40,
-            background: '#0A1628',
-            border: '1px solid rgba(255,255,255,0.07)',
-            borderRadius: 8,
-            padding: 4,
-            width: 'fit-content',
-            flexWrap: 'wrap',
-          }}
-        >
+        <div className="mb-10 flex w-fit flex-wrap gap-1 rounded-lg border border-white/[0.07] bg-background p-1">
           {PRODUCTS.map((pr, i) => (
             <button
               key={pr.id}
@@ -51,37 +39,25 @@ export default function Products() {
           ))}
         </div>
 
-        <div
-          key={p.id}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: 48,
-            alignItems: 'center',
-          }}
-        >
-          <div style={{ animation: 'fadeInUp 0.35s ease-out' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div key={p.id} className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] items-center gap-12">
+          <div className="animate-[fadeInUp_0.35s_ease-out]">
+            <div className="mb-4 flex items-center gap-2">
               <span
+                className="rounded font-mono text-[10px] font-bold tracking-[0.12em]"
                 style={{
-                  fontFamily: 'var(--font-geist-mono), monospace',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
                   color: p.tagColor,
                   background: `${p.tagColor}26`,
                   border: `1px solid ${p.tagColor}4D`,
-                  borderRadius: 4,
                   padding: '3px 8px',
                 }}
               >
                 {p.tag}
               </span>
             </div>
-            <h3 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14, lineHeight: 1.2 }}>
+            <h3 className="mb-3.5 text-[26px] font-bold leading-[1.2] tracking-[-0.02em]">
               {p.headline}
             </h3>
-            <p style={{ fontSize: 14, lineHeight: 1.75, color: '#94a3b8', marginBottom: 28 }}>{p.body}</p>
+            <p className="mb-7 text-sm leading-[1.75] text-muted-foreground">{p.body}</p>
             <Link
               className="btn-primary"
               href={p.href}
@@ -103,7 +79,7 @@ export default function Products() {
             </Link>
           </div>
 
-          <div style={{ animation: 'fadeIn 0.4s ease-out' }}>
+          <div className="animate-[fadeIn_0.4s_ease-out]">
             <Demo />
           </div>
         </div>
