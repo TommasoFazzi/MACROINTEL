@@ -109,10 +109,19 @@ class CommunityConfig(_StrictBase):
     shadow_comparison: ShadowComparisonConfig = Field(default_factory=ShadowComparisonConfig)
 
 
+class UMAPConfig(_StrictBase):
+    enabled: bool = False
+    n_components: int = 10
+    n_neighbors: int = 15
+    min_dist: float = 0.0
+    random_state: int = 42
+
+
 class HDBSCANShadowConfig(_StrictBase):
     enabled: bool = True
     min_cluster_size: int = 5
     min_samples: int = 5
+    umap: UMAPConfig = Field(default_factory=UMAPConfig)
 
 
 class ThemeClusteringConfig(_StrictBase):

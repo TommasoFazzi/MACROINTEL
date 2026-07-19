@@ -43,7 +43,12 @@ sys.path.insert(0, str(project_root))
 try:
     import numpy as np
     from sklearn.cluster import KMeans
-    from sklearn.metrics import silhouette_score
+    from sklearn.metrics import (
+        silhouette_score,
+        calinski_harabasz_score,
+        adjusted_rand_score,
+        normalized_mutual_info_score,
+    )
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -60,9 +65,16 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
+try:
+    import umap
+    UMAP_AVAILABLE = True
+except ImportError:
+    UMAP_AVAILABLE = False
+
 from psycopg2.extras import execute_values
 
 from scripts.compute_communities import (
+    _coherence_med,
     _fetch_storyline_embeddings,
     _name_community,
     _persist_run_metrics,
@@ -106,9 +118,9 @@ def _run_kmeans_embedding_and_score(
 
     t0 = time.time()
     if embedding_cache is not None:
-        current_by_id, _ = embedding_cache
+        current_by_id, summary_by_id = embedding_cache
     else:
-        current_by_id, _ = _fetch_storyline_embeddings(db, storyline_ids)
+        current_by_id, summary_by_id = _fetch_storyline_embeddings(db, storyline_ids)
 
     emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
     if len(emb_ids) < k:
@@ -131,17 +143,27 @@ def _run_kmeans_embedding_and_score(
     partition = {sid: int(label) for sid, label in zip(emb_ids, labels)}
 
     silhouette = None
+    calinski_harabasz = None
     distinct_labels = set(labels.tolist())
     if 2 <= len(distinct_labels) < len(emb_ids):
         try:
             silhouette = float(silhouette_score(X, labels, metric="cosine"))
         except Exception as e:
             logger.debug("silhouette_score failed for kmeans_embedding: %s", e)
+        try:
+            calinski_harabasz = float(calinski_harabasz_score(X, labels))
+        except Exception as e:
+            logger.debug("calinski_harabasz_score failed for kmeans_embedding: %s", e)
+
+    # coherence_med on summary_vector (design.md § Decision 4) — same column
+    # Louvain/Leiden use, NOT current_embedding (the column clustered on above).
+    coherence_med, _ = _coherence_med(partition, summary_by_id)
 
     runtime_ms = int((time.time() - t0) * 1000)
     score = _score_dict(
-        "kmeans_embedding", partition, len(emb_ids), 0.0, silhouette, None, runtime_ms,
+        "kmeans_embedding", partition, len(emb_ids), 0.0, silhouette, coherence_med, runtime_ms,
     )
+    score["calinski_harabasz"] = calinski_harabasz
     score["centroids"] = km.cluster_centers_
     score["k"] = k
     score["n_excluded_no_embedding"] = len(storyline_ids) - len(emb_ids)
@@ -389,9 +411,22 @@ def _run_hdbscan_shadow_and_score(
     min_cluster_size: int,
     min_samples: int,
     embedding_cache: tuple | None = None,
+    umap_cfg=None,
 ) -> tuple[dict, dict]:
     """HDBSCAN on the same embeddings as the k-means re-fit — permanent
     challenger (design.md § Decision 1), never promotable (no warm-start).
+
+    umap_cfg: optional UMAPConfig (src/nlp/config.py). When umap_cfg.enabled,
+    embeddings are reduced to umap_cfg.n_components dims via UMAP before
+    HDBSCAN, and silhouette/Calinski-Harabasz use metric="euclidean" (UMAP's
+    own output space) instead of the pre-UMAP metric="cosine" (design.md §
+    Decision 5). min_cluster_size/min_samples are NOT rescaled by this gate —
+    they keep whatever value the caller passes, unchanged. When umap_cfg is
+    None or disabled, behavior is byte-identical to the pre-UMAP code path
+    (task 7.6). score["umap_enabled"] reflects whether UMAP actually ran
+    (False if requested but umap-learn is unavailable or the reduction
+    raised — falls back to full-dimensionality HDBSCAN either way), not
+    merely whether it was requested via config.
 
     Returns (partition, score_dict). Degrades gracefully (empty partition,
     logged warning) if sklearn's HDBSCAN is unavailable — same pattern as
@@ -403,9 +438,9 @@ def _run_hdbscan_shadow_and_score(
 
     t0 = time.time()
     if embedding_cache is not None:
-        current_by_id, _ = embedding_cache
+        current_by_id, summary_by_id = embedding_cache
     else:
-        current_by_id, _ = _fetch_storyline_embeddings(db, storyline_ids)
+        current_by_id, summary_by_id = _fetch_storyline_embeddings(db, storyline_ids)
 
     emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
     if len(emb_ids) < min_cluster_size:
@@ -415,7 +450,30 @@ def _run_hdbscan_shadow_and_score(
         )
         return {}, _score_dict("hdbscan_shadow", {}, len(storyline_ids), 0.0, None, None, 0)
 
-    X = np.stack([current_by_id[sid] for sid in emb_ids])
+    X_full = np.stack([current_by_id[sid] for sid in emb_ids])
+
+    umap_requested = bool(umap_cfg is not None and getattr(umap_cfg, "enabled", False))
+    X = X_full
+    quality_metric = "cosine"
+    umap_enabled = False  # reflects whether UMAP actually ran, not just whether it was requested
+    if umap_requested:
+        if not UMAP_AVAILABLE:
+            logger.warning("umap-learn unavailable — falling back to full-dimensionality HDBSCAN")
+        else:
+            try:
+                reducer = umap.UMAP(
+                    n_components=umap_cfg.n_components,
+                    n_neighbors=umap_cfg.n_neighbors,
+                    min_dist=umap_cfg.min_dist,
+                    random_state=umap_cfg.random_state,
+                )
+                X = reducer.fit_transform(X_full)
+                quality_metric = "euclidean"
+                umap_enabled = True
+            except Exception as e:
+                logger.warning("UMAP reduction failed (%s) — falling back to full-dimensionality HDBSCAN", e)
+                X = X_full
+
     hdb = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean")
     labels = hdb.fit_predict(X)
 
@@ -424,21 +482,36 @@ def _run_hdbscan_shadow_and_score(
     partition = {sid: int(label) for sid, label in zip(emb_ids, labels) if label != -1}
 
     silhouette = None
+    calinski_harabasz = None
     distinct = set(partition.values())
     if 2 <= len(distinct) < len(partition):
         try:
-            sub_ids = list(partition.keys())
-            Xs = np.stack([current_by_id[sid] for sid in sub_ids])
-            ys = [partition[sid] for sid in sub_ids]
-            silhouette = float(silhouette_score(Xs, ys, metric="cosine"))
+            sub_idx = [i for i, sid in enumerate(emb_ids) if sid in partition]
+            Xs = X[sub_idx]
+            ys = [partition[emb_ids[i]] for i in sub_idx]
+            silhouette = float(silhouette_score(Xs, ys, metric=quality_metric))
         except Exception as e:
             logger.debug("silhouette_score failed for hdbscan_shadow: %s", e)
+        try:
+            calinski_harabasz = float(calinski_harabasz_score(Xs, ys))
+        except Exception as e:
+            logger.debug("calinski_harabasz_score failed for hdbscan_shadow: %s", e)
+
+    # coherence_med on summary_vector, full-dimensionality regardless of UMAP
+    # state (design.md § Decision 4/5 — semantic similarity should not depend
+    # on the clustering projection).
+    coherence_med, _ = _coherence_med(partition, summary_by_id)
 
     runtime_ms = int((time.time() - t0) * 1000)
     score = _score_dict(
-        "hdbscan_shadow", partition, len(emb_ids), 0.0, silhouette, None, runtime_ms,
+        "hdbscan_shadow", partition, len(emb_ids), 0.0, silhouette, coherence_med, runtime_ms,
     )
+    score["calinski_harabasz"] = calinski_harabasz
     score["n_noise"] = sum(1 for label in labels if label == -1)
+    score["umap_enabled"] = umap_enabled
+    # No lineage/warm-start for the permanent challenger (design.md § Decision 1)
+    # — persisted under "partition" (raw cluster label), not "partition_persistent_id".
+    score["partition"] = partition
     return partition, score
 
 
@@ -491,6 +564,93 @@ def write_kmeans_shadow(db: DatabaseManager, partition: dict) -> None:
                 (list(partition.keys()) or [-1],),
             )
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Re-fit-over-re-fit stability + shadow-vs-live agreement (ARI/NMI, tasks 3-4)
+#
+# IMPORTANT: shadow_partitions is only written on the refit_due branch of
+# run_theme_clustering() — the daily nearest-centroid path performs no
+# re-clustering and writes no shadow_partitions entry at all (see design.md
+# Decision 1). Any query here must filter on `shadow_partitions IS NOT NULL`,
+# never on `pipeline_step` — that column is hardcoded to "community_detection"
+# for every caller of _persist_run_metrics (Louvain/Leiden included), so it
+# cannot distinguish theme_clustering's own rows from theirs (design.md
+# Decision 6a).
+# ---------------------------------------------------------------------------
+
+def _read_previous_partition(db: DatabaseManager, algo_name: str) -> dict | None:
+    """Return the most recent prior periodic re-fit's partition for algo_name
+    ('kmeans_embedding' or 'hdbscan_shadow'), or None if no prior re-fit has
+    persisted a shadow_partitions entry for that algorithm yet.
+
+    For 'kmeans_embedding' the partition is keyed by persistent_id (stable
+    across re-fits via Hungarian lineage matching), matching what task 3.2
+    compares. For 'hdbscan_shadow' it is keyed by raw cluster label (no
+    lineage — permanent challenger, never warm-started).
+    """
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT shadow_partitions FROM narrative_run_metrics
+                WHERE shadow_partitions IS NOT NULL
+                ORDER BY ts DESC LIMIT 5
+                """
+            )
+            rows = cur.fetchall()
+
+    for (shadow,) in rows:
+        if not shadow:
+            continue
+        for entry in shadow:
+            if not isinstance(entry, dict) or entry.get("name") != algo_name:
+                continue
+            partition = entry.get("partition_persistent_id") or entry.get("partition")
+            if partition:
+                return {k: v for k, v in partition.items()}
+    return None
+
+
+def _ari_nmi_on_intersection(partition_a: dict, partition_b: dict) -> tuple:
+    """Compute (ARI, NMI) between two partitions, restricted to the storyline
+    IDs present in both. Returns (None, None) if the intersection has fewer
+    than 2 members (metrics undefined / degenerate).
+
+    Keys are normalized to str on both sides before intersecting — a partition
+    read back from narrative_run_metrics JSONB has str storyline-id keys
+    (Postgres JSON stringifies object keys), while a freshly-computed partition
+    has int keys (storylines.id is SERIAL). Without normalization the
+    intersection would silently be empty.
+    """
+    norm_a = {str(k): v for k, v in partition_a.items()}
+    norm_b = {str(k): v for k, v in partition_b.items()}
+    common_ids = sorted(set(norm_a.keys()) & set(norm_b.keys()))
+    if len(common_ids) < 2:
+        return None, None
+    labels_a = [norm_a[sid] for sid in common_ids]
+    labels_b = [norm_b[sid] for sid in common_ids]
+    try:
+        ari = float(adjusted_rand_score(labels_a, labels_b))
+        nmi = float(normalized_mutual_info_score(labels_a, labels_b))
+    except Exception as e:
+        logger.debug("ARI/NMI computation failed: %s", e)
+        return None, None
+    return ari, nmi
+
+
+def _fetch_live_community_ids(db: DatabaseManager, storyline_ids: list) -> dict:
+    """Fetch live Louvain community_id for the given storylines (excludes NULLs)."""
+    if not storyline_ids:
+        return {}
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, community_id FROM storylines "
+                "WHERE id = ANY(%s) AND community_id IS NOT NULL",
+                (storyline_ids,),
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +889,12 @@ def run_theme_clustering(
             )
             logger.info("Drift persisted >=2 runs — retuned k to %d", k)
 
+        # Read previous re-fits' partitions BEFORE this run's row is persisted
+        # (task 3.1) — must happen before _persist_run_metrics at the end of
+        # this function inserts the current run's shadow_partitions.
+        prev_kmeans_partition = _read_previous_partition(db, "kmeans_embedding")
+        prev_hdbscan_partition = _read_previous_partition(db, "hdbscan_shadow")
+
         kmeans_score = refit_with_warm_start(
             db, storyline_ids, k=k, tau_match=cfg.community_lineage.tau_match,
             run_id=run_id, embedding_cache=embedding_cache,
@@ -742,7 +908,40 @@ def run_theme_clustering(
                 min_cluster_size=theme_cfg.hdbscan_shadow.min_cluster_size,
                 min_samples=theme_cfg.hdbscan_shadow.min_samples,
                 embedding_cache=embedding_cache,
+                umap_cfg=theme_cfg.hdbscan_shadow.umap,
             )
+
+        # Re-fit-over-re-fit stability (task 3.2-3.4): null when no prior re-fit
+        # has persisted a shadow_partitions entry yet (bootstrap case).
+        if kmeans_partition and prev_kmeans_partition:
+            ari, nmi = _ari_nmi_on_intersection(kmeans_partition, prev_kmeans_partition)
+            kmeans_score["ari_vs_previous_refit"] = ari
+            kmeans_score["nmi_vs_previous_refit"] = nmi
+        else:
+            kmeans_score["ari_vs_previous_refit"] = None
+            kmeans_score["nmi_vs_previous_refit"] = None
+
+        if hdbscan_partition and prev_hdbscan_partition:
+            ari, nmi = _ari_nmi_on_intersection(hdbscan_partition, prev_hdbscan_partition)
+            hdbscan_score["ari_vs_previous_refit"] = ari
+            hdbscan_score["nmi_vs_previous_refit"] = nmi
+        elif hdbscan_score:
+            hdbscan_score["ari_vs_previous_refit"] = None
+            hdbscan_score["nmi_vs_previous_refit"] = None
+
+        # Shadow-vs-live agreement (task 4.1-4.3). The computation itself does
+        # not depend on refit_due vs daily (only needs a kmeans partition and
+        # live community_id), but it is only persisted here because the score
+        # dict it attaches to (kmeans_score) only exists — and is only written
+        # to shadow_partitions — on the refit_due branch (design.md Decision 1).
+        live_community_ids = _fetch_live_community_ids(db, storyline_ids)
+        if kmeans_partition and live_community_ids:
+            ari_l, nmi_l = _ari_nmi_on_intersection(kmeans_partition, live_community_ids)
+            kmeans_score["ari_vs_louvain"] = ari_l
+            kmeans_score["nmi_vs_louvain"] = nmi_l
+        else:
+            kmeans_score["ari_vs_louvain"] = None
+            kmeans_score["nmi_vs_louvain"] = None
 
         stats["shadow_partitions"] = [
             {k_: v for k_, v in kmeans_score.items() if k_ != "centroids"},
