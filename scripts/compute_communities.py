@@ -1188,16 +1188,9 @@ def _fetch_storyline_embeddings(db: DatabaseManager, storyline_ids: list) -> tup
     return current_by_id, summary_by_id
 
 
-def _compute_quality_metrics(
-    db: DatabaseManager,
-    partition: dict,
-    embedding_cache: tuple | None = None,
-    k_min: int = 5,
-) -> tuple:
-    """Return (silhouette, community_coherence_med, community_coherence_med_k{k_min}).
+def _coherence_med(partition: dict, summary_by_id: dict, k_min: int = 5) -> tuple:
+    """Return (community_coherence_med, community_coherence_med_k{k_min}).
 
-    silhouette: sklearn silhouette_score on current_embedding, cosine metric.
-                None when sklearn missing, <2 communities, or <(k+1) samples.
     community_coherence_med: median of per-community medians of pairwise cosine
                 similarity on summary_vector, over communities with ≥2 members.
                 None when <1 community qualifies.
@@ -1205,32 +1198,14 @@ def _compute_quality_metrics(
                 restricted to communities with ≥k_min members. Used by the Leiden
                 γ-sweep fallback to avoid micro-cluster bias (Fix 2).
 
-    embedding_cache: optional (current_by_id, summary_by_id) tuple — when given,
-                skip the DB fetch and reuse the cached embeddings.
+    Shared by Louvain/Leiden (compute_communities.py) and the k-means/HDBSCAN
+    shadow algorithms (theme_clustering.py) — always computed on summary_vector
+    (summary_by_id), regardless of which embedding column the caller's
+    algorithm clustered on, so all algorithms report a comparable metric.
     """
     if not METRICS_AVAILABLE or not partition:
-        return None, None, None
+        return None, None
 
-    storyline_ids = list(partition.keys())
-    if embedding_cache is not None:
-        current_by_id, summary_by_id = embedding_cache
-    else:
-        current_by_id, summary_by_id = _fetch_storyline_embeddings(db, storyline_ids)
-
-    # ---- silhouette ----
-    silhouette = None
-    if len(current_by_id) >= 3:
-        emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
-        labels = [partition[sid] for sid in emb_ids]
-        distinct_labels = set(labels)
-        if 2 <= len(distinct_labels) < len(emb_ids):
-            X = np.stack([current_by_id[sid] for sid in emb_ids])
-            try:
-                silhouette = float(silhouette_score(X, labels, metric='cosine'))
-            except Exception as e:
-                logger.debug("silhouette_score failed: %s", e)
-
-    # ---- coherence: collect per-community embeddings ----
     community_members = {}
     for sid, cid in partition.items():
         if sid in summary_by_id:
@@ -1258,13 +1233,56 @@ def _compute_quality_metrics(
     coherence_med = float(np.median(per_community_medians)) if per_community_medians else None
     coherence_med_k = float(np.median(per_community_medians_k)) if per_community_medians_k else None
 
-    if silhouette is not None:
-        logger.info("silhouette=%.4f (cosine, %d storylines)", silhouette, len(emb_ids))
     if coherence_med is not None:
         logger.info(
             "community_coherence_med=%.4f (median of %d community medians, k_min=%d → %d qualify)",
             coherence_med, len(per_community_medians), k_min, len(per_community_medians_k),
         )
+
+    return coherence_med, coherence_med_k
+
+
+def _compute_quality_metrics(
+    db: DatabaseManager,
+    partition: dict,
+    embedding_cache: tuple | None = None,
+    k_min: int = 5,
+) -> tuple:
+    """Return (silhouette, community_coherence_med, community_coherence_med_k{k_min}).
+
+    silhouette: sklearn silhouette_score on current_embedding, cosine metric.
+                None when sklearn missing, <2 communities, or <(k+1) samples.
+    community_coherence_med / community_coherence_med_k{k_min}: see _coherence_med.
+
+    embedding_cache: optional (current_by_id, summary_by_id) tuple — when given,
+                skip the DB fetch and reuse the cached embeddings.
+    """
+    if not METRICS_AVAILABLE or not partition:
+        return None, None, None
+
+    storyline_ids = list(partition.keys())
+    if embedding_cache is not None:
+        current_by_id, summary_by_id = embedding_cache
+    else:
+        current_by_id, summary_by_id = _fetch_storyline_embeddings(db, storyline_ids)
+
+    # ---- silhouette ----
+    silhouette = None
+    if len(current_by_id) >= 3:
+        emb_ids = [sid for sid in storyline_ids if sid in current_by_id]
+        labels = [partition[sid] for sid in emb_ids]
+        distinct_labels = set(labels)
+        if 2 <= len(distinct_labels) < len(emb_ids):
+            X = np.stack([current_by_id[sid] for sid in emb_ids])
+            try:
+                silhouette = float(silhouette_score(X, labels, metric='cosine'))
+            except Exception as e:
+                logger.debug("silhouette_score failed: %s", e)
+
+    if silhouette is not None:
+        logger.info("silhouette=%.4f (cosine, %d storylines)", silhouette, len(emb_ids))
+
+    coherence_med, coherence_med_k = _coherence_med(partition, summary_by_id, k_min=k_min)
 
     return silhouette, coherence_med, coherence_med_k
 
