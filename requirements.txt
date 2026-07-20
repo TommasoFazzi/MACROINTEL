@@ -188,7 +188,7 @@ tld==0.13.2
 tldextract==5.3.0
 tokenizers==0.22.2
 toml==0.10.2
-torch==2.10.0
+torch==2.13.0  # CVE-2025-3000 (critical): memory corruption in torch.jit.script; fixed in 2.13.0
 tornado==6.5.7
 tqdm==4.67.1
 trafilatura==2.0.0
