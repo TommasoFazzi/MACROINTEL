@@ -44,7 +44,7 @@ frozendict==2.4.7
 frozenlist==1.8.0
 fsspec==2025.10.0
 gitdb==4.0.12
-GitPython==3.1.50
+GitPython==3.1.51
 google-ai-generativelanguage==0.6.15
 google-api-core==2.28.1
 google-api-python-client==2.187.0
@@ -68,7 +68,7 @@ iniconfig==2.3.0
 itsdangerous==2.2.0
 jieba3k==0.35.1
 Jinja2==3.1.6
-joblib==1.5.2
+joblib==1.5.3
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 jusText==3.0.2
@@ -127,7 +127,7 @@ pandas==2.3.3
 pandas-market-calendars>=4.3
 peewee==3.18.3
 pgvector==0.4.1
-pillow==12.2.0
+pillow==12.3.0
 platformdirs==4.5.1
 pluggy==1.6.0
 preshed==3.0.12
@@ -136,7 +136,7 @@ proto-plus==1.26.1
 protobuf==5.29.6
 psycopg2-binary==2.9.11
 pyarrow==23.0.1  # CVE-high (GHSA-rgxp-2hwp-jwgg use-after-free IPC pre-buffering); sync with requirements.txt
-pyasn1==0.6.3
+pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==2.23
 pydantic==2.12.5
@@ -176,7 +176,7 @@ six==1.17.0
 slowapi==0.1.10
 smart_open==7.5.0
 smmap==5.0.2
-soupsieve==2.8.4
+soupsieve==2.9
 spacy==3.8.11
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
@@ -192,7 +192,7 @@ tld==0.13.2
 tldextract==5.3.0
 tokenizers==0.22.2
 toml==0.10.2
-torch==2.10.0
+torch==2.13.0  # CVE-2025-3000 (critical): memory corruption in torch.jit.script; fixed in 2.13.0
 tornado==6.5.7  # CVE-high (GHSA-mgf9-4vpg-hj56 gzip bomb + GHSA-3x9g-8vmp-wqvf cross-origin Auth leak); sync with requirements.txt
 tqdm==4.67.1
 trafilatura==2.0.0
