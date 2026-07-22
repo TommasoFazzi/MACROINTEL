@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Calendar, ArrowLeft, Globe } from 'lucide-react';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
+import { editorialSerif } from '@/lib/fonts';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 
 const BASE = process.env.INTELLIGENCE_API_URL || 'http://localhost:8000';
@@ -74,9 +75,8 @@ export default async function RomaniaBriefingPage({
   const macroHeader = briefing.metadata?.macro_header as string | undefined;
 
   return (
-    <>
-      <Navbar />
-      <main className="min-h-screen bg-[#0A1628] pt-28 pb-20">
+    <AppShell>
+      <main className={`${editorialSerif.variable} min-h-screen bg-[#0A1628] pb-20 pt-8`}>
         <div className="max-w-3xl mx-auto px-6">
 
           {/* Back link */}
@@ -115,13 +115,13 @@ export default async function RomaniaBriefingPage({
           {/* Content */}
           <article className="max-w-none text-gray-200">
             {briefing.content
-              ? <MarkdownContent content={briefing.content} className="text-gray-200" />
+              ? <MarkdownContent content={briefing.content} variant="editorial" className="text-gray-200" />
               : <p className="text-gray-500">Contenuto non disponibile.</p>
             }
           </article>
 
         </div>
       </main>
-    </>
+    </AppShell>
   );
 }

@@ -1,14 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { headers } from "next/headers";
 import CookieConsent from "@/components/CookieConsent";
+import { SOURCE_COUNT } from "@/lib/constants";
 import "./globals.css";
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,7 +33,7 @@ export const metadata: Metadata = {
     template: "%s | MACROINTEL",
   },
   description:
-    "MACROINTEL is an AI-powered OSINT platform monitoring geopolitical risks, cyber threats, and macro-economic signals in real time. 40+ sources processed daily into structured intelligence briefs, narrative graphs, and trade signal alerts.",
+    `MACROINTEL is an AI-powered OSINT platform monitoring geopolitical risks, cyber threats, and macro-economic signals in real time. ${SOURCE_COUNT} sources processed daily into structured intelligence briefs, narrative graphs, and trade signal alerts.`,
   keywords: [
     "OSINT automation tool",
     "AI threat intelligence platform",
@@ -54,7 +50,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "MACROINTEL | AI-Powered OSINT & Threat Intelligence Platform",
     description:
-      "Monitor geopolitical risks, cyber threats, and macro-economic signals in real time. AI-powered OSINT platform processing 33+ intelligence sources daily.",
+      `Monitor geopolitical risks, cyber threats, and macro-economic signals in real time. AI-powered OSINT platform processing ${SOURCE_COUNT} intelligence sources daily.`,
     type: "website",
     locale: "en_US",
     siteName: "MACROINTEL",
@@ -63,7 +59,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "MACROINTEL | AI-Powered OSINT & Threat Intelligence Platform",
     description:
-      "Monitor geopolitical risks, cyber threats, and macro-economic signals in real time. AI-powered OSINT platform processing 33+ intelligence sources daily.",
+      `Monitor geopolitical risks, cyber threats, and macro-economic signals in real time. AI-powered OSINT platform processing ${SOURCE_COUNT} intelligence sources daily.`,
   },
   robots: {
     index: true,
@@ -84,7 +80,7 @@ export default async function RootLayout({
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body
-        className={`${inter.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Script id="consent-default" strategy="beforeInteractive" nonce={nonce}>
           {`
@@ -120,7 +116,7 @@ export default async function RootLayout({
                 "@type": "Organization",
                 "name": "MACROINTEL",
                 "url": "https://macrointel.net",
-                "description": "AI-powered OSINT & geopolitical intelligence platform processing 40+ sources daily into actionable intelligence."
+                "description": `AI-powered OSINT & geopolitical intelligence platform processing ${SOURCE_COUNT} sources daily into actionable intelligence.`
               },
               {
                 "@type": "WebSite",

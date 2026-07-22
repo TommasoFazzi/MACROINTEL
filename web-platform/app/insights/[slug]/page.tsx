@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Calendar, ArrowLeft, Lock, ArrowRight } from 'lucide-react';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
+import { editorialSerif } from '@/lib/fonts';
 import WaitlistInline from '@/components/insights/WaitlistInline';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 
@@ -103,14 +104,13 @@ export default async function InsightPage({
   };
 
   return (
-    <>
-      <Navbar />
+    <AppShell>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      <main className="min-h-screen bg-[#0A1628] pt-28 pb-20">
+      <main className={`${editorialSerif.variable} min-h-screen bg-[#0A1628] pb-20 pt-8`}>
         <div className="max-w-3xl mx-auto px-6">
           {/* Back link */}
           <Link
@@ -146,7 +146,11 @@ export default async function InsightPage({
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#FF6B35] mb-3">
               Executive Summary
             </h2>
-            <MarkdownContent content={insight.executive_summary} className="text-gray-300" />
+            <MarkdownContent
+              content={insight.executive_summary}
+              variant="editorial"
+              className="text-gray-300"
+            />
           </section>
 
           {/* Content preview (first half of body) */}
@@ -195,6 +199,6 @@ export default async function InsightPage({
           </div>
         </div>
       </main>
-    </>
+    </AppShell>
   );
 }

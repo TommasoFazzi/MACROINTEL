@@ -67,7 +67,7 @@ app/map/page.tsx (Server Component)
   - `mapbox-gl` - Map rendering engine
   - `next/dynamic` - Dynamic imports
   - `react` - Component framework
-  - `framer-motion` - Animations (dossier panel)
+  - ~~`framer-motion`~~ — **rimossa** (sostituita da `motion` a livello di progetto). Verificato 2026-07-22: nessun componente di questa cartella importa più una libreria di animazione, il pannello dossier usa transizioni CSS
   - `lucide-react` - Icons
 
 ## Data Flow

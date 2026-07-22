@@ -4,6 +4,11 @@
  * Fetches entity data via Next.js server-side proxy (no API keys in browser)
  */
 
+// Explicit import rather than the ambient `GeoJSON.*` global: that global used to arrive
+// transitively through @types/mapbox-gl, and the 3.16 → 3.26 bump stopped providing it,
+// which broke `next build`'s type check. @types/geojson is now a direct devDependency so
+// the type no longer depends on another package's transitive types.
+import type { FeatureCollection } from 'geojson';
 import type { EntityCollection, EntityDetails, MapStats } from '../types/entities';
 
 export interface EntityFilters {
@@ -55,7 +60,7 @@ export async function fetchEntityDetails(entityId: number): Promise<EntityDetail
 /**
  * Fetch entity arc connections (entities sharing storylines) as GeoJSON LineStrings
  */
-export async function fetchEntityArcs(minScore = 0.3, limit = 300): Promise<GeoJSON.FeatureCollection> {
+export async function fetchEntityArcs(minScore = 0.3, limit = 300): Promise<FeatureCollection> {
   const params = new URLSearchParams({ min_score: String(minScore), limit: String(limit) });
   const response = await fetch(`/api/proxy/map/arcs?${params.toString()}`);
 

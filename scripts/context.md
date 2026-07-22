@@ -61,7 +61,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 
 ### Market Data
 - `backfill_market_data.py` - Backfill Yahoo Finance OHLCV data
-- `fetch_daily_market_data.py` - Market data fetch (global + Romania indicators). **Not called by daily_pipeline.py** — invoked by `.github/workflows/evening_market_fetch.yml` at 21:30 UTC Mon-Fri (after NYSE close). Calls `ensure_daily_macro_data()` (US/global, country_code='US') then `fetch_ro_indicators()` (Romania vertical, country_code='RO'). `--force` deletes only `country_code='US'` rows (RO data preserved). `_has_macro_data()` without country_code now filters by `country_code='US'` to prevent RO-only data from masking a failed US fetch. Morning reports read from the previous evening's DB row via `get_macro_context_text()` fallback. Manual backfill: `--date YYYY-MM-DD --force`.
+- `fetch_daily_market_data.py` - Market data fetch (global + Romania indicators). **Not called by daily_pipeline.py** — invoked by `.github/workflows/evening_market_fetch.yml` at 23:00 UTC Mon-Fri (cron `0 23 * * 1-5`) — after NYSE close (21:00), FX NY close (~22:00) and the FRED US_HY_SPREAD publish (~22:30), so the values are definitive rather than intraday. Calls `ensure_daily_macro_data()` (US/global, country_code='US') then `fetch_ro_indicators()` (Romania vertical, country_code='RO'). `--force` deletes only `country_code='US'` rows (RO data preserved). `_has_macro_data()` without country_code now filters by `country_code='US'` to prevent RO-only data from masking a failed US fetch. Morning reports read from the previous evening's DB row via `get_macro_context_text()` fallback. Manual backfill: `--date YYYY-MM-DD --force`.
 - `fetch_romania_macro.py` - **Romania macro fetch**: calls `ensure_daily_macro_data()` (idempotent), then shows RO-specific indicator preview with staleness info. Flags: `--date YYYY-MM-DD`, `--force` (deletes existing RO rows for date before re-fetching). Used as standalone verification or pipeline pre-step.
 - `backfill_sruuf.py` - **One-shot ticker switch recovery**: deletes all URANIUM rows (URA history), downloads SRUUF daily closes via yfinance (last 90 days), reinserts with correct `previous_value` chain, and flags today's report as `draft` so it doesn't enter the knowledge base. Idempotent. Run after any equity/ETF ticker substitution in `MACRO_INDICATORS`.
 - `backfill_new_indicators_b2.py` - **B2 expansion backfill**: fetches 60 calendar days of history for TTF_GAS (yfinance `TTF=F`) and YIELD_CURVE_10Y_3M (FRED REST API `T10Y3M`) and inserts with correct `previous_value` chain. Run once after deploying the B2 indicator additions. Requires `DATABASE_URL` and `FRED_API_KEY`. Idempotent.
@@ -155,13 +155,20 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 # Full pipeline (one command - recommended)
 python scripts/daily_pipeline.py
 
-# Full pipeline (step by step)
+# Full pipeline (step by step — mirrors DEFAULT_STEPS; market data is NOT part of it,
+# it runs in the evening workflow at 23:00 UTC, see fetch_daily_market_data.py above)
 python -m src.ingestion.pipeline
-python scripts/fetch_daily_market_data.py
 python scripts/process_nlp.py
 python scripts/load_to_database.py
 python scripts/process_narratives.py --days 1
-python scripts/generate_report.py --macro-first
+python scripts/compute_communities.py
+python scripts/theme_clustering.py
+python scripts/extract_entities.py --days 2
+python scripts/geocode_geonames.py --limit 50
+python scripts/refresh_map_data.py
+python scripts/generate_report.py --macro-first --skip-article-signals
+python scripts/generate_report.py --report-type romania-daily
+python scripts/send_report_email.py
 
 # Refresh map data + intelligence scores (after narratives step)
 python scripts/refresh_map_data.py

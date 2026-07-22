@@ -4,7 +4,8 @@ import { use, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useReportDetail, useReports, useReportCompare } from '@/hooks/useDashboard';
 import { parseReport } from '@/lib/parseReport';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
+import { editorialSerif } from '@/lib/fonts';
 import { MarketTickers } from '@/components/report/MarketTickers';
 import { ComparisonDelta } from '@/components/report/ComparisonDelta';
 import {
@@ -164,9 +165,8 @@ export default function ReportDetailPage({
   const apiError = error as ApiError | undefined;
 
   return (
-    <>
-      <Navbar />
-      <main className="min-h-screen bg-[#0A1628] pt-24 px-4 md:px-6 pb-12">
+    <AppShell>
+      <main className={`${editorialSerif.variable} min-h-screen bg-[#0A1628] px-4 pb-12 pt-8 md:px-6`}>
         <div className="max-w-[1400px] mx-auto">
           {/* Back button */}
           <Button
@@ -430,7 +430,8 @@ export default function ReportDetailPage({
                       />
                     ))
                   ) : (
-                    <div className="prose prose-invert prose-sm max-w-none
+                    <div className="prose prose-invert max-w-[68ch] font-serif text-[1.0625rem] leading-[1.7]
+                      prose-p:font-serif prose-li:font-serif
                       prose-headings:text-white prose-headings:font-semibold
                       prose-p:text-gray-300 prose-p:leading-relaxed
                       prose-strong:text-white
@@ -511,6 +512,6 @@ export default function ReportDetailPage({
           )}
         </div>
       </main>
-    </>
+    </AppShell>
   );
 }

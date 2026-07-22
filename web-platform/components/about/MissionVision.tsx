@@ -1,3 +1,5 @@
+import { SOURCE_COUNT } from '@/lib/constants';
+
 export default function MissionVision() {
   return (
     <section className="grid-bg" style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
@@ -28,7 +30,7 @@ export default function MissionVision() {
             Make strategic intelligence accessible to everyone who needs it.
           </h2>
           <p style={{ fontSize: 14, color: '#94a3b8', lineHeight: 1.75, marginLeft: 12 }}>
-            The gap between raw information and strategic understanding is where decisions go wrong. MACROINTEL exists to close that gap — processing signals from 40+ sources and turning them into structured, actionable intelligence that anyone can use, not just those with dedicated research teams.
+            The gap between raw information and strategic understanding is where decisions go wrong. MACROINTEL exists to close that gap — processing signals from {SOURCE_COUNT} sources and turning them into structured, actionable intelligence that anyone can use, not just those with dedicated research teams.
           </p>
         </article>
 

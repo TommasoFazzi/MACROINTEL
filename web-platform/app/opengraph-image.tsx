@@ -1,4 +1,5 @@
 import { ImageResponse } from 'next/og';
+import { SOURCE_COUNT } from '@/lib/constants';
 
 export const runtime = 'edge';
 
@@ -137,7 +138,7 @@ export default function OgImage() {
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <span style={{ fontSize: '28px', fontWeight: 800, color: '#FF6B35' }}>33+</span>
+            <span style={{ fontSize: '28px', fontWeight: 800, color: '#FF6B35' }}>{SOURCE_COUNT}</span>
             <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '2px' }}>Sources</span>
           </div>
           <div style={{ width: '1px', background: 'rgba(255,255,255,0.1)' }} />
