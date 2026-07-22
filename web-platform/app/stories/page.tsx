@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import GraphLoader from '@/components/StorylineGraph/GraphLoader';
 import GraphSkeleton from '@/components/StorylineGraph/GraphSkeleton';
+import { AppShell } from '@/components/shell';
 
 export const metadata: Metadata = {
   title: 'Narrative Graph',
@@ -23,10 +24,12 @@ export const metadata: Metadata = {
  */
 export default function StoriesPage() {
   return (
-    <main className="w-full h-[100dvh]">
-      <Suspense fallback={<GraphSkeleton />}>
-        <GraphLoader />
-      </Suspense>
-    </main>
+    <AppShell fullBleed>
+      <main className="w-full h-[100dvh]">
+        <Suspense fallback={<GraphSkeleton />}>
+          <GraphLoader />
+        </Suspense>
+      </main>
+    </AppShell>
   );
 }

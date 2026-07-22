@@ -10,6 +10,11 @@
  *
  * Both use the same palette, ensuring the same set of colours appears
  * on both pages even if the exact assignment differs.
+ *
+ * Mirrored 1:1 as CSS custom properties `--data-1`..`--data-15` (+ `--data-other`,
+ * `--data-singleton`) in app/globals.css, so the landing page's live-graph scene
+ * (canvas, no sigma) reads the same colors as /stories. Keep both in sync manually —
+ * sigma/mapbox/canvas consumers need literal JS color strings, not CSS var() refs.
  */
 
 export const COMMUNITY_PALETTE: readonly string[] = [

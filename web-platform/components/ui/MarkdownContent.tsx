@@ -106,7 +106,20 @@ interface MarkdownContentProps {
   className?: string;
   /** Component overrides that merge with (and take precedence over) defaults */
   components?: Components;
+  /**
+   * `editorial` switches long-form report bodies to the serif reading treatment: measure
+   * capped at 68ch, 1.7 line-height, larger size. Opt-in rather than the default because the
+   * same renderer draws short UI fragments (previews, summaries) where a 68ch measure and a
+   * serif face would both be wrong. Metadata and citations stay in Geist Mono either way —
+   * this only affects the prose flow.
+   */
+  variant?: 'default' | 'editorial';
 }
+
+const VARIANT_CLASSES: Record<'default' | 'editorial', string> = {
+  default: 'text-sm leading-relaxed',
+  editorial: 'max-w-[68ch] font-serif text-[1.0625rem] leading-[1.7]',
+};
 
 /**
  * Renders LLM-generated Markdown content with:
@@ -114,11 +127,16 @@ interface MarkdownContentProps {
  * - DOMPurify sanitization on the Markdown source
  * - Dark tactical theme matching the rest of the platform
  */
-export function MarkdownContent({ content, className, components }: MarkdownContentProps) {
+export function MarkdownContent({
+  content,
+  className,
+  components,
+  variant = 'default',
+}: MarkdownContentProps) {
   const safe = sanitize(content ?? '');
 
   return (
-    <div className={`text-sm leading-relaxed ${className ?? ''}`}>
+    <div className={`${VARIANT_CLASSES[variant]} ${className ?? ''}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{ ...defaultComponents, ...components }}

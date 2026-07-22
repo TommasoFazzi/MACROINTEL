@@ -9,6 +9,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Editorial serif for long-form report bodies. `--font-source-serif` is only *defined* on
+     the article routes (lib/fonts.ts is imported there and nowhere else), so `font-serif`
+     elsewhere would fall through to Georgia — it isn't used elsewhere. */
+  --font-serif: var(--font-source-serif), Georgia, serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -45,6 +49,64 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Fluid type scale — replaces text-[Npx] literals (redesign-frontend-live-surface D4) */
+  --text-display: var(--text-display);
+  --text-title: var(--text-title);
+  --text-heading: var(--text-heading);
+  --text-body: var(--text-body);
+  --text-meta: var(--text-meta);
+
+  /* Motion vocabulary — the only easings/durations any component may use */
+  --ease-out-expo: var(--ease-out-expo);
+  --ease-in-out: var(--ease-in-out);
+  --duration-instant: var(--duration-instant);
+  --duration-fast: var(--duration-fast);
+  --duration-slow: var(--duration-slow);
+
+  /* Accent (interactive-only) / info / muted-text tokens */
+  --color-accent-action: var(--accent-action);
+  --color-accent-info: var(--accent-info);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  /* Data-category scale — mirrors lib/communityColors.ts COMMUNITY_PALETTE 1:1 */
+  --color-data-1: var(--data-1);
+  --color-data-2: var(--data-2);
+  --color-data-3: var(--data-3);
+  --color-data-4: var(--data-4);
+  --color-data-5: var(--data-5);
+  --color-data-6: var(--data-6);
+  --color-data-7: var(--data-7);
+  --color-data-8: var(--data-8);
+  --color-data-9: var(--data-9);
+  --color-data-10: var(--data-10);
+  --color-data-11: var(--data-11);
+  --color-data-12: var(--data-12);
+  --color-data-13: var(--data-13);
+  --color-data-14: var(--data-14);
+  --color-data-15: var(--data-15);
+  --color-data-other: var(--data-other);
+  --color-data-singleton: var(--data-singleton);
+}
+
+/* ============================================
+   Design Tokens — typography, motion, accent/data color
+   (redesign-frontend-live-surface: frontend-design-tokens)
+   ============================================ */
+@theme {
+  /* Rapporto 1.25, clamp() dal --text-heading in su (spec: frontend-design-tokens) */
+  --text-display: clamp(2.75rem, 1.8rem + 4.2vw, 4.5rem); /* Hero h1 */
+  --text-title: clamp(2rem, 1.5rem + 2.2vw, 2.75rem); /* h2 di sezione */
+  --text-heading: clamp(1.25rem, 1.1rem + 0.7vw, 1.5rem); /* h3 card */
+  --text-body: 1rem;
+  --text-meta: 0.75rem; /* mono, label */
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1); /* entrate, reveal */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1); /* transizioni di stato */
+  --duration-instant: 120ms; /* feedback tattile: hover, press */
+  --duration-fast: 240ms; /* cambi di stato: tab, accordion */
+  --duration-slow: 600ms; /* entrate di sezione */
 }
 
 /* ============================================
@@ -78,12 +140,43 @@
   --input: rgba(255, 255, 255, 0.1);
   --ring: #FF6B35;
 
-  /* Chart colors */
-  --chart-1: #FF6B35;
-  --chart-2: #00A8E8;
-  --chart-3: #10b981;
-  --chart-4: #f59e0b;
-  --chart-5: #8b5cf6;
+  /* Accent split: --accent-action is SOLELY interactive (CTA, focus, active state).
+     --accent-info is secondary non-interactive info. Never reuse for data categories. */
+  --accent-action: #FF6B35;
+  --accent-info: #00A8E8;
+
+  /* Text grays consolidated to two tokens, both >= 4.5:1 on --background (#0A1628).
+     Replaces the literal #64748b (3.81:1 on this bg — fails AA) used in 14 components. */
+  --fg-muted: #94a3b8; /* 7.07:1 */
+  --fg-subtle: #7C8DA6; /* 5.29:1 — dimmer than fg-muted but still AA */
+
+  /* Data-category scale — mirrors lib/communityColors.ts COMMUNITY_PALETTE 1:1.
+     Keep both in sync: JS consumers (sigma, mapbox, canvas) can't read CSS custom
+     properties, so the hex source of truth is duplicated here for CSS/Tailwind use. */
+  --data-1: #FF6B35;
+  --data-2: #00A8E8;
+  --data-3: #39D353;
+  --data-4: #FFD700;
+  --data-5: #FF4081;
+  --data-6: #7B61FF;
+  --data-7: #00E5CC;
+  --data-8: #FF7043;
+  --data-9: #E040FB;
+  --data-10: #00BFA5;
+  --data-11: #FFAB40;
+  --data-12: #448AFF;
+  --data-13: #FF5252;
+  --data-14: #69F0AE;
+  --data-15: #40C4FF;
+  --data-other: #2A3A4A; /* "others" bucket, community outside top-N */
+  --data-singleton: #6B7280; /* isolated storyline, community_id === null */
+
+  /* Chart colors — now aliases of the data-category scale, not a parallel palette */
+  --chart-1: var(--data-1);
+  --chart-2: var(--data-2);
+  --chart-3: var(--data-3);
+  --chart-4: var(--data-4);
+  --chart-5: var(--data-5);
 
   /* Sidebar */
   --sidebar: #0f1a2b;
@@ -122,7 +215,7 @@
   --secondary: #00A8E8;
   --secondary-foreground: #ffffff;
   --muted: #f1f5f9;
-  --muted-foreground: #64748b;
+  --muted-foreground: #6b7280; /* light theme currently unused (no toggle); distinct from dark-theme's failing #64748b */
   --accent: #f1f5f9;
   --accent-foreground: #0A1628;
   --border: #e2e8f0;
@@ -307,7 +400,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #FF6B35;
+  background: var(--accent-action);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -317,12 +410,12 @@
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
-  transition: all 0.2s ease;
+  transition: all var(--duration-instant) ease;
   white-space: nowrap;
 }
 .btn-primary:hover {
-  background: #e85a24;
-  box-shadow: 0 0 24px rgba(255, 107, 53, 0.4);
+  background: color-mix(in srgb, var(--accent-action) 85%, black);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent-action) 40%, transparent);
 }
 
 .btn-ghost {
@@ -330,7 +423,7 @@
   align-items: center;
   gap: 8px;
   background: rgba(255, 255, 255, 0.04);
-  color: #94a3b8;
+  color: var(--fg-muted);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 12px 24px;
@@ -339,7 +432,7 @@
   font-weight: 500;
   cursor: pointer;
   text-decoration: none;
-  transition: all 0.2s ease;
+  transition: all var(--duration-instant) ease;
   white-space: nowrap;
 }
 .btn-ghost:hover {
@@ -354,7 +447,7 @@
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--fg-muted);
 }
 
 .section-label {
@@ -366,7 +459,7 @@
   font-weight: 600;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: #FF6B35;
+  color: var(--accent-info); /* eyebrow label is decorative, not interactive — never accent-action */
   margin-bottom: 16px;
 }
 .section-label::before {
@@ -374,26 +467,7 @@
   display: block;
   width: 20px;
   height: 1px;
-  background: #FF6B35;
-}
-
-.tab-btn {
-  padding: 8px 18px;
-  font-family: var(--font-geist-sans), sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all 0.18s ease;
-  background: none;
-  color: #64748b;
-}
-.tab-btn:hover { color: #94a3b8; }
-.tab-btn.active {
-  background: rgba(255, 107, 53, 0.1);
-  border-color: rgba(255, 107, 53, 0.25);
-  color: #FF6B35;
+  background: var(--accent-info);
 }
 
 .ticker-wrap {
@@ -412,11 +486,11 @@
 }
 .ticker-wrap::before {
   left: 0;
-  background: linear-gradient(90deg, #0A1628, transparent);
+  background: linear-gradient(90deg, var(--background), transparent);
 }
 .ticker-wrap::after {
   right: 0;
-  background: linear-gradient(-90deg, #0A1628, transparent);
+  background: linear-gradient(-90deg, var(--background), transparent);
 }
 .ticker-track {
   display: flex;
@@ -431,7 +505,7 @@
   padding: 0 32px;
   font-family: var(--font-geist-mono), monospace;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--fg-muted);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   white-space: nowrap;
 }
@@ -498,8 +572,16 @@
     scroll-behavior: smooth;
   }
 
+  /* Single shared background + texture for the whole document (redesign-frontend-live-surface:
+     "fondo unico" direction) — sections no longer paint their own flat color, so this is the
+     only layer that determines page background, and it's therefore continuous by construction
+     (one box, one paint) rather than repeated per-section and prone to seams at each boundary. */
   body {
     @apply bg-background text-foreground antialiased;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 50px 50px;
     font-family: var(--font-geist-sans), sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
     overflow-x: hidden;

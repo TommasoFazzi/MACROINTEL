@@ -11,7 +11,7 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 ### App Structure
 - `app/layout.tsx` - Root Next.js layout (Google Analytics gated by Consent Mode v2, GSC verification, renders `<CookieConsent />`)
 - `app/globals.css` - Global styles with animations
-- `app/page.tsx` - Landing page (Navbar, Hero, Ticker, Products, Pipeline, Personas, Capabilities, **FAQ**, FinalCTA, Footer). Exports canonical metadata + 4 JSON-LD blocks (SoftwareApplication, Organization, WebSite, FAQPage — derived from `FAQS` constant) via inline `<script>` from `lib/landing/schema.ts`. Reference design: `Landing Page.html` alla root del repo.
+- `app/page.tsx` - Landing page (Navbar, Hero+Scena 2, Ticker, Scena 1, Synthesis, Scena 3, Personas, Capabilities, **FAQ**, FinalCTA, Footer). RSC: fa i due fetch live (`getLiveGraphData`, `getLiveBriefing`) e passa i dati a Hero/Ticker/Synthesis/Scena 1. Exports canonical metadata + 4 JSON-LD blocks (SoftwareApplication, Organization, WebSite, FAQPage — derived from `FAQS` constant) via inline `<script>` from `lib/landing/schema.ts`. Reference design: `Landing Page.html` alla root del repo.
 - `app/about/page.tsx` - **About page (`/about`)**: RSC, full metadata + JSON-LD `AboutPage`, usa `<Navbar solid />` esistente. Sezioni: `AboutHero`, `MissionVision`, `WhoItsFor` (6 persona dedicate diverse dalla landing), `Coverage` (8 topic 4×2), `AboutCTA`, `AboutFooter`. Reference design: `about.html` alla root del repo.
 - `app/map/page.tsx` - **DISABLED (2026-07-17)**: renders a full-page "Work in Progress" banner (MacroIntel tactical style, `robots: noindex`) instead of the map — section is stale and not maintained. `components/IntelligenceMap/` is untouched; to restore, revert this file to the previous Suspense + MapLoader version. Links to `/map` (dashboard, landing footer/CTA, StorylineDossier deep-links) intentionally left in place — they land on the banner.
 - `app/dashboard/page.tsx` - Dashboard route (SWR data fetching)
@@ -125,35 +125,64 @@ Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` i
 #### Landing Components (`components/landing/`)
 Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cinematic / tactical HUD). Data e JSON-LD in `lib/landing/`.
 
-**Styling (2026-07-17)**: tutti i 14 componenti convertiti da inline `style={{}}` (158 occorrenze) a classi Tailwind. Rimasti inline solo i valori genuinamente dinamici a runtime — non esprimibili come classi statiche: colori per-item calcolati (`Pipeline` step color, `Products`/`AppFrame` `tagColor`/`labelColor`, `Capabilities` background alternato, `Ticker` `dot` color), stato React (`Navbar` `scrolled`/`logoHover` → background/backdrop-filter/opacity, `FAQ` `isOpen` → `max-height`/`color`/`rotate`). **Nota specificità CSS**: le utility class `.btn-primary`/`.btn-ghost` in `globals.css` non sono in un `@layer`, quindi battono sempre le utility Tailwind (che Tailwind v4 mette in `@layer utilities`, priorità più bassa a prescindere dall'ordine sorgente) — dove serve un override di padding/font-size su questi bottoni (`FinalCTA`, `Navbar`), va usato `style` inline, non una classe Tailwind.
+**Styling (2026-07-17)**: tutti i 14 componenti convertiti da inline `style={{}}` (158 occorrenze) a classi Tailwind. Rimasti inline solo i valori genuinamente dinamici a runtime — non esprimibili come classi statiche: colori per-item calcolati (`Synthesis`/`AppFrame` `tagColor`/`labelColor`, `Capabilities` background alternato, `Ticker` `dot` color per community), stato React (`Navbar` `scrolled`/`logoHover` → background/backdrop-filter/opacity, `FAQ` `isOpen` → `max-height`/`color`/`rotate`). **Nota specificità CSS**: le utility class `.btn-primary`/`.btn-ghost` in `globals.css` non sono in un `@layer`, quindi battono sempre le utility Tailwind (che Tailwind v4 mette in `@layer utilities`, priorità più bassa a prescindere dall'ordine sorgente) — dove serve un override di padding/font-size su questi bottoni (`FinalCTA`, `Navbar`), va usato `style` inline, non una classe Tailwind.
 
 - `Navbar.tsx` (`'use client'`) — fixed top 60px, logo MACRO+INTEL, link Insights/Features/About, CTA "Open Platform"; scroll-aware (background blur dopo 40px)
 - `Hero.tsx` (RSC) — split 2-col, classification tag LIVE, headline 2-righe (seconda con `.gradient-text`), 2 CTA + stats row 4 KPI; preview destra "Narrative Graph" con HUD frame + chip "LAST SYNC ZULU"; background `next/image` `world-map-hero.jpg` cinematic
-- `Ticker.tsx` (`'use client'`) — live signal feed orizzontale infinito (8 SIGNALS), prop `show` (default `false`)
-- `Products.tsx` (`'use client'`) — `id="products"`, 4 tab (Map/Graph/Oracle/Briefings), demo dinamica + info card con CTA al `href` del prodotto
-- `Pipeline.tsx` (RSC) — `id="features"`, 3 step (INGEST/PROCESS/DELIVER) con cerchi numerati colorati e linea connettrice gradient
+- `Ticker.tsx` (RSC) — live signal feed orizzontale infinito, alimentato dalle storyline reali ordinate per `momentumScore`; `SIGNALS` resta come fallback
+- `Synthesis.tsx` (RSC) — `id="synthesis"`, scala di sintesi verticale a 3 gradini (Daily → Weekly → Monthly) con "spina" gradient che rende grafica la derivazione. Solo Daily ha un artefatto live (`DemoBriefing`); Weekly/Monthly mostrano la card meccanismo (reads/produces), non un report inventato
 - `Personas.tsx` (RSC) — 2-col (titolo+CTA / 4 carte persona)
 - `Capabilities.tsx` (RSC) — grid 3×2 di 6 capability con icona simbolica
 - `FinalCTA.tsx` (RSC) — `id="about"`, badge "NOW FULLY PUBLIC", headline 52px gradient, 3 CTA
 - `FAQ.tsx` (`'use client'`) — accordion 7 voci, `+ → ×` rotante 45°, `max-height: 0 ↔ 240px` con transizione. Dati da `FAQS` in `lib/landing/schema.ts`
 - `Footer.tsx` (`'use client'`, 2026-07-17: passato da RSC a client per il bottone "Manage cookies") — 3-col (brand+desc | Platform: dashboard/stories/map/oracle | Resources: insights/features/about + "Manage cookies" che dispatcha `open-cookie-preferences`) + bottom bar
 - `AppFrame.tsx` (RSC) — chrome stile macOS (3 dot semaforo + label colorata + badge); fallback gradient se `src` mancante
-- `DemoMap.tsx` / `DemoGraph.tsx` / `DemoBriefing.tsx` (RSC) — wrapper `AppFrame` con screenshot statico
-- `DemoOracle.tsx` (`'use client'`) — chat animata 4 fasi (delay 900ms → bubble domanda → typewriter 18ms/char → 3 source chips)
+- `DemoBriefing.tsx` (RSC) — wrapper `AppFrame` sul briefing pubblicato più di recente
+- `LazyMount.tsx` (`'use client'`) — wrapper generico `IntersectionObserver` (`rootMargin: '100% 0px'`): monta i `children` una sola volta quando la sezione si avvicina al viewport. Serve alle scene GSAP, il cui pin-spacer espande la sezione da 100vh a ~450vh — montare a sezione già visibile produrrebbe un salto di layout
 
-**Asset richiesti** in `public/assets/`: `world-map-hero.jpg`, `narrative-graph-hero.png`, `map-screenshot.png`, `dashboard-screenshot.png`. Senza asset i componenti renderizzano placeholder gradient (no broken image).
+**Le tre scene.** Non sono consecutive (ritmo D5: apertura / centro / chiusura) e condividono un solo principio implementativo: **lo stato è funzione pura del progresso**, mai una simulazione integrata nel tempo — così lo scrub è reversibile e stabile al resize.
 
-**Data + JSON-LD** in `lib/landing/`:
-- `data.ts` — costanti tipate `SIGNALS`, `PRODUCTS`, `PERSONAS`, `PIPELINE`, `CAPS`
+- `LivingGraphScene.tsx` — **Scena 2**, dentro il pannello dell'Hero. Unica scena *non* guidata dallo scroll: loop ambient di 20s che parte in viewport (l'Hero deve essere vivo prima che il lettore scrolli). Disegna le community come nebulose, non i singoli nodi. Deliberatamente **muta**: nessuna etichetta, nessun contatore — è la *promessa* che l'atto finale della Scena 1 paga. Se `graph.totalActive === 0` l'Hero mostra il PNG statico (fallback D8, mai un canvas vuoto)
+- `SignalDescentCanvas.tsx` — **Scena 1**, `id="features"`, full-bleed, pin GSAP `+=450%` con `scrub: 1`. Sette atti mappati sulla pipeline reale (SWARM → COLLAPSE → FATE → BIRTH → WEB → GRAVITY → IGNITION). Ritmo **variabile**: le transizioni sono battute brevi, i concetti (FATE, GRAVITY, IGNITION) hanno spazio. L'atto finale risolve **sulla stessa immagine della Scena 2** ed è etichettato con i community name reali (`topCommunityNames`) — senza backend l'atto renderizza la forma senza etichette, mai nomi inventati. Oltre `t ≥ 0.94` parte un rAF per il respiro ambient: è l'aggancio verso il loop temporale della Scena 2
+- `AskAnythingScene.tsx` — **Scena 3**, `id="oracle"`, contenuta (non full-bleed), pin `+=220%`. Percorso di routing Oracle + assemblaggio documento + citazioni. Fonti mostrate come **template** (badge tipo + skeleton), non titoli/editori inventati
+
+**Asset richiesti** in `public/assets/`: `world-map-hero.jpg`, `narrative-graph-hero.png` (fallback Scena 2), `dashboard-screenshot.png`. Senza asset i componenti renderizzano placeholder gradient (no broken image).
+
+**Data, scene e JSON-LD** in `lib/landing/`:
+- `live.ts` — fetch RSC server-only verso `/api/v1/stories/graph` (con `X-API-Key`, **mai** esposta al browser) e `/api/v1/insights?limit=1`, `revalidate: 900`, timeout 2.5s, fallback deterministico ovunque. Esporta anche `topCommunityNames()` per le etichette della Scena 1
+- `nebulaRender.ts` — **primitive canvas condivise fra Scena 1 e Scena 2**: tipo `RGB`, palette community in forma RGB (`dataColor`), `drawNebula`, `rgba`, `lerpColor`, `bezierPoint`. È il modulo che garantisce che le due scene convergano sullo *stesso* oggetto: una reimplementazione parallela divergerebbe alla prima modifica e l'agnizione finale perderebbe senso
+- `signalDescentScene.ts` — generatore deterministico (PRNG mulberry32 seeded) della Scena 1: particelle a keyframe + nodi storyline + archi Jaccard + cluster. `sampleParticle()` / `sampleNode()` interpolano a un dato progresso
+- `livingGraphLayout.ts` / `livingGraphFixture.ts` — layout della Scena 2 dai dati reali, e fixture seeded per le route `/dev/*` senza backend
+- `oracle-demo.ts` — costanti Scena 3 estratte da `oracle_orchestrator.py` (9 tool, 9 path SOP)
+- `data.ts` — costanti tipate `SIGNALS`, `SYNTHESIS_LEVELS`, `PERSONAS`, `CAPS`
 - `schema.ts` — esporta `FAQS` (7 Q&A) + 5 oggetti JSON-LD: `softwareApplicationSchema`, `organizationSchema`, `websiteSchema` (con SearchAction su `/oracle?q={search_term_string}`), `faqSchema` (derivato da `FAQS`), `aboutPageSchema` (per `/about`)
+
+**Route di prototipo** (`app/dev/*`, `robots: noindex`, non linkate): `signal-descent`, `living-graph`, `ask-anything`. `signal-descent` monta anche la Scena 2 con la fixture in cima alla pagina, così l'agnizione dell'atto finale è verificabile in locale senza backend.
 
 **About page** (`components/about/` + `lib/about/`):
 - Componenti dedicati (RSC): `AboutHero`, `MissionVision` (2 card side-stripe), `WhoItsFor` (6 persona DIVERSE dalla landing), `Coverage` (8 topic 4×2), `AboutCTA`, `AboutFooter` (footer minimale 1-riga)
 - `lib/about/data.ts` — `ABOUT_PERSONAS` (6) e `ABOUT_COVERAGE` (8) tipati `as const`
 - Riusa `Navbar` della landing con prop `solid` (sempre opaco, no scroll listener)
 
+#### App Shell (`components/shell/`)
+Chrome delle route applicative — sostituisce il `Navbar` della landing su **tutte** le route interne (`/dashboard`, `/insights`, `/romania`, `/oracle`, `/stories` + le tre route di dettaglio articolo). Una top-bar marketing con "Open Platform" non ha senso quando il lettore è già dentro la piattaforma, e costava 60px di altezza sulle due route che hanno bisogno del viewport intero. `Navbar` resta solo su `/` e `/about`.
+
+- `AppShell.tsx` (`'use client'`) — rail fisso 64px espandibile a 224px in hover (**CSS `group-hover`, non state React**: il rail è un overlay, allargarlo non deve rifluire il contenuto accanto, e un hover che ri-renderizza il sottoalbero sarebbe lavoro sprecato) + header sticky con indicatore di freschezza pipeline. Prop `fullBleed` per `/oracle` e `/stories`: prendono il rail ma non l'header né il padding, così chat e grafo mantengono l'altezza piena. **`/map` è assente dal rail di proposito** — è ancora COMING SOON e deliberatamente non linkata ovunque (Resolved Q1). L'indicatore di stato viene **omesso** (non mostrato in errore) quando `useDashboardStats` fallisce: un elemento di chrome che dice "unknown" su ogni pagina è peggio di nessun elemento
+- `CommandPalette.tsx` (`'use client'`) — ⌘K/Ctrl+K. Tre sorgenti in ordine di priorità: route (sempre disponibili, funzionano offline) → storyline per titolo (dal grafo che `/stories` già poller) → fallthrough "Ask Oracle" che instrada su `/oracle?q=…`, così del testo digitato non è mai un vicolo cieco. `Escape` chiude e **restituisce il focus** all'elemento che ce l'aveva all'apertura. L'hotkey è registrata su `window` con `preventDefault`, quindi scatta anche con una textarea a fuoco senza inserire il carattere (è il caso di `/oracle`). Il grafo viene fetchato solo dopo la prima apertura — la shell monta su ogni route e il payload non serve finché nessuno cerca
+
 #### UI Components (`components/ui/`)
 - Shadcn components: Button, Card, Skeleton, Table, Badge
+- `MarkdownContent.tsx` — renderer condiviso dei corpi Markdown (GFM + sanitizzazione DOMPurify). Prop `variant`: `default` (frammenti UI brevi) o **`editorial`** (misura 68ch, interlinea 1.7, serif). Opt-in e non default perché lo stesso renderer disegna anche anteprime e sommari, dove 68ch e il serif sarebbero entrambi sbagliati
+
+#### Motion (`components/motion/`)
+- `Reveal.tsx` (`'use client'`) — wrapper `LazyMotion` + `m` di `motion` (ex `framer-motion`). Riceve `children`, così i genitori RSC non vengono promossi a client component
+
+### Tipografia editoriale
+`lib/fonts.ts` esporta `editorialSerif` (**Source Serif 4** via `next/font/google`, self-hosted a build time — nessuna richiesta a `fonts.gstatic.com`). **Non è registrato in `app/layout.tsx` di proposito**: finirebbe sul percorso critico di ogni route, incluse `/` e `/dashboard` che non hanno prosa lunga. Essendo importato solo dalle tre route articolo, Next confina `@font-face` e preload nel loro chunk CSS (verificato: 0 riferimenti nell'HTML di `/` e `/dashboard`).
+
+La scelta fra Source Serif 4 e Newsreader è caduta sul primo perché è il più neutro dei due — x-height alta, contrasto di tratto basso, disegnato come *text face* e non display — e deve convivere nella stessa pagina con metadati e citazioni in Geist Mono senza competerci. Il carattere più editoriale di Newsreader legge "servizio di rivista", registro sbagliato per un briefing di intelligence. Sostituirlo è una riga in `lib/fonts.ts`.
+
+Il token Tailwind `--font-serif` risolve a `var(--font-source-serif)`: i due nomi devono restare distinti, altrimenti la custom property referenzia sé stessa e CSS la scarta del tutto.
 
 ### Configuration
 - `app/layout.tsx` - Root layout con Google Analytics (`G-MBHW2XG1Q3`), meta tag Google Search Console (`verification.google`), **JSON-LD Organization + WebSite structured data**. **Consent Mode v2 (2026-07-17)**: script `beforeInteractive` imposta `analytics_storage`/`ad_storage`/`ad_user_data`/`ad_personalization` su `denied` di default (con `wait_for_update: 500`) *prima* che il tag GA venga caricato — GA parte comunque in modalità "cookieless ping" ma non traccia fino a consenso esplicito via `<CookieConsent />`. Nessuna pagina privacy policy dedicata esiste ancora (`/privacy` — non referenziata dal banner per evitare link 404).
@@ -224,8 +253,10 @@ Next.js Route Handler that forwards GET/POST requests from the browser to the Fa
   - `mapbox-gl` (3.x) - Map rendering
   - **`react-force-graph-2d`** - Force-directed graph visualization (d3-force based)
   - `swr` - Data fetching with polling
-  - `framer-motion` - Animations
-  - `tailwindcss` (4.x) - Styling
+  - **`motion`** (12.x) - Animations. Sostituisce `framer-motion`, **rimosso**: `motion` è il pacchetto successore, e l'uso passa da `components/motion/Reveal.tsx` (`LazyMotion` + `m`) per non spedire l'intero runtime di animazione
+  - **`gsap`** (3.x) + ScrollTrigger - Solo per le Scene 1 e 3 della landing, **importato dinamicamente** dentro i componenti scena così non entra nel bundle iniziale
+  - `sigma` (3.x) + `graphology` - Grafo su `/stories`
+  - `tailwindcss` (4.x) - Styling. Il layer di token in `app/globals.css` (`@theme`) è **la sorgente unica** per scala tipografica, durate, easing e palette `--data-1..15`; i componenti non devono reintrodurre letterali `text-[Npx]`/`#hex`
   - `lucide-react` - Icons (GitBranch for Storylines nav)
 
 ## Data Flow

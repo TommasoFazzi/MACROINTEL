@@ -11,6 +11,7 @@ import { OracleEmptyState } from '@/components/oracle/OracleEmptyState';
 import { OracleThinkingState } from '@/components/oracle/OracleThinkingState';
 import { UserBubble, AssistantBubble } from '@/components/oracle/OracleMessage';
 import { OracleSourcesSidebar } from '@/components/oracle/OracleSourcesSidebar';
+import { AppShell } from '@/components/shell';
 
 export default function OraclePage() {
   const {
@@ -71,6 +72,19 @@ export default function OraclePage() {
     setTimeout(() => setHighlightedSource(null), 3000);
   };
 
+  // Prefill from `?q=` — the command palette's "Ask Oracle" entry routes here with the typed
+  // text (task 4.3). Read from `location.search` rather than `useSearchParams()` on purpose:
+  // this is a one-shot mount-time prefill, and `useSearchParams` would force the whole page
+  // (one large client component) behind a Suspense boundary for no behavioural gain.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (!q) return;
+    setInput(q);
+    // Left in the composer rather than auto-sent: the reader should see and be able to edit
+    // the query before it costs an LLM call.
+    textareaRef.current?.focus();
+  }, []);
+
   const handleQueryInject = (q: string) => {
     setInput(q);
     textareaRef.current?.focus();
@@ -82,6 +96,7 @@ export default function OraclePage() {
   };
 
   return (
+    <AppShell fullBleed>
     <div className="h-screen bg-[#0A1628] text-white flex flex-col overflow-hidden">
 
       <OracleHeader
@@ -193,5 +208,6 @@ export default function OraclePage() {
         onClearSession={handleClearSession}
       />
     </div>
+    </AppShell>
   );
 }

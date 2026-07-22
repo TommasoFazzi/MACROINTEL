@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { BarChart3, Globe } from 'lucide-react';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
 import { MacroMiniDashboard } from '@/components/romania/MacroMiniDashboard';
 import { BriefingList } from '@/components/romania/BriefingList';
 
@@ -18,9 +18,8 @@ export const metadata: Metadata = {
 
 export default function RomaniaPage() {
   return (
-    <>
-      <Navbar />
-      <main className="min-h-screen bg-[#0A1628] pt-28 pb-20">
+    <AppShell>
+      <main className="min-h-screen bg-[#0A1628] pb-20 pt-8">
         <div className="max-w-5xl mx-auto px-6">
 
           {/* Header */}
@@ -60,6 +59,6 @@ export default function RomaniaPage() {
 
         </div>
       </main>
-    </>
+    </AppShell>
   );
 }

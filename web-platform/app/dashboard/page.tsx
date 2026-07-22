@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { RefreshCw, Clock, Map, HelpCircle } from 'lucide-react';
+import { RefreshCw, Clock, HelpCircle } from 'lucide-react';
 import { useDashboardStats, useReports, useStoriesCount } from '@/hooks/useDashboard';
 import {
   StatsGrid,
@@ -10,12 +10,13 @@ import {
   TableSkeleton,
   ErrorState,
 } from '@/components/dashboard';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
 import { Button } from '@/components/ui/button';
 import { HelpModal } from '@/components/HelpModal';
 import type { HelpSection } from '@/components/HelpModal';
 import Link from 'next/link';
 import type { ApiError } from '@/types/dashboard';
+import { SOURCE_COUNT } from '@/lib/constants';
 
 const DASHBOARD_GUIDE_SECTIONS: HelpSection[] = [
   {
@@ -24,7 +25,7 @@ const DASHBOARD_GUIDE_SECTIONS: HelpSection[] = [
     labelColor: 'text-orange-300',
     bgColor: 'bg-orange-500/8 border-orange-500/15',
     content:
-      'The four cards at the top show live platform metrics: total articles ingested, intelligence briefs generated, active narrative storylines being tracked, and 47 sources monitored. The "+N today" badge on articles confirms the daily pipeline ran successfully.',
+      `The four cards at the top show live platform metrics: total articles ingested, intelligence briefs generated, active narrative storylines being tracked, and ${SOURCE_COUNT} sources monitored. The "+N today" badge on articles confirms the daily pipeline ran successfully.`,
   },
   {
     key: 'reports',
@@ -109,28 +110,26 @@ export default function DashboardPage() {
   // Full page error state (API completely offline)
   if (isOffline) {
     return (
-      <>
-        <Navbar />
-        <main className="min-h-screen bg-[#0A1628] pt-24 px-6">
+      <AppShell>
+        <main className="min-h-screen bg-[#0A1628] px-6 pt-8">
           <div className="max-w-7xl mx-auto">
             <ErrorState type="offline" onRetry={handleRefresh} />
           </div>
         </main>
-      </>
+      </AppShell>
     );
   }
 
   // Both endpoints failing (but online)
   if (statsError && reportsError) {
     return (
-      <>
-        <Navbar />
-        <main className="min-h-screen bg-[#0A1628] pt-24 px-6">
+      <AppShell>
+        <main className="min-h-screen bg-[#0A1628] px-6 pt-8">
           <div className="max-w-7xl mx-auto">
             <ErrorState type="server" onRetry={handleRefresh} />
           </div>
         </main>
-      </>
+      </AppShell>
     );
   }
 
@@ -138,9 +137,8 @@ export default function DashboardPage() {
   const lastSyncLabel = formatLastSync(lastUpdate);
 
   return (
-    <>
-      <Navbar />
-      <main className="min-h-screen bg-[#0A1628] pt-24 px-6 pb-12">
+    <AppShell>
+      <main className="min-h-screen bg-[#0A1628] px-6 pb-12 pt-8">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
@@ -161,14 +159,6 @@ export default function DashboardPage() {
                   <span>{lastSyncLabel}</span>
                 </div>
               )}
-
-              {/* Intelligence Map link */}
-              <Button asChild variant="outline" size="sm" className="border-[#00A8E8]/30 text-[#00A8E8] hover:bg-[#00A8E8]/10 hover:text-[#00A8E8]">
-                <Link href="/map" className="flex items-center gap-2">
-                  <Map className="w-4 h-4" />
-                  Intelligence Map
-                </Link>
-              </Button>
 
               {/* Guide button */}
               <Button
@@ -246,9 +236,9 @@ export default function DashboardPage() {
         onClose={() => setShowHelp(false)}
         title="Dashboard Guide"
         subtitle="How to use MacroIntel"
-        intro="The dashboard provides a live overview of the intelligence pipeline — articles ingested from 33 RSS feeds, reports generated daily, and narrative storylines continuously tracked."
+        intro={`The dashboard provides a live overview of the intelligence pipeline — articles ingested from ${SOURCE_COUNT} RSS feeds, reports generated daily, and narrative storylines continuously tracked.`}
         sections={DASHBOARD_GUIDE_SECTIONS}
       />
-    </>
+    </AppShell>
   );
 }

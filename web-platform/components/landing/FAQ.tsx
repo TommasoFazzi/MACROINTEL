@@ -8,11 +8,11 @@ export default function FAQ() {
   const toggle = (i: number) => setOpen(open === i ? null : i);
 
   return (
-    <section id="faq" className="bg-background py-[100px]">
+    <section id="faq" className="py-24">
       <div className="mx-auto max-w-[780px] px-10">
         <div className="mb-14 text-center">
           <div className="section-label justify-center">FAQ</div>
-          <h2 className="text-[40px] font-extrabold tracking-[-0.02em]">Common questions.</h2>
+          <h2 className="text-title font-extrabold tracking-[-0.02em]">Common questions.</h2>
         </div>
         <div className="flex flex-col gap-0.5">
           {FAQS.map((faq, i) => {
@@ -26,20 +26,20 @@ export default function FAQ() {
                   className="flex w-full cursor-pointer items-center justify-between gap-4 border-none bg-none py-5 text-left"
                 >
                   <span
-                    className="text-[15px] font-semibold leading-[1.4] transition-colors duration-150"
-                    style={{ color: isOpen ? '#FF6B35' : '#ededed' }}
+                    className="text-body font-semibold leading-[1.4] transition-colors duration-instant"
+                    style={{ color: isOpen ? 'var(--accent-action)' : 'var(--foreground)' }}
                   >
                     {faq.q}
                   </span>
                   <span
-                    className="inline-block shrink-0 text-lg transition-transform duration-[250ms]"
-                    style={{ color: isOpen ? '#FF6B35' : '#64748b', transform: isOpen ? 'rotate(45deg)' : 'rotate(0deg)' }}
+                    className="inline-block shrink-0 text-lg transition-transform duration-fast"
+                    style={{ color: isOpen ? 'var(--accent-action)' : 'var(--fg-subtle)', transform: isOpen ? 'rotate(45deg)' : 'rotate(0deg)' }}
                   >
                     +
                   </span>
                 </button>
                 <div
-                  className="overflow-hidden transition-[max-height] duration-[350ms] ease-in-out"
+                  className="overflow-hidden transition-[max-height] duration-fast ease-in-out"
                   style={{ maxHeight: isOpen ? 240 : 0 }}
                 >
                   <p className="pb-5 text-sm leading-[1.75] text-muted-foreground">

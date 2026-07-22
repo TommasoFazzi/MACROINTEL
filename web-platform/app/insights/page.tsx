@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { BookOpen, Calendar, ArrowRight } from 'lucide-react';
-import { Navbar } from '@/components/landing';
+import { AppShell } from '@/components/shell';
+import { SOURCE_COUNT } from '@/lib/constants';
 
 export const metadata: Metadata = {
   title: 'Intelligence Briefings | MACROINTEL',
@@ -57,9 +58,8 @@ export default async function InsightsPage() {
   const insights = await getInsights();
 
   return (
-    <>
-      <Navbar />
-      <main className="min-h-screen bg-[#0A1628] pt-28 pb-20">
+    <AppShell>
+      <main className="min-h-screen bg-[#0A1628] pb-20 pt-8">
         <div className="max-w-4xl mx-auto px-6">
           {/* Header */}
           <div className="mb-12">
@@ -71,7 +71,7 @@ export default async function InsightsPage() {
               Latest Intelligence
             </h1>
             <p className="text-gray-400 text-lg">
-              AI-generated geopolitical briefings from MACROINTEL — updated daily from 33+ sources.
+              AI-generated geopolitical briefings from MACROINTEL — updated daily from {SOURCE_COUNT} sources.
             </p>
           </div>
 
@@ -130,19 +130,19 @@ export default async function InsightsPage() {
             </div>
           )}
 
-          {/* CTA to waitlist */}
+          {/* CTA to the open platform — no waitlist on the dashboard/tools surface (see FinalCTA) */}
           <div className="mt-16 text-center p-8 rounded-xl border border-white/8 bg-[#1a2332]/40">
             <p className="text-gray-400 mb-3">Want real-time access to the full intelligence database?</p>
             <Link
-              href="/#waitlist"
+              href="/dashboard"
               className="inline-flex items-center gap-2 px-6 py-3 bg-[#FF6B35] hover:bg-[#F77F00] text-white rounded-lg font-medium transition-colors text-sm"
             >
-              Request Access
+              Open the Platform
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
         </div>
       </main>
-    </>
+    </AppShell>
   );
 }

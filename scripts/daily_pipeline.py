@@ -116,8 +116,10 @@ DEFAULT_STEPS = [
         continue_on_failure=False
     ),
     # market_data step removed: market data is now fetched by the evening workflow
-    # (.github/workflows/evening_market_fetch.yml) at 21:30 UTC after NYSE close.
-    # Morning report reads from DB (previous evening's data) via get_macro_context_text fallback.
+    # (.github/workflows/evening_market_fetch.yml) at 23:00 UTC Mon-Fri — after NYSE close
+    # (21:00), FX NY close (~22:00) and the FRED US_HY_SPREAD publish (~22:30), so the values
+    # are definitive rather than intraday. Morning report reads from DB (previous evening's
+    # data) via get_macro_context_text fallback.
     PipelineStep(
         name="nlp_processing",
         command="python scripts/process_nlp.py",
@@ -844,14 +846,20 @@ Examples:
     python scripts/daily_pipeline.py --verbose    # Log DEBUG
     python scripts/daily_pipeline.py --skip-weekly # Salta weekly/monthly
 
-Steps:
-    1. ingestion        - Fetch RSS feeds
-    2. market_data      - Fetch market data
-    3. nlp_processing   - NLP processing
-    4. load_to_database - Load to database
-    5. generate_report  - Generate daily report
-    6. weekly_report    - Weekly meta-analysis (Sunday only)
-    7. monthly_recap    - Monthly recap (after 4 weekly reports)
+Steps (see DEFAULT_STEPS — market data is NOT here, it runs in the evening workflow):
+     1. ingestion              - Fetch RSS feeds
+     2. nlp_processing         - NLP processing
+     3. load_to_database       - Load to database
+     4. narrative_processing   - Narrative clustering + storyline evolution
+     5. community_detection    - Louvain communities on the storyline graph
+     6. theme_clustering_shadow- k-means challenger (shadow column only)
+     7. entity_extraction      - Entity extraction
+     8. geocoding              - GeoNames + Gemini + Photon
+     9. refresh_map_data       - Refresh map + intelligence scores
+    10. generate_report        - Generate daily report
+    11. generate_romania_report- Romania daily report
+    12. send_report_email      - Email delivery
+    Conditional: weekly_report (Sundays), monthly_recap (after 4 weekly reports)
         """
     )
 

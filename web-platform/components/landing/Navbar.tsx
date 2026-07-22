@@ -7,7 +7,7 @@ const NAV_LINKS: Array<[string, string]> = [
   ['Features', '/#features'],
   ['FAQ', '/#faq'],
   ['Romania', '/romania'],
-  ['Insights', 'https://macrointel.net/insights'],
+  ['Insights', '/insights'],
   ['About', '/about'],
 ];
 
@@ -27,7 +27,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
 
   return (
     <nav
-      className={`fixed inset-x-0 top-0 z-[100] flex h-[60px] items-center border-b border-white/[0.06] px-8 transition-[background,backdrop-filter] duration-300 ease-in-out ${scrolled ? 'scrolled' : ''}`}
+      className={`fixed inset-x-0 top-0 z-[100] flex h-[60px] items-center border-b border-white/[0.06] px-8 transition-[background,backdrop-filter] duration-fast ease-in-out ${scrolled ? 'scrolled' : ''}`}
       style={{
         background: scrolled ? 'rgba(10,22,40,0.95)' : 'transparent',
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
@@ -36,7 +36,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
     >
       <Link
         href="/"
-        className="mr-auto flex cursor-pointer items-center gap-2 no-underline transition-opacity duration-200 ease-in-out"
+        className="mr-auto flex cursor-pointer items-center gap-2 no-underline transition-opacity duration-instant ease-in-out"
         style={{ opacity: logoHover ? 0.7 : 1 }}
         onMouseEnter={() => setLogoHover(true)}
         onMouseLeave={() => setLogoHover(false)}
@@ -44,7 +44,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
         <span className="font-mono text-base font-bold tracking-[0.05em] text-foreground">
           MACRO<span className="text-primary">INTEL</span>
         </span>
-        <span className="mt-0.5 font-mono text-[9px] tracking-[0.1em] text-[#64748b]">
+        <span className="mt-0.5 font-mono text-meta tracking-[0.1em] text-fg-subtle">
           OSINT PLATFORM
         </span>
       </Link>
@@ -53,7 +53,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
           <a
             key={label}
             href={href}
-            className="text-[13px] font-medium text-muted-foreground no-underline"
+            className="text-sm font-medium text-muted-foreground no-underline"
           >
             {label}
           </a>
@@ -62,7 +62,7 @@ export default function Navbar({ solid = false }: NavbarProps) {
       <div className="ml-8">
         <Link
           className="btn-primary"
-          href="https://macrointel.net/dashboard"
+          href="/dashboard"
           style={{ padding: '8px 18px', fontSize: 13 }}
         >
           Open Platform
