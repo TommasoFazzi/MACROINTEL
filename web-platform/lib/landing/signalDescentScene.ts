@@ -28,7 +28,7 @@
  * time-integrated simulation.
  */
 
-import { dataColor, lerpColor, type RGB } from './nebulaRender';
+import { clusterCentre, clusterMemberOffset, dataColor, lerpColor, type RGB } from './nebulaRender';
 
 export type { RGB };
 
@@ -324,19 +324,24 @@ export function buildSignalDescentScene(seed = 20260722): SceneData {
     // canvas), and y is flattened harder because this scene is full-viewport rather than a
     // 380px panel. Constant radius also guarantees even angular spacing, which matters here
     // because each cluster carries a text label that must not collide with its neighbours.
-    const angle = (clusters.length / N_CLUSTERS) * Math.PI * 2;
-    const RING_R = 0.23;
-    const cx = FOCUS_X + Math.cos(angle) * RING_R;
-    const cy = 0.5 + Math.sin(angle) * RING_R * 0.62;
-
     const crnd = mulberry32(c * 7919 + 13);
+    const RING_R = 0.23;
+    const { cx, cy } = clusterCentre(
+      clusters.length,
+      N_CLUSTERS,
+      FOCUS_X,
+      RING_R,
+      0.62,
+      (crnd() - 0.5) * 0.7,
+      0.88 + crnd() * 0.24
+    );
+
     let totalArticles = 0;
     members.forEach((n, mi) => {
       const spread = 0.03 + Math.min(0.07, members.length * 0.008);
-      const a = (mi / Math.max(1, members.length)) * Math.PI * 2 + crnd() * 0.6;
-      const r = spread * Math.sqrt((mi + crnd() * 0.4) / Math.max(1, members.length));
-      n.gx = clampUnit(cx + Math.cos(a) * r);
-      n.gy = clampUnit(cy + Math.sin(a) * r);
+      const { dx, dy } = clusterMemberOffset(mi, members.length, spread, crnd() * 0.6, crnd() * 0.4);
+      n.gx = clampUnit(cx + dx);
+      n.gy = clampUnit(cy + dy);
       totalArticles += n.articleCount;
     });
 
