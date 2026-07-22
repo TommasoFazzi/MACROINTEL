@@ -44,7 +44,7 @@ frozendict==2.4.7
 frozenlist==1.8.0
 fsspec==2025.10.0
 gitdb==4.0.12
-GitPython==3.1.50
+GitPython==3.1.51
 google-ai-generativelanguage==0.6.15
 google-api-core==2.28.1
 google-api-python-client==2.187.0
@@ -136,7 +136,7 @@ proto-plus==1.26.1
 protobuf==5.29.6
 psycopg2-binary==2.9.11
 pyarrow==23.0.1  # CVE-high (GHSA-rgxp-2hwp-jwgg use-after-free IPC pre-buffering); sync with requirements.txt
-pyasn1==0.6.3
+pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==2.23
 pydantic==2.12.5
