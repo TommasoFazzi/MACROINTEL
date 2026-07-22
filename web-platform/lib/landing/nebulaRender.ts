@@ -68,6 +68,56 @@ export function drawNebula(
   ctx.fill();
 }
 
+/**
+ * Golden angle (~137.5°). The defining constant of phyllotaxis: because it's irrational
+ * relative to a full turn, consecutive indices never line up, which is what produces an even
+ * scatter with no visible structure.
+ */
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+/**
+ * Offset of the `index`-th member from its cluster centre.
+ *
+ * Both scenes previously stepped the angle by `2π / count`, which walks the circle smoothly
+ * while `sqrt(index / count)` grows the radius — the two together trace an Archimedean
+ * spiral, and since consecutive members land as angular neighbours the eye joins them into a
+ * continuous arc. Every cluster rendered as a visible hook. The `sqrt` radius shows the
+ * intent was a sunflower scatter all along; it just needs the golden angle to work.
+ *
+ * `jitterAngle` / `jitterRadius` are supplied by the caller's seeded PRNG so the result stays
+ * deterministic while not looking mechanically perfect.
+ */
+export function clusterMemberOffset(
+  index: number,
+  count: number,
+  spread: number,
+  jitterAngle: number,
+  jitterRadius: number
+): { dx: number; dy: number } {
+  const a = index * GOLDEN_ANGLE + jitterAngle;
+  const r = spread * Math.sqrt((index + 0.5 + jitterRadius) / Math.max(1, count));
+  return { dx: Math.cos(a) * r, dy: Math.sin(a) * r };
+}
+
+/**
+ * Centre of the `index`-th cluster. A ring is the readable base — it keeps clusters from
+ * overlapping and spreads them across the frame — but a *perfect* ring reads as a decorative
+ * dial rather than a data structure, so both the angle and the radius get seeded wobble.
+ */
+export function clusterCentre(
+  index: number,
+  count: number,
+  focusX: number,
+  ringRadius: number,
+  flattenY: number,
+  jitterAngle: number,
+  jitterRadius: number
+): { cx: number; cy: number } {
+  const a = (index / Math.max(1, count)) * Math.PI * 2 + jitterAngle;
+  const r = ringRadius * jitterRadius;
+  return { cx: focusX + Math.cos(a) * r, cy: 0.5 + Math.sin(a) * r * flattenY };
+}
+
 /** Point at `u` along a quadratic bezier — used for the bowed connections between clusters. */
 export function bezierPoint(
   ax: number,

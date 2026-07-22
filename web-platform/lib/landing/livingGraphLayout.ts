@@ -23,7 +23,7 @@
  */
 
 import { communityColor } from '@/lib/communityColors';
-import { hexToRgb, type RGB } from './nebulaRender';
+import { clusterCentre, clusterMemberOffset, hexToRgb, type RGB } from './nebulaRender';
 import type { LiveGraphData } from './live';
 
 // Re-exported so existing `import { type RGB } from './livingGraphLayout'` sites keep
@@ -170,20 +170,27 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
 
   groupKeys.forEach((key, gi) => {
     const members = [...groups.get(key)!].sort((a, b) => b.momentumScore - a.momentumScore);
-    const groupAngle = (gi / groupKeys.length) * Math.PI * 2;
-    // Bigger clusters sit further out — keeps small/lone-star groups from crowding the center.
-    const groupRadius = 0.16 + Math.min(0.28, members.length * 0.028);
-    const cx = 0.5 + Math.cos(groupAngle) * groupRadius;
-    const cy = 0.5 + Math.sin(groupAngle) * groupRadius * 0.68; // flatten for a wide frame
-
     const rnd = mulberry32(gi * 7919 + 13);
+
+    // Bigger clusters sit further out — keeps small/lone-star groups from crowding the centre.
+    // The ±0.35rad / ±12% wobble is what stops the arrangement reading as a decorative dial.
+    const groupRadius = 0.16 + Math.min(0.28, members.length * 0.028);
+    const { cx, cy } = clusterCentre(
+      gi,
+      groupKeys.length,
+      0.5,
+      groupRadius,
+      0.68, // flatten for a wide frame
+      (rnd() - 0.5) * 0.7,
+      0.88 + rnd() * 0.24
+    );
+
     let totalArticles = 0;
     members.forEach((s, mi) => {
       const spread = 0.03 + Math.min(0.07, members.length * 0.008);
-      const a = (mi / Math.max(1, members.length)) * Math.PI * 2 + rnd() * 0.6;
-      const r = spread * Math.sqrt((mi + rnd() * 0.4) / Math.max(1, members.length));
-      const x = clamp01(cx + Math.cos(a) * r);
-      const y = clamp01(cy + Math.sin(a) * r);
+      const { dx, dy } = clusterMemberOffset(mi, members.length, spread, rnd() * 0.6, rnd() * 0.4);
+      const x = clamp01(cx + dx);
+      const y = clamp01(cy + dy);
 
       const sizeT = (s.articleCount - minCount) / (maxCount - minCount);
       const radius = MIN_R + sizeT * (MAX_R - MIN_R);
