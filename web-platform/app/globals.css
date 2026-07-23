@@ -401,7 +401,10 @@
   align-items: center;
   gap: 8px;
   background: var(--accent-action);
-  color: #fff;
+  /* Dark text (not white) on the orange fill: white-on-#FF6B35 is only 2.84:1 (fails WCAG AA).
+     Near-black gives 6.5:1 on the base fill and 4.8:1 on the darkened hover state — both pass AA.
+     currentColor also tints the inline arrow SVG, so the icon stays consistent. */
+  color: #1a1206;
   border: none;
   border-radius: 8px;
   padding: 12px 24px;
