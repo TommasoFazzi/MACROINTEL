@@ -19,8 +19,8 @@ type SynthesisProps = { briefing: LiveBriefing };
  */
 export default function Synthesis({ briefing }: SynthesisProps) {
   return (
-    <section id="synthesis" className="py-32">
-      <div className="mx-auto max-w-[1200px] px-10">
+    <section id="synthesis" className="py-20 md:py-32">
+      <div className="mx-auto max-w-[1200px] px-5 sm:px-8 lg:px-10">
         <div className="mb-16 max-w-xl">
           <div className="section-label">PLATFORM</div>
           <h2 className="mb-2 text-title font-extrabold leading-[1.1] tracking-[-0.02em]">
@@ -39,7 +39,7 @@ export default function Synthesis({ briefing }: SynthesisProps) {
           <div className="flex flex-col gap-16">
             {SYNTHESIS_LEVELS.map((level, i) => (
               <Reveal key={level.id} delay={i * 0.1}>
-                <div className="relative grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] items-center gap-12 pl-10">
+                <div className="relative grid grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))] items-center gap-8 pl-8 md:gap-12 md:pl-10">
                   <span
                     className="absolute left-0 top-1.5 h-[31px] w-[31px] rounded-full border-4 border-background"
                     style={{ background: level.tagColor }}

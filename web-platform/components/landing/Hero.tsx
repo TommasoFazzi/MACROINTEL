@@ -43,7 +43,7 @@ export default function Hero({ graph }: HeroProps) {
       </div>
 
       {/* Content */}
-      <div className="relative z-[2] mx-auto grid w-full max-w-[1200px] grid-cols-[repeat(auto-fit,minmax(380px,1fr))] items-center gap-16 px-10 pt-20">
+      <div className="relative z-[2] mx-auto grid w-full max-w-[1200px] grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] items-center gap-10 px-5 pt-24 sm:px-8 md:gap-16 lg:px-10 lg:pt-20">
         {/* Left column */}
         <div className="animate-fadeInUp">
           {/* Classification tag */}

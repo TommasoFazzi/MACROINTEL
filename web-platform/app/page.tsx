@@ -58,8 +58,8 @@ export default async function LandingPage() {
         <Synthesis briefing={briefing} />
 
         {/* Scene 3 — ASK ANYTHING, closing argument before Personas/Capabilities/FAQ. */}
-        <section id="oracle" className="py-32">
-          <div className="mx-auto max-w-[1200px] px-10">
+        <section id="oracle" className="py-20 md:py-32">
+          <div className="mx-auto max-w-[1200px] px-5 sm:px-8 lg:px-10">
             <div className="mb-10 text-center">
               <div className="section-label justify-center">ORACLE AI</div>
               <h2 className="text-title font-extrabold tracking-[-0.02em]">

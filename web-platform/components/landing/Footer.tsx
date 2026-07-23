@@ -17,10 +17,10 @@ const RESOURCES_LINKS: Array<[string, string]> = [
 
 export default function Footer() {
   return (
-    <footer className="border-t border-white/[0.06] px-10 pb-8 pt-12">
+    <footer className="border-t border-white/[0.06] px-5 pb-8 pt-12 sm:px-8 lg:px-10">
       <div className="mx-auto max-w-[1200px]">
-        <div className="mb-10 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-10">
-          <div className="col-span-2">
+        <div className="mb-10 grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-10">
+          <div className="sm:col-span-2">
             <div className="mb-3 font-mono text-lg font-bold tracking-[0.05em] text-foreground">
               MACRO<span className="text-primary">INTEL</span>
             </div>
