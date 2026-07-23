@@ -344,9 +344,10 @@ export function buildSignalDescentScene(seed = 20260722): SceneData {
       (crnd() - 0.5) * 0.7,
       0.88 + crnd() * 0.24
     );
-    // FOCUS_X=0.65 biases the ring right for composition; without an inset the far-right
-    // cluster's halo (+ puffs) still ran past the frame edge. Keep the whole nebula on-canvas.
-    const inset = Math.min(0.45, maxRadius * 1.35);
+    // FOCUS_X=0.65 biases the ring right for composition; keep each nebula's bright core in
+    // frame (inset ~0.6× the halo — its faint outer falloff may bleed off-edge, invisibly)
+    // without pulling clusters off their ring and bunching them (mirrors livingGraphLayout).
+    const inset = Math.min(0.3, maxRadius * 0.6);
     const cx = Math.max(inset, Math.min(1 - inset, raw.cx));
     const cy = Math.max(inset, Math.min(1 - inset, raw.cy));
 

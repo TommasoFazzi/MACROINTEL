@@ -193,13 +193,14 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
       0.88 + rnd() * 0.24
     );
 
-    // Keep the whole nebula on-canvas. The ring can otherwise land a large cluster's centre
-    // within a halo-width of the frame edge, and the halo (drawn at maxRadius·minDim, never
-    // inset in renderFrame) then clips — the "sliced circle" at the Hero's left/right edge.
-    // Inset by the halo plus its puff lobes (~1.35×). The margin is in min-dimension units,
-    // so clamping both axes to it is exact on a canvas's short side and conservative on the
-    // long side — correct for the wide Hero panel and the full-bleed Scene 1 alike.
-    const inset = Math.min(0.45, maxRadius * 1.35);
+    // Keep each nebula's bright *core* on-canvas without crushing the ring. Insetting by the
+    // full halo+puffs (the first attempt) yanked large clusters far off their ring position
+    // and bunched everything toward the centre — reads as one clumped, over-bright blob once
+    // the additive blending piles the overlapping halos up. The halo is a radial gradient
+    // that fades to zero, so only its inner core reads as a hard edge when sliced: inset by
+    // ~0.6× keeps that core in frame while the faint outer falloff may bleed off-edge
+    // (invisible), and the clusters stay spread across the frame.
+    const inset = Math.min(0.3, maxRadius * 0.6);
     const cx = Math.max(inset, Math.min(1 - inset, raw.cx));
     const cy = Math.max(inset, Math.min(1 - inset, raw.cy));
 
