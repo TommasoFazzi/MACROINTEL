@@ -171,11 +171,19 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
   groupKeys.forEach((key, gi) => {
     const members = [...groups.get(key)!].sort((a, b) => b.momentumScore - a.momentumScore);
     const rnd = mulberry32(gi * 7919 + 13);
+    const isSingleton = members.length === 1;
+
+    // Cluster mass and halo radius are a pure function of the members' article counts — known
+    // before any placement, so the centre can be inset by the halo's own size below.
+    const totalArticles = members.reduce((sum, s) => sum + s.articleCount, 0);
+    const maxRadius = isSingleton
+      ? 0.014 + Math.sqrt(members[0].articleCount) * 0.0016
+      : 0.05 + Math.sqrt(totalArticles) * 0.0075;
 
     // Bigger clusters sit further out — keeps small/lone-star groups from crowding the centre.
     // The ±0.35rad / ±12% wobble is what stops the arrangement reading as a decorative dial.
     const groupRadius = 0.16 + Math.min(0.28, members.length * 0.028);
-    const { cx, cy } = clusterCentre(
+    const raw = clusterCentre(
       gi,
       groupKeys.length,
       0.5,
@@ -185,7 +193,16 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
       0.88 + rnd() * 0.24
     );
 
-    let totalArticles = 0;
+    // Keep the whole nebula on-canvas. The ring can otherwise land a large cluster's centre
+    // within a halo-width of the frame edge, and the halo (drawn at maxRadius·minDim, never
+    // inset in renderFrame) then clips — the "sliced circle" at the Hero's left/right edge.
+    // Inset by the halo plus its puff lobes (~1.35×). The margin is in min-dimension units,
+    // so clamping both axes to it is exact on a canvas's short side and conservative on the
+    // long side — correct for the wide Hero panel and the full-bleed Scene 1 alike.
+    const inset = Math.min(0.45, maxRadius * 1.35);
+    const cx = Math.max(inset, Math.min(1 - inset, raw.cx));
+    const cy = Math.max(inset, Math.min(1 - inset, raw.cy));
+
     members.forEach((s, mi) => {
       const spread = 0.03 + Math.min(0.07, members.length * 0.008);
       const { dx, dy } = clusterMemberOffset(mi, members.length, spread, rnd() * 0.6, rnd() * 0.4);
@@ -197,7 +214,6 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
 
       const cappedDays = Math.min(Math.max(s.daysActive ?? WINDOW_DAYS, 0), WINDOW_DAYS);
       const bornT = (WINDOW_DAYS - cappedDays) / WINDOW_DAYS;
-      totalArticles += s.articleCount;
 
       const dieT = rnd() < DEATH_FRACTION ? 0.15 + rnd() * 0.65 : null;
 
@@ -217,10 +233,6 @@ export function computeGraphLayout(graph: LiveGraphData): GraphLayout {
       });
     });
 
-    const isSingleton = members.length === 1;
-    const maxRadius = isSingleton
-      ? 0.014 + Math.sqrt(members[0].articleCount) * 0.0016
-      : 0.05 + Math.sqrt(totalArticles) * 0.0075;
     const puffCount = isSingleton ? 0 : 2 + Math.floor(rnd() * 2);
     const puffs = Array.from({ length: puffCount }, () => ({
       dx: (rnd() - 0.5) * maxRadius * 0.9,
