@@ -3,8 +3,8 @@ import Reveal from '@/components/motion/Reveal';
 
 export default function Capabilities() {
   return (
-    <section className="py-20">
-      <div className="mx-auto max-w-[1200px] px-10">
+    <section className="py-16 md:py-20">
+      <div className="mx-auto max-w-[1200px] px-5 sm:px-8 lg:px-10">
         <Reveal>
           <div className="mb-14 text-center">
             <div className="section-label justify-center">CAPABILITIES</div>
@@ -14,7 +14,7 @@ export default function Capabilities() {
           </div>
         </Reveal>
         <Reveal delay={0.1}>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-0.5">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(280px,100%),1fr))] gap-0.5">
             {CAPS.map((c, i) => (
               <div
                 key={c.title}

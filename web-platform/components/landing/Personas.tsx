@@ -4,9 +4,9 @@ import Reveal from '@/components/motion/Reveal';
 
 export default function Personas() {
   return (
-    <section className="py-24">
-      <div className="mx-auto max-w-[1200px] px-10">
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-center gap-16">
+    <section className="py-16 md:py-24">
+      <div className="mx-auto max-w-[1200px] px-5 sm:px-8 lg:px-10">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(360px,100%),1fr))] items-center gap-10 md:gap-16">
           <Reveal>
             <div>
               <div className="section-label">WHO IT&apos;S FOR</div>

@@ -326,7 +326,16 @@ export function buildSignalDescentScene(seed = 20260722): SceneData {
     // because each cluster carries a text label that must not collide with its neighbours.
     const crnd = mulberry32(c * 7919 + 13);
     const RING_R = 0.23;
-    const { cx, cy } = clusterCentre(
+
+    // Mass and halo are known from article counts before placement, so the centre can be
+    // inset by the halo below (mirrors Scene 2 / livingGraphLayout).
+    const totalArticles = members.reduce((sum, n) => sum + n.articleCount, 0);
+    // Capped: adjacent centres sit ~0.2 apart on the ring, and an uncapped halo (up to
+    // ~0.12 for the biggest community) merged neighbouring nebulas into one blob. At 0.09
+    // they overlap enough to haze together at the edges while keeping distinct cores.
+    const maxRadius = Math.min(0.09, 0.05 + Math.sqrt(totalArticles) * 0.0075);
+
+    const raw = clusterCentre(
       clusters.length,
       N_CLUSTERS,
       FOCUS_X,
@@ -335,20 +344,19 @@ export function buildSignalDescentScene(seed = 20260722): SceneData {
       (crnd() - 0.5) * 0.7,
       0.88 + crnd() * 0.24
     );
+    // FOCUS_X=0.65 biases the ring right for composition; without an inset the far-right
+    // cluster's halo (+ puffs) still ran past the frame edge. Keep the whole nebula on-canvas.
+    const inset = Math.min(0.45, maxRadius * 1.35);
+    const cx = Math.max(inset, Math.min(1 - inset, raw.cx));
+    const cy = Math.max(inset, Math.min(1 - inset, raw.cy));
 
-    let totalArticles = 0;
     members.forEach((n, mi) => {
       const spread = 0.03 + Math.min(0.07, members.length * 0.008);
       const { dx, dy } = clusterMemberOffset(mi, members.length, spread, crnd() * 0.6, crnd() * 0.4);
       n.gx = clampUnit(cx + dx);
       n.gy = clampUnit(cy + dy);
-      totalArticles += n.articleCount;
     });
 
-    // Capped: adjacent centres sit ~0.2 apart on the ring, and an uncapped halo (up to
-    // ~0.12 for the biggest community) merged neighbouring nebulas into one blob. At 0.09
-    // they overlap enough to haze together at the edges while keeping distinct cores.
-    const maxRadius = Math.min(0.09, 0.05 + Math.sqrt(totalArticles) * 0.0075);
     const puffCount = 2 + Math.floor(crnd() * 2);
     clusters.push({
       id: c,

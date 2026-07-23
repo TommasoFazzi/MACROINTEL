@@ -3,10 +3,10 @@ import Reveal from '@/components/motion/Reveal';
 
 export default function FinalCTA() {
   return (
-    <section id="about" className="relative overflow-hidden py-[120px]">
+    <section id="about" className="relative overflow-hidden py-20 md:py-[120px]">
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,107,53,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,107,53,0.03)_1px,transparent_1px)] bg-[size:60px_60px]" />
       <div className="pointer-events-none absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,107,53,0.06)_0%,transparent_70%)]" />
-      <Reveal className="relative z-[1] mx-auto max-w-[700px] px-10 text-center">
+      <Reveal className="relative z-[1] mx-auto max-w-[700px] px-5 text-center sm:px-8 lg:px-10">
         <div>
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/[0.08] px-3.5 py-1.5">
             <span className="inline-block h-1.5 w-1.5 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-primary" />

@@ -8,8 +8,8 @@ export default function FAQ() {
   const toggle = (i: number) => setOpen(open === i ? null : i);
 
   return (
-    <section id="faq" className="py-24">
-      <div className="mx-auto max-w-[780px] px-10">
+    <section id="faq" className="py-16 md:py-24">
+      <div className="mx-auto max-w-[780px] px-5 sm:px-8 lg:px-10">
         <div className="mb-14 text-center">
           <div className="section-label justify-center">FAQ</div>
           <h2 className="text-title font-extrabold tracking-[-0.02em]">Common questions.</h2>
