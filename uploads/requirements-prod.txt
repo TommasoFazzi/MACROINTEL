@@ -168,7 +168,7 @@ scrapling>=0.4.0
 scikit-learn==1.9.0
 scipy==1.16.3
 sentence-transformers==5.1.2
-setuptools==80.9.0
+setuptools==83.0.0
 sgmllib3k==1.0.0
 six==1.17.0
 slowapi==0.1.10
