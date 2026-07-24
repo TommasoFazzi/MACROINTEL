@@ -133,7 +133,7 @@ propcache==0.4.1
 proto-plus==1.26.1
 protobuf==5.29.6
 psycopg2-binary==2.9.11
-pyarrow==21.0.0
+pyarrow==23.0.1
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==2.23
