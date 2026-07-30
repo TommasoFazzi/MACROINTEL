@@ -81,7 +81,7 @@ multitasking==0.0.13
 murmurhash==1.0.15
 narwhals==2.24.0
 networkx==3.6
-leidenalg>=0.10  # community detection (CPM); replaces python-louvain in compute_communities.py (Phase 1 of clustering upgrade)
+leidenalg>=0.12.0  # community detection (CPM); replaces python-louvain in compute_communities.py (Phase 1 of clustering upgrade)
 python-igraph>=0.11,<1.0  # required by leidenalg + vectorized disparity filter (Serrano 2009); pin <1.0 to avoid transitional shim
 python-louvain==0.16  # kept during shadow comparison phase; will be removed post-promote
 newspaper3k==0.2.8
