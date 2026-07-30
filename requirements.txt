@@ -210,7 +210,7 @@ weasel==0.4.3
 weasyprint>=69.0  # CVE-2026-49452: CSS injection via presentational hints; fixed in 69.0
 markdown>=3.10.2
 webencodings==0.5.1
-websockets==15.0.1
+websockets==16.1.1
 wrapt==2.0.1
 xlrd==2.0.2
 xmltodict==0.13.0
