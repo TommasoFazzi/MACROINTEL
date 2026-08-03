@@ -1,0 +1,113 @@
+name: "Postgres SSH tunnel"
+description: "Opens a persistent autossh tunnel to the production Postgres and verifies it is actually serving."
+
+inputs:
+  host:
+    description: "VPS hostname or IP"
+    required: true
+  ssh_key:
+    description: "Private SSH key for the deploy user"
+    required: true
+  known_hosts:
+    description: "known_hosts entry for the VPS"
+    required: true
+  user:
+    description: "SSH user"
+    required: false
+    default: "deploy"
+  local_port:
+    description: "Port the runner listens on"
+    required: false
+    default: "5432"
+  remote_port:
+    description: "Postgres port on the VPS loopback"
+    required: false
+    default: "5432"
+  timeout:
+    description: "Seconds to wait for the tunnel to start serving"
+    required: false
+    default: "60"
+
+runs:
+  using: composite
+  steps:
+    - name: Open SSH tunnel to Postgres
+      shell: bash
+      env:
+        # Secrets go through env, never through ${{ }} interpolation into the script body.
+        SSH_KEY: ${{ inputs.ssh_key }}
+        KNOWN_HOSTS: ${{ inputs.known_hosts }}
+        HOST: ${{ inputs.host }}
+        SSH_USER: ${{ inputs.user }}
+        LOCAL_PORT: ${{ inputs.local_port }}
+        REMOTE_PORT: ${{ inputs.remote_port }}
+        WAIT_TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -euo pipefail
+
+        mkdir -p ~/.ssh
+        printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+        chmod 644 ~/.ssh/known_hosts
+
+        sudo apt-get install -y -q autossh \
+          || (sudo apt-get update -q && sudo apt-get install -y -q autossh)
+
+        SSH_OPTS=(
+          -o BatchMode=yes
+          -o StrictHostKeyChecking=yes
+          -o ConnectTimeout=15
+          -o ServerAliveInterval=15
+          -o ServerAliveCountMax=3
+          -o ExitOnForwardFailure=yes
+        )
+
+        # Preflight with a plain ssh first. autossh -f daemonises and routes ssh's
+        # stderr to syslog, so on its own it fails completely silently — on
+        # 2026-08-03 the whole pipeline died with nothing but "postgres unreachable"
+        # to go on. This surfaces the actual reason (auth, host key, host down,
+        # server OOM so sshd cannot fork) in the job log.
+        echo "--- preflight ssh ---"
+        if ! ssh "${SSH_OPTS[@]}" "$SSH_USER@$HOST" 'echo preflight-ok; uptime; free -h'; then
+          echo "ERROR: cannot reach $SSH_USER@$HOST over SSH — see the error above."
+          echo "Usual suspects: VPS out of memory (sshd cannot complete the handshake),"
+          echo "host key rotated (VPS_KNOWN_HOSTS stale), key revoked, or host down."
+          exit 1
+        fi
+
+        export AUTOSSH_GATETIME=0
+        export AUTOSSH_LOGFILE="$RUNNER_TEMP/autossh.log"
+        autossh -M 0 -fN "${SSH_OPTS[@]}" \
+          -L "$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" \
+          "$SSH_USER@$HOST"
+
+        # pg_isready speaks the startup protocol, so it proves Postgres is actually
+        # answering. `nc -z` only proves the local -L listener exists, which ssh
+        # creates whether or not the remote end is alive.
+        if command -v pg_isready >/dev/null 2>&1; then
+          PROBE=(pg_isready -h 127.0.0.1 -p "$LOCAL_PORT" -q)
+        else
+          PROBE=(nc -z 127.0.0.1 "$LOCAL_PORT")
+        fi
+
+        # Poll rather than sleep a fixed 5s: the handshake runs long whenever the
+        # server is loaded, and a false negative throws away a 40-minute run.
+        echo "--- waiting for postgres through the tunnel (max ${WAIT_TIMEOUT}s) ---"
+        deadline=$((SECONDS + WAIT_TIMEOUT))
+        until "${PROBE[@]}"; do
+          if (( SECONDS >= deadline )); then
+            echo "ERROR: postgres not answering on 127.0.0.1:${LOCAL_PORT} after ${WAIT_TIMEOUT}s"
+            echo "--- autossh log ---"
+            cat "$AUTOSSH_LOGFILE" 2>/dev/null || echo "(empty)"
+            echo "--- local listener ---"
+            ss -ltn 2>/dev/null | grep ":${LOCAL_PORT}" || echo "(no listener on ${LOCAL_PORT})"
+            echo "--- remote health ---"
+            ssh "${SSH_OPTS[@]}" "$SSH_USER@$HOST" \
+              'free -h; sudo -n docker ps --format "{{.Names}} {{.Status}}"' || true
+            exit 1
+          fi
+          sleep 2
+        done
+
+        echo "Tunnel OK — postgres serving on 127.0.0.1:${LOCAL_PORT}"
