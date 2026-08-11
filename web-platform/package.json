@@ -22,7 +22,7 @@
     "isomorphic-dompurify": "^3.19.0",
     "jose": "^6.2.5",
     "lucide-react": "^0.577.0",
-    "mapbox-gl": "^3.27.0",
+    "mapbox-gl": "^3.28.0",
     "motion": "^12.42.2",
     "next": "^16.3.0",
     "radix-ui": "^1.6.1",
