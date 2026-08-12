@@ -1308,6 +1308,7 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
         "tcs", "tcs_overlap_size", "tcs_unreliable",
         "modularity", "runtime_seconds",
         "backbone_weight_p50", "backbone_weight_p75",
+        "drift_signals",
     ]
     base_vals = [
         stats.get("run_id"), "community_detection",
@@ -1329,6 +1330,12 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
         stats.get("runtime_seconds"),
         stats.get("backbone_weight_p50"),
         stats.get("backbone_weight_p75"),
+        # migration 043 defines this column but it was never wired into the
+        # INSERT — _is_refit_due()/count_consecutive_drift_signals() in
+        # theme_clustering.py query it and silently always saw NULL, so
+        # refit_due was permanently stuck True (bootstrap fallback) and
+        # k-retune could never fire. Fixed 2026-08-12.
+        Json(stats["drift_signals"]) if stats.get("drift_signals") is not None else None,
     ]
 
     def _insert(cols, vals):
