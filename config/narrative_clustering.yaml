@@ -95,7 +95,7 @@ theme_clustering:                   # narrative-clustering-embedding-based chang
     min_cluster_size: 5            # NOT the same as hdbscan.min_cluster_size_base (storyline micro-clustering)
     min_samples: 5                 # NOT retuned by umap.enabled — see clustering-shadow-metrics-umap design.md Decision 5
     umap:
-      enabled: false                # gate for the UMAP pre-reduction step (clustering-shadow-metrics-umap)
+      enabled: true                 # gate for the UMAP pre-reduction step (clustering-shadow-metrics-umap) — enabled 2026-08-12 to test the curse-of-dimensionality hypothesis on the HDBSCAN shadow collapse (2-4 clusters, ~450-600 noise/run observed over the first month of shadow data)
       n_components: 10              # BERTopic-standard default; 384-dim -> 10-dim before HDBSCAN
       n_neighbors: 15
       min_dist: 0.0                 # tight packing, standard for clustering use cases (vs. visualization)
