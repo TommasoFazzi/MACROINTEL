@@ -19,7 +19,7 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "gsap": "^3.15.0",
     "hono": "4.13.2",
-    "isomorphic-dompurify": "^3.19.0",
+    "isomorphic-dompurify": "^3.22.0",
     "jose": "^6.2.8",
     "lucide-react": "^0.577.0",
     "mapbox-gl": "^3.28.0",
