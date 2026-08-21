@@ -177,7 +177,7 @@ slowapi==0.1.10
 smart_open==7.5.0
 smmap==5.0.2
 soupsieve==2.9
-spacy==3.8.11
+spacy==3.8.15
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
 srsly==2.5.2
