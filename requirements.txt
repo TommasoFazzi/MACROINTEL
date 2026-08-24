@@ -4,7 +4,7 @@ aiohttp-client-cache==0.11.1
 aiosignal==1.4.0
 aiosqlite==0.20.0
 altair==5.5.0
-annotated-doc==0.0.4
+annotated-doc==0.0.5
 annotated-types==0.7.0
 anyio==4.12.0
 appdirs==1.4.4
