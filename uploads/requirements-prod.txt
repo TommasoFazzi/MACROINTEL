@@ -194,7 +194,7 @@ torch==2.13.0
 tornado==6.5.7
 tqdm==4.67.1
 trafilatura==2.0.0
-transformers==5.5.0  # pinned: CVE Trainer ACE requires 5.x; sentence-transformers==5.1.2 caps at <5.0.0; risk accepted: Trainer never used (inference-only via SentenceTransformer)
+transformers==5.10.1  # pinned: CVE Trainer ACE requires 5.x; sentence-transformers==5.1.2 caps at <5.0.0; risk accepted: Trainer never used (inference-only via SentenceTransformer)
 typer-slim==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
