@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from collections import Counter
+from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime
 from typing import Optional
@@ -27,15 +28,34 @@ router = APIRouter(prefix="/api/v1/stories", tags=["Stories"])
 _graph_cache: dict = {}
 
 
-def _get_cached_graph(min_weight: float, min_momentum: float) -> Optional[dict]:
-    entry = _graph_cache.get((min_weight, min_momentum))
+class GraphView(str, Enum):
+    """Node projection for the graph endpoint.
+
+    `slim` drops `summary` and `key_entities` — together 27% of the payload and
+    read by no showcase consumer. An enum rather than a free-form field list keeps
+    the cache key bounded: arbitrary field combinations would let `_graph_cache`
+    grow without limit inside a 4 GB container.
+    """
+    full = "full"
+    slim = "slim"
+
+
+# Response bounds. Edges grow with the square of the node pool, so they are the
+# term that actually needs capping: at 1000 nodes the payload is ~0.96 MB, still
+# under Next.js's 2 MB data-cache entry limit once base64-encoded.
+MAX_NODES_DEFAULT = 1000
+MAX_EDGES_DEFAULT = 8000
+
+
+def _get_cached_graph(cache_key: tuple) -> Optional[dict]:
+    entry = _graph_cache.get(cache_key)
     if entry and time.time() < entry["expires_at"]:
         return entry["data"]
     return None
 
 
-def _set_cached_graph(data: dict, min_weight: float, min_momentum: float, ttl: int = 3600) -> None:
-    _graph_cache[(min_weight, min_momentum)] = {"data": data, "expires_at": time.time() + ttl}
+def _set_cached_graph(data: dict, cache_key: tuple, ttl: int = 3600) -> None:
+    _graph_cache[cache_key] = {"data": data, "expires_at": time.time() + ttl}
 
 
 def _parse_bullet_points(bullet_data) -> list[str]:
@@ -62,19 +82,42 @@ def get_db() -> DatabaseManager:
 async def get_graph_network(
     min_edge_weight: float = Query(0.10, description="Min TF-IDF weighted Jaccard for global view (default: 0.10)"),
     min_momentum: float = Query(0.0, description="Exclude nodes below this momentum score (default: 0.0)"),
+    view: GraphView = Query(
+        GraphView.full,
+        description="Projection: 'full' (default, all node fields) or 'slim' "
+                    "(drops summary and key_entities — for showcase consumers)",
+    ),
+    max_nodes: int = Query(
+        MAX_NODES_DEFAULT, ge=1, le=MAX_NODES_DEFAULT,
+        description=f"Cap on returned nodes, highest momentum first (default/max: {MAX_NODES_DEFAULT})",
+    ),
+    max_edges: int = Query(
+        MAX_EDGES_DEFAULT, ge=1, le=MAX_EDGES_DEFAULT,
+        description=f"Cap on returned edges, heaviest first (default/max: {MAX_EDGES_DEFAULT})",
+    ),
     api_key: str = Depends(verify_api_key),
 ):
     """
-    Get the full narrative graph: active storyline nodes + edges.
+    Get the narrative graph: active storyline nodes + edges.
 
     Returns data structured for react-force-graph (nodes + links).
     The min_edge_weight parameter filters weak edges — use a lower value (e.g. 0.05)
     for denser graphs, higher (e.g. 0.30) for cleaner but sparser views.
     Default 0.10 is calibrated for TF-IDF weighted Jaccard (which compresses scores
     compared to plain Jaccard: common entities like 'USA' contribute very little).
-    Response is cached for 1 hour per (min_edge_weight, min_momentum) combination.
+
+    Bounded by construction (max_nodes / max_edges). Edge count grows with the
+    SQUARE of the node pool, so an unbounded response degrades super-linearly as
+    the corpus grows: in Aug 2026 it reached 2402 nodes / 41344 edges / 5.82 MB,
+    which exceeded the landing page's fetch budget and Next.js's 2 MB data-cache
+    entry limit, silently falling back to static content. Nodes are selected first
+    (highest momentum), then only edges *between selected nodes* are read, so
+    `links` can never reference an id absent from `nodes`.
+
+    Response is cached for 1 hour per parameter combination.
     """
-    cached = _get_cached_graph(min_edge_weight, min_momentum)
+    cache_key = (min_edge_weight, min_momentum, view.value, max_nodes, max_edges)
+    cached = _get_cached_graph(cache_key)
     if cached:
         return cached
 
@@ -83,32 +126,59 @@ async def get_graph_network(
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 # Nodes: active storylines — read directly from storylines table
-                # to include community_name (added migration 022, not in v_active_storylines view)
-                cur.execute("""
-                    SELECT id, title, summary, narrative_status,
+                # to include community_name (added migration 022, not in v_active_storylines view).
+                # summary/key_entities are the two heavy fields (27% of the payload
+                # combined) and are never read by showcase consumers, so 'slim'
+                # selects NULL in their place rather than transferring them.
+                # Interpolated, not parameterised: these are column names, which
+                # cannot be bound. Safe only because `view` is a closed enum
+                # validated by FastAPI — never interpolate caller-supplied text.
+                heavy_fields = (
+                    "summary, key_entities"
+                    if view is GraphView.full
+                    else "NULL AS summary, NULL AS key_entities"
+                )
+                cur.execute(f"""
+                    SELECT id, title, {heavy_fields}, narrative_status,
                            category, article_count, momentum_score,
-                           key_entities, start_date, last_update,
+                           start_date, last_update,
                            EXTRACT(DAY FROM NOW() - start_date)::INTEGER AS days_active,
                            community_id, community_name
                     FROM storylines
                     WHERE narrative_status IN ('emerging', 'active', 'stabilized')
+                      AND momentum_score >= %s
                     ORDER BY momentum_score DESC, last_update DESC
-                """)
+                    LIMIT %s
+                """, (min_momentum, max_nodes))
                 node_rows = cur.fetchall()
 
-                # Edges: filtered by weight threshold
-                cur.execute("""
-                    SELECT source_story_id, target_story_id,
-                           weight, relation_type
-                    FROM v_storyline_graph
-                    WHERE weight >= %s
-                """, (min_edge_weight,))
-                edge_rows = cur.fetchall()
+                # Edges: only those with BOTH endpoints among the selected nodes.
+                # Filtering in SQL (rather than fetching every edge and pruning in
+                # Python) is what bounds the payload: the edge set is the quadratic
+                # term. It also removes the dangling links the old code could emit,
+                # since `links` was never reconciled against the surviving nodes.
+                selected_ids = [r[0] for r in node_rows]
+                if selected_ids:
+                    cur.execute("""
+                        SELECT source_story_id, target_story_id,
+                               weight, relation_type
+                        FROM v_storyline_graph
+                        WHERE weight >= %s
+                          AND source_story_id = ANY(%s)
+                          AND target_story_id = ANY(%s)
+                        ORDER BY weight DESC
+                        LIMIT %s
+                    """, (min_edge_weight, selected_ids, selected_ids, max_edges))
+                    edge_rows = cur.fetchall()
+                else:
+                    edge_rows = []
 
+        # Column order: id, title, summary, key_entities, narrative_status, category,
+        # article_count, momentum_score, start_date, last_update, days_active,
+        # community_id, community_name
         nodes = []
-        momentum_sum = 0.0
         for r in node_rows:
-            entities = r[7] or []
+            entities = r[3] or []
             if isinstance(entities, str):
                 try:
                     entities = json.loads(entities)
@@ -119,19 +189,18 @@ async def get_graph_network(
                 id=r[0],
                 title=r[1],
                 summary=r[2],
-                narrative_status=r[3] or "active",
-                category=r[4],
-                article_count=r[5] or 0,
-                momentum_score=round(r[6] or 0.0, 3),
                 key_entities=entities if isinstance(entities, list) else [],
+                narrative_status=r[4] or "active",
+                category=r[5],
+                article_count=r[6] or 0,
+                momentum_score=round(r[7] or 0.0, 3),
                 start_date=r[8].isoformat() if r[8] else None,
                 last_update=r[9].isoformat() if r[9] else None,
                 days_active=r[10],
-                community_id=r[11] if len(r) > 11 else None,
-                community_name=r[12] if len(r) > 12 else None,
+                community_id=r[11],
+                community_name=r[12],
             )
             nodes.append(node)
-            momentum_sum += node.momentum_score
 
         links = [
             StorylineEdge(
@@ -158,9 +227,11 @@ async def get_graph_network(
             if n.id in connected_ids or n.momentum_score >= HIGH_MOMENTUM_THRESHOLD
         ]
 
-        # Optional momentum filter
-        if min_momentum > 0:
-            nodes = [n for n in nodes if n.momentum_score >= min_momentum]
+        # No link/node reconciliation needed: `connected_ids` comes from `links`
+        # itself, so both endpoints of every surviving edge are kept above by
+        # construction. Dangling links came from the edge query being unscoped;
+        # the ANY(%s) predicates fix that at the source.
+        # min_momentum is applied in the node query, so no Python-side pass either.
 
         avg_momentum = round(
             sum(n.momentum_score for n in nodes) / len(nodes), 3
@@ -186,7 +257,7 @@ async def get_graph_network(
             "data": graph.model_dump(),
             "generated_at": datetime.utcnow().isoformat(),
         }
-        _set_cached_graph(response, min_edge_weight, min_momentum)
+        _set_cached_graph(response, cache_key)
         return response
 
     except Exception as e:

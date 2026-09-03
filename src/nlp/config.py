@@ -75,7 +75,7 @@ class DecayConfig(_StrictBase):
     stale_days_for_decay: int = 7
     active_to_stabilized_momentum: float = 0.3
     stabilized_to_archived_days: int = 30
-    emerging_ttl_days: int = 10
+    emerging_ttl_days: int = 30  # consumed by rule_5 in _apply_decay()
     edge_weight_decay_days: int = 30
     edge_weight_change_threshold: float = 0.02
 
