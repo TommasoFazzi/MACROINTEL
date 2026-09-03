@@ -159,6 +159,10 @@ class NarrativeProcessor:
         self.HDBSCAN_MIN_SAMPLES = self.config.hdbscan.min_samples
         self.DRIFT_WEIGHT_OLD = self.config.evolution.drift_weight_old
         self.DRIFT_WEIGHT_NEW = self.config.evolution.drift_weight_new
+        # Days of silence before an 'emerging' storyline is archived by rule_5.
+        # The rest of the decay section is still hardcoded inline in
+        # _apply_decay() — only this threshold is wired to YAML for now.
+        self.EMERGING_TTL_DAYS = self.config.decay.emerging_ttl_days
         # MOMENTUM_DECAY_FACTOR retained as hardcoded constant: Phase 2F replaces
         # the linear weekly multiplier with EWMA + burst detection (task 2.12-2.13);
         # until then keep current production behavior.
@@ -1470,13 +1474,25 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
         - rule_2: active + momentum < 0.3 → stabilized
         - rule_3: stabilized for 30 days → archived
         - rule_4: emerging for 5 days without reaching 3 articles → archived
+        - rule_5: emerging silent for EMERGING_TTL_DAYS → archived, regardless of
+          article_count (closes the dead-end described below)
         - reverse_promo: stabilized → active when burst detected (Phase 2F task 2.13;
           placeholder=0 in Phase 1C)
+
+        rule_5 exists because 'emerging' had no exit for a whole class of storylines.
+        A storyline is born 'emerging' with article_count = cluster size (often >= 3),
+        and the only two ways out were promotion to 'active' — which fires only when a
+        *new* article is assigned — and rule_4, which requires article_count < 3. One
+        born with >= 3 articles that never receives another satisfies neither: rule_1
+        decays its momentum forever, but rule_2 acts only on 'active' and rule_3 only
+        on 'stabilized'. It stayed 'emerging' indefinitely. Production had 1828 such
+        rows, the oldest from 2026-02-16, which inflated the graph endpoint to 5.8 MB
+        and silently broke the landing page's live data.
 
         Returns per-rule counters (Phase 1C task 1.13): persisted in
         `narrative_run_metrics.decay_stats` JSONB by `process_daily_batch`.
         """
-        stats = {'rule_1': 0, 'rule_2': 0, 'rule_3': 0, 'rule_4': 0, 'reverse_promo': 0}
+        stats = {'rule_1': 0, 'rule_2': 0, 'rule_3': 0, 'rule_4': 0, 'rule_5': 0, 'reverse_promo': 0}
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
@@ -1521,6 +1537,23 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                 """)
                 stats['rule_4'] = cur.rowcount
 
+                # Rule 5: Emerging with no activity for EMERGING_TTL_DAYS → archived.
+                # Deliberately has NO article_count predicate — that predicate is
+                # exactly what made 'emerging' a dead-end, and copying it here would
+                # reproduce the bug. migrations/016_graph_cleanup.sql step 1 made that
+                # mistake: it mirrored rule_4's `article_count < 3` and so never
+                # touched the rows that were actually stuck.
+                # Runs after rule_4 so small stale rows are still counted by rule_4
+                # and this counter measures only what previously escaped entirely.
+                cur.execute("""
+                    UPDATE storylines
+                    SET narrative_status = 'archived'
+                    WHERE narrative_status = 'emerging'
+                    AND last_update < NOW() - MAKE_INTERVAL(days => %s)
+                    RETURNING id
+                """, (self.EMERGING_TTL_DAYS,))
+                stats['rule_5'] = cur.rowcount
+
                 # reverse_promo placeholder — implemented in Phase 2F (task 2.13)
 
             conn.commit()
@@ -1531,6 +1564,7 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
                 f"rule_2={stats['rule_2']} (active→stabilized), "
                 f"rule_3={stats['rule_3']} (stabilized→archived), "
                 f"rule_4={stats['rule_4']} (emerging→archived), "
+                f"rule_5={stats['rule_5']} (emerging stale→archived), "
                 f"reverse_promo={stats['reverse_promo']}"
             )
 

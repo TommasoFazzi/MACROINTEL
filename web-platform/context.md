@@ -21,7 +21,7 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 - `app/insights/[slug]/page.tsx` - **Briefing detail**: renders full executive summary. No auth required.
 - `app/romania/page.tsx` - **Romania Intelligence vertical** (`/romania`): public page with macro dashboard (5 indicator cards with sparklines) + briefing list (Daily/Weekly tab). Server component layout + client SWR components. No auth.
 - `app/romania/[id]/page.tsx` - **Single Romania briefing** (`/romania/{id}`): server-side fetch + full content render as pre-formatted text. Shows macro header summary bar when available. No auth.
-- `middleware.ts` - **No-op passthrough**: platform is fully public, all routes accessible without authentication.
+- `middleware.ts` - **Sets a per-request nonce CSP** on every non-static route (matcher excludes `_next/static`, `_next/image`, and static asset extensions). No authentication: the platform is fully public and no route is gated. Emits `Content-Security-Policy` + `x-nonce`; `script-src` needs `'unsafe-eval'` for mapbox-gl's WebGL shader compilation and sigma/graphology-layout-forceatlas2. `frame-ancestors` and `form-action` are set explicitly because they do not inherit from `default-src`. **Note:** the nonce makes every matched route dynamic (`cache-control: private, no-cache, no-store`), so the landing page's full route cache is off and its RSC fetches run on every request — the fetch-level `revalidate` is the only cache in play.
 - `lib/communityColors.ts` - **Shared 15-color palette**: used by both `TacticalMap` (COLOR: COMM toggle) and `StorylineGraph` for visual consistency across pages.
   - State: `compareId` (nullable) to track which report is being compared
   - Fetches: `report` detail, `compareReport` detail (when `compareId` is set), `comparison` delta (LLM-synthesized)
@@ -149,7 +149,8 @@ Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cin
 **Asset richiesti** in `public/assets/`: `world-map-hero.jpg`, `narrative-graph-hero.png` (fallback Scena 2), `dashboard-screenshot.png`. Senza asset i componenti renderizzano placeholder gradient (no broken image).
 
 **Data, scene e JSON-LD** in `lib/landing/`:
-- `live.ts` — fetch RSC server-only verso `/api/v1/stories/graph` (con `X-API-Key`, **mai** esposta al browser) e `/api/v1/insights?limit=1`, `revalidate: 900`, timeout 2.5s, fallback deterministico ovunque. Esporta anche `topCommunityNames()` per le etichette della Scena 1
+- `live.ts` — fetch RSC server-only verso `/api/v1/stories/graph` (con `X-API-Key`, **mai** esposta al browser) e `/api/v1/insights?limit=1`, `revalidate: 900`, timeout 2.5s, fallback deterministico ovunque. Esporta anche `topCommunityNames()` per le etichette della Scena 1.
+  - **Budget di payload (fix `fix-emerging-storyline-lifecycle-leak`)**: la risposta del grafo deve restare **sotto 1 MB**. Due vincoli distinti, entrambi violati fino al 2026-09: il timeout di 2.5s (misurati 3229 ms su 5.82 MB dentro il container) e il limite fisso di **2 MB per entry** della data cache di Next (`incremental-cache/index.js`, e il corpo è codificato in base64 prima del controllo, quindi il budget reale sul JSON è ~1.5 MB). Superato il secondo, `revalidate` non memorizza **nulla** e ogni render rifà la fetch completa. L'endpoint accetta ora `view=slim` (omette `summary` e `key_entities`, 27% del payload) e limiti su nodi/archi. **Se aggiungi un consumo di dati vivi, misura il payload reale — non stimarlo: la degradazione elegante nasconde il guasto invece di segnalarlo.**
 - `nebulaRender.ts` — **primitive canvas condivise fra Scena 1 e Scena 2**: tipo `RGB`, palette community in forma RGB (`dataColor`), `drawNebula`, `rgba`, `lerpColor`, `bezierPoint`. È il modulo che garantisce che le due scene convergano sullo *stesso* oggetto: una reimplementazione parallela divergerebbe alla prima modifica e l'agnizione finale perderebbe senso
 - `signalDescentScene.ts` — generatore deterministico (PRNG mulberry32 seeded) della Scena 1: particelle a keyframe + nodi storyline + archi Jaccard + cluster. `sampleParticle()` / `sampleNode()` interpolano a un dato progresso
 - `livingGraphLayout.ts` / `livingGraphFixture.ts` — layout della Scena 2 dai dati reali, e fixture seeded per le route `/dev/*` senza backend
@@ -190,7 +191,8 @@ Il token Tailwind `--font-serif` risolve a `var(--font-source-serif)`: i due nom
   - `NEXT_PUBLIC_MAPBOX_TOKEN` - Mapbox API token (client-side, restrict by domain)
   - `INTELLIGENCE_API_URL` - Backend API URL (server-side only)
   - `INTELLIGENCE_API_KEY` - API authentication key (server-side only, via proxy)
-  - ~~`JWT_SECRET`, `ACCESS_CODES`, `ORACLE_REQUIRE_GEMINI_KEY`~~ - **No longer used**: JWT access control and Oracle BYOK were removed (middleware is a no-op passthrough, platform fully public)
+  - `JWT_SECRET`, `ACCESS_CODES` - **Still required, despite the access gate being removed**: `app/api/access/verify/route.ts` reads both and throws if `JWT_SECRET` is unset, and nginx still exposes the route (`location /api/access/`). No component calls it any more, but it is publicly reachable and mints 30-day JWT cookies. Keep both in `docker-compose.yml` until the route and its nginx location are deleted together (verified 2026-09-03).
+  - ~~`ORACLE_REQUIRE_GEMINI_KEY`~~ - **No longer used**: Oracle BYOK was removed
 - `next.config.ts` - Next.js configuration
 - `package.json` - Dependencies
 - `tsconfig.json` - TypeScript config

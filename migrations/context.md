@@ -155,6 +155,18 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - **Migration 046 explicitly NOT touched**: the predecessor design (`redesign-narrative-clustering-signal`) had assumed `shadow_partitions` was never created, but it already exists and is complete (verified by reading the file) — this change only adds 045.
   - Rollback: see commented section at bottom of the migration file.
 
+### Emerging Lifecycle Leak (2026-09-03)
+
+- `047_archive_stuck_emerging.sql` — One-off cleanup of storylines stuck in the `emerging` dead-end (`openspec/changes/fix-emerging-storyline-lifecycle-leak/`):
+  1. `storylines_047_backfill_snapshot` — snapshot table created **inside** the migration so cleanup and rollback are self-contained rather than depending on hand-run commands. Drop it manually once the change is confirmed.
+  2. `UPDATE storylines SET narrative_status='archived'` filtered on `narrative_status='emerging'` **and `last_update` older than 30 days ONLY**. Expected ~1828 rows in prod (measured 2026-08-23).
+  3. `REFRESH MATERIALIZED VIEW CONCURRENTLY entity_idf` — the view filters on `narrative_status` in both its `FROM` and its corpus-size subquery, so archiving leaves it stale with inflated `doc_freq`/N, and its weights drive the TF-IDF weighted Jaccard of every subsequent edge. Same reason migration 016 step 4 did it. Runs outside the transaction (`CONCURRENTLY` requires it; `idx_entity_idf_unique` already exists).
+  - **NO `article_count` predicate — this is the whole point.** `016_graph_cleanup.sql` step 1 attempted the same cleanup but copied `rule_4`'s `article_count < 3` verbatim, so it selected only rows `rule_4` already archived and never touched a stuck one. The bug survived the cleanup meant to fix it.
+  - **Pairs with `rule_5`** in `NarrativeProcessor._apply_decay()`. Both are required: the migration clears the backlog, `rule_5` stops it rebuilding (~370 rows/month at the observed rate). The migration's 30-day threshold is written in the SQL and deliberately **independent** of `decay.emerging_ttl_days` — a migration is a historical fact and must produce the same effect if re-run under a different config.
+  - ⚠️ **`scripts/rebuild_graph_edges.py` makes this irreversible.** Its step 0 hard-deletes `storyline_edges` whose endpoints are archived and stale by >30 days — a predicate every archived row satisfies *at the moment of archival*. Running it deletes ~40k edges that the rollback cannot restore (the rebuild pass only regenerates edges for emerging/active/stabilized rows). Do not run it until the change is confirmed good.
+  - Deploy order: apply → restart backend (the graph endpoint holds a 1h in-memory cache; without a restart the effect is invisible) → verify → then re-run `compute_communities.py`.
+  - Rollback: `047_archive_stuck_emerging_rollback.sql` (restores from the snapshot; the `sync_narrative_status` trigger is symmetric and restores the legacy `status` column on its own).
+
 ## Applied in Production
 
 > ⚠️ **This list is stale (baseline 2026-03-24, partial updates after) — re-verify against the prod DB before relying on it.** Several "Not yet applied" entries below are almost certainly outdated: the features depending on them have been live in production for months — 034 (`v_sanctions_public` is used by Oracle tools in prod), 036–039 (Romania vertical + macro historical columns power the daily RO briefing), 043/046 (the daily pipeline's shadow-clustering steps write `narrative_run_metrics.shadow_partitions`). Verify with a read-only query, e.g.:

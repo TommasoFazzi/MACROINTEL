@@ -47,7 +47,10 @@ decay:
   stale_days_for_decay: 7
   active_to_stabilized_momentum: 0.3
   stabilized_to_archived_days: 30
-  emerging_ttl_days: 10
+  emerging_ttl_days: 30    # rule_5: days of silence before an 'emerging' storyline is
+                           # archived. 30 mirrors stabilized_to_archived_days so the
+                           # state machine has a single abandonment horizon. Was 10 and
+                           # unread by any code until rule_5 wired it up.
   edge_weight_decay_days: 30
   edge_weight_change_threshold: 0.02
 
