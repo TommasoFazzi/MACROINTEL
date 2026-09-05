@@ -41,7 +41,7 @@ frozendict==2.4.7
 frozenlist==1.8.0
 fsspec==2025.10.0
 gitdb==4.0.12
-GitPython==3.1.58
+GitPython==3.1.59
 anthropic>=0.40
 google-ai-generativelanguage==0.6.15
 openai>=1.35
@@ -189,10 +189,10 @@ tldextract==5.3.0
 tokenizers==0.22.2
 toml==0.10.2
 torch==2.13.0  # CVE-2025-3000 (critical): memory corruption in torch.jit.script; fixed in 2.13.0
-tornado==6.5.7
+tornado==6.5.8
 tqdm==4.67.1
 trafilatura==2.0.0
-transformers==5.5.0  # CVE-2026-5241 fix (RCE via LightGlue); sentence-transformers>=5.3.0 supports transformers<6.0.0; Trainer still never used (inference-only)
+transformers==5.10.0  # CVE-2026-5241, CVE-2026-9856 fixes; sentence-transformers>=5.3.0 supports transformers<6.0.0; Trainer still never used (inference-only)
 typer-slim==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
