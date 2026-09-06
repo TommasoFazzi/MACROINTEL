@@ -44,7 +44,7 @@ frozendict==2.4.7
 frozenlist==1.8.0
 fsspec==2025.10.0
 gitdb==4.0.12
-GitPython==3.1.58
+GitPython==3.1.59
 google-ai-generativelanguage==0.6.15
 google-api-core==2.28.1
 google-api-python-client==2.187.0
@@ -191,7 +191,7 @@ tldextract==5.3.0
 tokenizers==0.22.1
 toml==0.10.2
 torch==2.13.0
-tornado==6.5.7
+tornado==6.5.8
 tqdm==4.67.1
 trafilatura==2.0.0
 transformers==5.5.0  # pinned: CVE Trainer ACE requires 5.x; sentence-transformers==5.1.2 caps at <5.0.0; risk accepted: Trainer never used (inference-only via SentenceTransformer)
