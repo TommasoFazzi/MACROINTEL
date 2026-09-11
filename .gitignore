@@ -106,3 +106,4 @@ handoff.md
 
 # Local docker-compose port overrides (machine-specific, not for VCS)
 docker-compose.override.yml
+testo.txt

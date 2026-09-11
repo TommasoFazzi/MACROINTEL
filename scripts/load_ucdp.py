@@ -8,20 +8,23 @@ and inserts into the conflict_events table with PostGIS Point geometries.
 Uses tenacity exponential backoff for API resilience.
 
 Two dataset modes:
-  - Stable GED (default): UCDP_GED_API — verified data, coverage through 2024-12-31
+  - Stable GED (default): UCDP_GED_API — verified data, coverage 1989 through 2025-12-31
   - GED Candidate (--candidate): UCDP_CANDIDATE_API — provisional monthly data,
-    coverage through ~Feb 2026 (version 26.0.2). Supports StartDate/EndDate filtering.
+    coverage 2026-01-01 through ~Feb 2026 only. A candidate starts where the
+    stable release ends; it does not overlap it. Fatality counts are provisional
+    and get revised in the next annual release — label them as such downstream.
 
 Usage:
-    python scripts/load_ucdp.py                              # Full stable load (1989-2024)
+    python scripts/load_ucdp.py                              # Full stable load (1989-2025)
     python scripts/load_ucdp.py --dry-run                    # Count without saving
     python scripts/load_ucdp.py --limit 5000                 # Limit events fetched
-    python scripts/load_ucdp.py --candidate                  # Full candidate load
-    python scripts/load_ucdp.py --candidate --start-date 2025-01-01   # 2025+ only
-    python scripts/load_ucdp.py --candidate --start-date 2025-01-01 --end-date 2025-12-31
+    python scripts/load_ucdp.py --start-date 2025-01-01 --end-date 2025-12-31  # one year
+    python scripts/load_ucdp.py --candidate                  # Full candidate load (2026+)
 
-NOTE: StartDate/EndDate filter on the date_end field and work on all GED versions
-(both stable and candidate). Use --candidate to access provisional 2025+ data.
+NOTE: StartDate/EndDate filter on the date_end field (YYYY-MM-DD) and work on
+all GED versions. Unrecognised params are silently IGNORED by the UCDP API, not
+rejected — e.g. `Year=2025` returns the unfiltered total with a 200, so always
+check the returned sample dates before trusting that a filter applied.
 Deduplication is handled via ON CONFLICT on data_source_id.
 """
 
@@ -47,11 +50,17 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Stable GED: verified data, updated annually. v25.1 covers 1989–2024-12-31.
-UCDP_GED_API = "https://ucdpapi.pcr.uu.se/api/gedevents/25.1"
+# Stable GED: verified data, updated annually. v26.1 covers 1989–2025-12-31
+# (417,968 events). Each annual release is a full re-issue that also *revises*
+# prior years; INSERT_SQL upserts fatalities/notes ON CONFLICT, so re-running a
+# full load against a newer version does pull those corrections in.
+UCDP_GED_API = "https://ucdpapi.pcr.uu.se/api/gedevents/26.1"
 
-# GED Candidate: provisional monthly data. v26.0.2 covers up to ~Feb 2026.
-# Same endpoint label (gedevents), different version number.
+# GED Candidate: provisional monthly data. A candidate covers ONLY the months
+# after the stable release it extends — v26.0.2 is 2026-01-01 onward (1,298
+# events), it does NOT contain 2025. Use the stable endpoint for any completed
+# year. Candidate versions also supersede each other and may drop months
+# (v26.0.1 held 1,727 events, v26.0.2 holds 1,298).
 UCDP_CANDIDATE_API = "https://ucdpapi.pcr.uu.se/api/gedevents/26.0.2"
 
 
@@ -161,9 +170,15 @@ def fetch_ucdp_events(
         time.sleep(0.3)  # Base rate limiting
 
 
-def transform_event(raw: dict) -> dict:
-    """Transform UCDP API event to conflict_events row."""
+def transform_event(raw: dict, source: str = 'UCDP_GED') -> dict:
+    """Transform UCDP API event to conflict_events row.
+
+    'source' records the dataset vintage ('UCDP_GED' stable vs
+    'UCDP_GED_CANDIDATE' provisional) so downstream consumers can tell verified
+    rows from provisional ones — provisional fatality counts get revised.
+    """
     return {
+        'source': source,
         'event_date': raw.get('date_start'),
         'event_type': str(raw.get('type_of_violence', '')),
         'country': raw.get('country'),
@@ -185,18 +200,20 @@ def transform_event(raw: dict) -> dict:
 
 INSERT_SQL = """
     INSERT INTO conflict_events (event_date, event_type, country, location, geom,
-        actor1, actor2, fatalities, fatalities_low, fatalities_high, notes, data_source_id)
+        actor1, actor2, fatalities, fatalities_low, fatalities_high, notes,
+        source, data_source_id)
     VALUES (%(event_date)s, %(event_type)s, %(country)s, %(location)s,
         CASE WHEN %(latitude)s IS NOT NULL AND %(longitude)s IS NOT NULL
              THEN ST_SetSRID(ST_Point(%(longitude)s, %(latitude)s), 4326)
              ELSE NULL END,
         %(actor1)s, %(actor2)s, %(fatalities)s, %(fatalities_low)s, %(fatalities_high)s,
-        %(notes)s, %(data_source_id)s)
+        %(notes)s, %(source)s, %(data_source_id)s)
     ON CONFLICT (data_source_id) DO UPDATE SET
         fatalities = EXCLUDED.fatalities,
         fatalities_low = EXCLUDED.fatalities_low,
         fatalities_high = EXCLUDED.fatalities_high,
-        notes = EXCLUDED.notes
+        notes = EXCLUDED.notes,
+        source = EXCLUDED.source
 """
 
 
@@ -226,6 +243,10 @@ def main():
     if args.limit:
         logger.info(f"Maximum events: {args.limit}")
 
+    # Tag rows with the dataset vintage so provisional (revisable) events stay
+    # distinguishable from verified ones in conflict_events.source.
+    source_tag = 'UCDP_GED_CANDIDATE' if args.candidate else 'UCDP_GED'
+
     total_events = 0
     total_pages = 0
     saved = 0
@@ -252,7 +273,7 @@ def main():
             with conn.cursor() as cur:
                 for raw_event in batch:
                     try:
-                        event = transform_event(raw_event)
+                        event = transform_event(raw_event, source=source_tag)
                         cur.execute(INSERT_SQL, event)
                         saved += 1
                     except Exception as e:
