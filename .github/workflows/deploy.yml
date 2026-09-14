@@ -95,16 +95,45 @@ jobs:
           known_hosts: ${{ secrets.VPS_KNOWN_HOSTS }}
           command_timeout: 30m
           script: |
+            # appleboy/ssh-action does NOT set -e by default: without this, a failed
+            # build or `up -d` lets the script continue to the final `echo` and the
+            # workflow exits 0 while the site is down. See the 2026-09-12 incident,
+            # where the frontend container was never recreated and prune deleted the
+            # evidence, yet the deploy reported success for two days.
+            set -euo pipefail
+
             cd /opt/intelligence-ita/repo
             git pull origin main
             DEPLOY_SHA=$(git rev-parse --short HEAD)
+
+            # Prune BEFORE building. Running it afterwards deletes the very container
+            # that just failed to start, destroying the only evidence of the failure.
+            sudo docker container prune -f
+
             sudo docker compose -p app --env-file .env.production build backend
             sudo docker compose -p app --env-file .env.production build \
               --build-arg DEPLOY_SHA=$DEPLOY_SHA \
               frontend
             sudo docker compose -p app --env-file .env.production up -d --no-deps backend frontend
             sudo docker compose -p app --env-file .env.production exec -T nginx nginx -s reload
-            # Rimuove container fermati (orfani da docker compose run manuali)
-            sudo docker container prune -f
+
+            # Assert the success path. Every nginx location proxies to frontend:3000,
+            # so a dead frontend is a site-wide 502 that every other check still
+            # reports as healthy. Retry to absorb container start-up time.
+            for i in $(seq 1 12); do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://macrointel.net/ || echo 000)
+              if [ "$code" = "200" ]; then
+                echo "Smoke test OK (HTTP $code) after ${i} attempt(s)"
+                break
+              fi
+              if [ "$i" = "12" ]; then
+                echo "Smoke test FAILED: https://macrointel.net/ returned $code"
+                sudo docker compose -p app ps -a || true
+                sudo docker compose -p app logs --tail=50 frontend || true
+                exit 1
+              fi
+              sleep 5
+            done
+
             chmod +x deploy/trigger_pipeline.sh
             echo "Deploy completed at $(date)"
