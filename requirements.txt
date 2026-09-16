@@ -60,8 +60,9 @@ htmldate==1.9.4
 httpcore==1.0.9
 httplib2==0.32.0
 httpx==0.28.1
+httpx2>=2.12.0
 huggingface-hub==1.23.0
-idna==3.15
+idna==3.19
 importlib_metadata==8.7.1
 iniconfig==2.3.0
 itsdangerous==2.2.0
