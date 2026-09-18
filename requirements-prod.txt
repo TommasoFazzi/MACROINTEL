@@ -123,7 +123,7 @@ orderly-set==5.5.0
 packaging==26.2
 patchright>=1.62.3
 playwright>=1.49.0
-pandas==2.3.3
+pandas==3.0.5
 pandas-market-calendars>=4.3
 peewee==3.18.3
 pgvector==0.4.1
