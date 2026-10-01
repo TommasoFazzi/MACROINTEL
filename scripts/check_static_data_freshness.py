@@ -143,7 +143,7 @@ def check_ucdp_upstream():
 
     results = {}
     for label, base_url in [
-        ("stable",    "https://ucdpapi.pcr.uu.se/api/gedevents/25.1"),
+        ("stable",    "https://ucdpapi.pcr.uu.se/api/gedevents/26.1"),
         ("candidate", "https://ucdpapi.pcr.uu.se/api/gedevents/26.0.2"),
     ]:
         try:
