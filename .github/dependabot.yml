@@ -13,13 +13,13 @@ updates:
       - dependency-name: "fastapi"
       - dependency-name: "starlette"
       - dependency-name: "python-multipart"
-      - dependency-name: "tornado"
       # openbb-* plugins: any version bump beyond current pins requires
       # openbb-core>=1.6.10 which pulls fastapi==0.136 — incompatible with our stack
       - dependency-name: "openbb"
       - dependency-name: "openbb-*"
-      # Blocked by sentence-transformers<5.0.0 cap
+      # sentence-transformers 5.x accepts transformers<6: minor/patch bumps are fine
       - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
       # No ARM64 wheel guarantee — bump manually after verification
       - dependency-name: "torch"
 
