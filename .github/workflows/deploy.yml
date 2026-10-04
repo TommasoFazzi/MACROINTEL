@@ -11,6 +11,14 @@ on:
       - 'Dockerfile'
   workflow_dispatch:
 
+# One run per ref at a time. On main this serialises deploys: two merges in a row used to
+# start two parallel builds on the same server. Queued, never cancelled — a deploy killed
+# mid `docker compose up` is worse than a late one. (GitHub keeps only the newest pending
+# run per group; fine, since every deploy pulls main's HEAD anyway.)
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
