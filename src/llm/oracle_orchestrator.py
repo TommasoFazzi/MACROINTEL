@@ -29,6 +29,7 @@ Preserved from v3:
 
 import hashlib
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -64,6 +65,9 @@ SESSION_CLEANUP_INTERVAL = 600   # 10 minutes
 MAX_AGENTIC_ITERATIONS = 4       # Max tool-call rounds before forcing synthesis
 MAX_TOTAL_TOOL_CALLS = 6         # Hard cap on total tool calls across all iterations (rate limit protection)
 _SUMMARY_THRESHOLD = 1500        # chars; below this, tool results go into history verbatim
+# The system prompt asks for a <DOCUMENTO>...</DOCUMENTO> wrapper to structure the answer;
+# react-markdown escapes raw HTML, so left in it shows as literal text in the UI.
+_DOCUMENTO_TAG_RE = re.compile(r"</?DOCUMENTO>")
 
 
 class OracleOrchestrator:
@@ -503,6 +507,7 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
 
         if not answer:
             answer = "Non ho potuto elaborare una risposta basata sui dati disponibili."
+        answer = _DOCUMENTO_TAG_RE.sub("", answer).strip()
 
         # ── Update conversation memory ────────────────────────────────────
         ctx.add_message("user", query)
