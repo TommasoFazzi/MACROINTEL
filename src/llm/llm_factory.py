@@ -167,6 +167,15 @@ class ClaudeClient(BaseLLMClient):
         self._model_name = model
         self._timeout = timeout
 
+    @staticmethod
+    def _sampling_body(temperature: float, top_p: float | None) -> dict[str, Any]:
+        # anthropic SDK 1.x dropped temperature/top_p from messages.create() (TypeError).
+        # The API still honours them on Claude 4.6-era models, so send them raw.
+        body: dict[str, Any] = {"temperature": temperature}
+        if top_p is not None:
+            body["top_p"] = top_p
+        return body
+
     def generate(
         self,
         prompt: str,
@@ -181,13 +190,11 @@ class ClaudeClient(BaseLLMClient):
         kwargs: dict[str, Any] = {
             "model": self._model_name,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
+            "extra_body": self._sampling_body(temperature, top_p),
         }
         if system:
             kwargs["system"] = system
-        if top_p is not None:
-            kwargs["top_p"] = top_p
         if stop_sequences:
             kwargs["stop_sequences"] = stop_sequences
         # Prompt caching: list-form system triggers the beta header
@@ -214,14 +221,12 @@ class ClaudeClient(BaseLLMClient):
         kwargs: dict[str, Any] = {
             "model": self._model_name,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "tools": tools,
             "messages": messages,
+            "extra_body": self._sampling_body(temperature, top_p),
         }
         if system:
             kwargs["system"] = system
-        if top_p is not None:
-            kwargs["top_p"] = top_p
         # Prompt caching: beta header required when system prompt OR tool definitions
         # carry cache_control blocks (both are static prefixes cached across calls).
         has_cached_system = isinstance(system, list) and any(

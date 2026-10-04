@@ -139,7 +139,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
 - **Internal**: `src/storage/database`, `src/nlp/processing`, `src/utils/logger`, `src/finance/`
 - **External**:
   - `google-generativeai` — T1 (Gemini 3.1 Pro), T4a/T5 (Flash-Lite), narrative_processor exception (2.5 Flash)
-  - `anthropic>=0.40` — T2 (Claude Sonnet 4.6) — Oracle agentic loop
+  - `anthropic>=0.40,<2` — T2 (Claude Sonnet 4.6) — Oracle agentic loop. `ClaudeClient` sends `temperature`/`top_p` via `extra_body` (`_sampling_body()`), because SDK 1.x removed them from `messages.create()`
   - `openai>=1.35` — T3 (DeepSeek V3.2, base_url=api.deepseek.com), T4b (Mistral Codestral 2, base_url=api.mistral.ai)
   - `pydantic` — Structured output validation
   - `sentence-transformers` — Embeddings and Cross-Encoder reranking
