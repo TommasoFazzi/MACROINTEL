@@ -84,6 +84,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - `_t5_client` — `LLMFactory.get("t5")` instance, initialized in `__init__` alongside `_claude_client`
   - `_extract_text_from_response(response)` — extracts text from `response.content` blocks where `block.type == "text"`
   - Forced synthesis on max-iterations: calls `ClaudeClient.generate()` directly (no tool_choice manipulation)
+  - The system prompt asks for a `<DOCUMENTO>…</DOCUMENTO>` wrapper; `_DOCUMENTO_TAG_RE` strips it from the final answer (before memory/logging/response), since react-markdown in `OracleMessage.tsx` escapes raw HTML and would show the tags as literal text
   - **BYOK removed**: Oracle uses server-side `ANTHROPIC_API_KEY` exclusively (breaking change 2026-04-17)
   - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
   - `TTLCache` for SQL results (5min) preserved
