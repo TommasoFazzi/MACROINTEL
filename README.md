@@ -199,7 +199,7 @@ INTELLIGENCE_ITA/
 |-------------|---------|-------|
 | Python | 3.9+ (3.12 recommended) | Backend and pipeline |
 | PostgreSQL | 14+ (17 in production) | With pgvector + PostGIS extensions |
-| Node.js | 16+ | Next.js frontend |
+| Node.js | 22+ | Next.js frontend |
 | Docker + Compose | any recent | Production deploy only |
 
 **Required environment variables** (see `.env.example`):
