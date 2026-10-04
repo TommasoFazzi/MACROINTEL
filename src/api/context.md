@@ -55,7 +55,7 @@ Key database objects consumed:
 | GET | `/api/v1/stories/{storyline_id}/network` | routers/stories.py | Ego network: returns the specified node plus all direct neighbors and connecting edges; min_weight=0.05 (lower than graph default to show weaker connections) | Yes |
 | GET | `/api/v1/stories` | routers/stories.py | Paginated storyline list; query params: `page`, `per_page`, `status`; default filter: emerging + active | Yes |
 | GET | `/api/v1/stories/{storyline_id}` | routers/stories.py | Storyline detail with related storylines (up to 10) and recent articles (up to 10) | Yes |
-| POST | `/api/v1/oracle/chat` | routers/oracle.py | Oracle 2.0 chat: NL query → agentic tool loop (RAG/SQL/Graph/Market/...) → Claude Sonnet 4.6 synthesis. Body: `query`, `session_id`, `start_date`, `end_date`, `categories`, `gpe_filter`, `mode`. **BREAKING (2026-04-17)**: `gemini_api_key` BYOK field removed — passing it returns HTTP 422. Rate limit: **3/minute per IP**. | Yes |
+| POST | `/api/v1/oracle/chat` | routers/oracle.py | Oracle 2.0 chat: NL query → agentic tool loop (RAG/SQL/Graph/Market/...) → Claude Sonnet 4.6 synthesis. Body: `query`, `session_id`, `start_date`, `end_date`, `categories`, `gpe_filter`, `mode`. **BREAKING (2026-04-17)**: `gemini_api_key` BYOK field removed — passing it returns HTTP 422. Rate limit: **3/day per IP + 15/day global**; client IP = `X-Real-IP` (set by nginx, never `X-Forwarded-For`, which is client-spoofable). Bypass: `X-API-Key: $ORACLE_ADMIN_KEY` or IP in `ORACLE_WHITELIST_IPS` (both passed to the backend via `docker-compose.yml`). | Yes |
 | GET | `/api/v1/oracle/health` | routers/oracle.py | Oracle 2.0 service health check | No |
 | GET | `/api/v1/romania/macro` | routers/romania.py | Latest values + 90-day series for 5 RO indicators (BNR_RATE, RO_CPI_YOY, EUR_RON, RO_DEFICIT_GDP, RO_10Y_YIELD). Each indicator includes `expected_frequency`, `is_stale`, `staleness_days` from `macro_indicator_metadata` JOIN. Cached 5min. | No |
 | GET | `/api/v1/romania/briefings` | routers/romania.py | List saved Romania briefings newest-first; params: `type` (`daily`/`weekly`), `limit` (1–100, default 20). | No |
@@ -202,7 +202,7 @@ Client request
 
 **CORS is GET/OPTIONS only:** `allow_methods=["GET", "OPTIONS"]` — the API is read-only by design. Browser-originated POST/PUT/DELETE requests will be blocked by CORS.
 
-**Rate limiting scope:** `@limiter.limit(...)` is applied to the four endpoints defined directly in `main.py` and to `POST /api/v1/oracle/chat` (3/min). The dashboard, reports, and stories router endpoints have no per-endpoint rate limit decorator. The global `RateLimitExceeded` exception handler is registered on the app, so adding limits to routers requires only adding the decorator.
+**Rate limiting scope:** `@limiter.limit(...)` is applied to the four endpoints defined directly in `main.py` and to `POST /api/v1/oracle/chat` (3/day per IP, 15/day global). The dashboard, reports, and stories router endpoints have no per-endpoint rate limit decorator. The global `RateLimitExceeded` exception handler is registered on the app, so adding limits to routers requires only adding the decorator.
 
 **DatabaseManager instantiated per request:** Each router handler calls `get_db()` which creates `DatabaseManager()` on every request. The class internally uses `psycopg2.pool.SimpleConnectionPool`, so connection pooling happens at that layer — not at the FastAPI dependency level.
 

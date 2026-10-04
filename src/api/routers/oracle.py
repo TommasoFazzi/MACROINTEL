@@ -22,15 +22,15 @@ _ORACLE_WHITELIST_IPS = {
 
 
 def _real_client_ip(request: Request) -> str:
-    """Extract original client IP from X-Forwarded-For (set by nginx + frontend proxy).
+    """Extract original client IP from X-Real-IP (set by nginx, forwarded by the frontend proxy).
 
-    Falls back to direct peer address if XFF is missing — but in the production
-    chain (browser → nginx → next.js → fastapi) XFF is always present.
+    Not X-Forwarded-For: nginx *appends* to it ($proxy_add_x_forwarded_for), so its first
+    entry is whatever the client sent — spoofable to dodge rate limits or impersonate a
+    whitelisted IP. nginx *overwrites* X-Real-IP with $remote_addr.
+    Falls back to the direct peer address outside the production chain (local dev).
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return get_remote_address(request)
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    return real_ip or get_remote_address(request)
 
 
 def _is_bypass(request: Request) -> bool:
@@ -75,7 +75,7 @@ async def oracle_chat(
     3. Response with sources and query_plan metadata
 
     Auth: API key whitelist (ORACLE_MODE=private).
-    Rate: 5 req/day per IP.
+    Rate: 3 req/day per IP, 15/day global (bypass: ORACLE_ADMIN_KEY header or ORACLE_WHITELIST_IPS).
     BREAKING CHANGE (2026-04-17): gemini_api_key BYOK removed.
     Oracle now uses server-side ANTHROPIC_API_KEY exclusively.
     """
