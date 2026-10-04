@@ -37,3 +37,11 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "shadcn"
         update-types: ["version-update:semver-major"]
+      # eslint-plugin-react (via eslint-config-next) supports ESLint <=9: the
+      # ESLint 10 bump (#78) silently broke `npm run lint` from 2026-06-29.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # `typescript` is an npm alias to @typescript/typescript6 (the JS API that
+      # typescript-eslint and next build need); TS 7 lives at @typescript/native.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

@@ -195,6 +195,10 @@ Il token Tailwind `--font-serif` risolve a `var(--font-source-serif)`: i due nom
   - ~~`ORACLE_REQUIRE_GEMINI_KEY`~~ - **No longer used**: Oracle BYOK was removed
 - `next.config.ts` - Next.js configuration
 - `package.json` - Dependencies
+  - **TypeScript is split in two via npm aliases**: `typescript` → `@typescript/typescript6` (the JS API that `next build` and typescript-eslint `require`), `@typescript/native` → TS 7 (the `tsc` binary). typescript-eslint supports only `typescript <6.1`, so don't point `typescript` back at 7.x.
+  - **ESLint stays on 9.x**: `eslint-plugin-react` (via `eslint-config-next`) does not support ESLint 10 — the 10.x bump (#78) silently broke `npm run lint` from 2026-06-29 to 2026-10-04. Dependabot ignores majors for both.
+  - `overrides` uses `brace-expansion@>=4.0.0` (not a bare `brace-expansion`): forcing 5.x onto minimatch 3's `brace-expansion@1` breaks ESLint (`expand is not a function`). The CVE range starts at 4.0.0.
+  - `npm run lint` is not in CI; as of 2026-10-04 it reports 52 errors / 10 warnings (mostly `no-explicit-any` and React Compiler `react-hooks/*` rules).
 - `tsconfig.json` - TypeScript config
 
 ### API Proxy (`app/api/proxy/[...path]/route.ts`)
