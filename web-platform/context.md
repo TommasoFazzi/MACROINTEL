@@ -169,7 +169,7 @@ Refactor 2026 → segue il prototipo `Landing Page.html` alla root del repo (cin
 Chrome delle route applicative — sostituisce il `Navbar` della landing su **tutte** le route interne (`/dashboard`, `/insights`, `/romania`, `/oracle`, `/stories` + le tre route di dettaglio articolo). Una top-bar marketing con "Open Platform" non ha senso quando il lettore è già dentro la piattaforma, e costava 60px di altezza sulle due route che hanno bisogno del viewport intero. `Navbar` resta solo su `/` e `/about`.
 
 - `AppShell.tsx` (`'use client'`) — rail fisso 64px espandibile a 224px in hover (**CSS `group-hover`, non state React**: il rail è un overlay, allargarlo non deve rifluire il contenuto accanto, e un hover che ri-renderizza il sottoalbero sarebbe lavoro sprecato) + header sticky con indicatore di freschezza pipeline. Prop `fullBleed` per `/oracle` e `/stories`: prendono il rail ma non l'header né il padding, così chat e grafo mantengono l'altezza piena. **`/map` è assente dal rail di proposito** — è ancora COMING SOON e deliberatamente non linkata ovunque (Resolved Q1). L'indicatore di stato viene **omesso** (non mostrato in errore) quando `useDashboardStats` fallisce: un elemento di chrome che dice "unknown" su ogni pagina è peggio di nessun elemento
-- `CommandPalette.tsx` (`'use client'`) — ⌘K/Ctrl+K. Tre sorgenti in ordine di priorità: route (sempre disponibili, funzionano offline) → storyline per titolo (dal grafo che `/stories` già poller) → fallthrough "Ask Oracle" che instrada su `/oracle?q=…`, così del testo digitato non è mai un vicolo cieco. `Escape` chiude e **restituisce il focus** all'elemento che ce l'aveva all'apertura. L'hotkey è registrata su `window` con `preventDefault`, quindi scatta anche con una textarea a fuoco senza inserire il carattere (è il caso di `/oracle`). Il grafo viene fetchato solo dopo la prima apertura — la shell monta su ogni route e il payload non serve finché nessuno cerca
+- `CommandPalette.tsx` (`'use client'`) — ⌘K/Ctrl+K. Tre sorgenti in ordine di priorità: route (sempre disponibili, funzionano offline) → storyline per titolo (dal grafo che `/stories` già poller) → fallthrough "Ask Oracle" che instrada su `/oracle?q=…`, così del testo digitato non è mai un vicolo cieco. `Escape` chiude e **restituisce il focus** all'elemento che ce l'aveva all'apertura. L'hotkey è registrata su `window` con `preventDefault`, quindi scatta anche con una textarea a fuoco senza inserire il carattere (è il caso di `/oracle`). Il grafo viene fetchato solo dopo la prima apertura — la shell monta su ogni route e il payload (~0,5 MB, polling 60 s) non serve finché nessuno cerca. Il gate è `useGraphNetwork(everOpened)` (chiave SWR `null` → nessun fetch): fino al 2026-10-04 il flag nascondeva solo i dati e ogni pagina dell'app scaricava comunque il grafo ogni minuto
 
 #### UI Components (`components/ui/`)
 - Shadcn components: Button, Card, Skeleton, Table, Badge
@@ -198,7 +198,7 @@ Il token Tailwind `--font-serif` risolve a `var(--font-source-serif)`: i due nom
   - **TypeScript is split in two via npm aliases**: `typescript` → `@typescript/typescript6` (the JS API that `next build` and typescript-eslint `require`), `@typescript/native` → TS 7 (the `tsc` binary). typescript-eslint supports only `typescript <6.1`, so don't point `typescript` back at 7.x.
   - **ESLint stays on 9.x**: `eslint-plugin-react` (via `eslint-config-next`) does not support ESLint 10 — the 10.x bump (#78) silently broke `npm run lint` from 2026-06-29 to 2026-10-04. Dependabot ignores majors for both.
   - `overrides` uses `brace-expansion@>=4.0.0` (not a bare `brace-expansion`): forcing 5.x onto minimatch 3's `brace-expansion@1` breaks ESLint (`expand is not a function`). The CVE range starts at 4.0.0.
-  - `npm run lint` is not in CI; as of 2026-10-04 it reports 52 errors / 10 warnings (mostly `no-explicit-any` and React Compiler `react-hooks/*` rules).
+  - `npm run lint` is clean (0 problems, 2026-10-04) but not yet in CI. The 6 `react-hooks/set-state-in-effect` disables are deliberate: each reads a client-only API (`localStorage`, `matchMedia`, `window.location`, mount flag) after hydration, with the reason inline. Derived state uses the render-time "adjust state when a value changes" pattern (`prevX` + `if (x !== prevX)`), not effects.
 - `tsconfig.json` - TypeScript config
 
 ### API Proxy (`app/api/proxy/[...path]/route.ts`)
@@ -247,7 +247,7 @@ Next.js Route Handler that forwards GET/POST requests from the browser to the Fa
 - `hooks/useDashboard.ts` - SWR hooks for dashboard data
 - **`hooks/useStories.ts`** - SWR hooks for storyline graph data
   - Shared `fetcher<T>`: 10 s `AbortController` timeout; maps `AbortError` → offline-aware `ApiError`; maps `TypeError`/`Failed to fetch` → offline-aware `ApiError`
-  - `useGraphNetwork()` → `GET /api/proxy/stories/graph` — 60 s polling, `revalidateOnFocus: true`, 3 retries (5 s interval), skips retry when offline
+  - `useGraphNetwork(enabled = true)` → `GET /api/proxy/stories/graph` — `enabled=false` skips the fetch entirely (null SWR key); 60 s polling, `revalidateOnFocus: true`, 3 retries (5 s interval), skips retry when offline
   - `useStorylineDetail(id)` → `GET /api/proxy/stories/<id>` — no polling, `revalidateOnFocus: false`, 2 retries; key is `null` when `id` is null (SWR no-fetch)
 
 ## Dependencies

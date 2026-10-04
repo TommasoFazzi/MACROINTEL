@@ -549,6 +549,7 @@ export default function SignalDescentCanvas({
     // not "show the mobile filmstrip instead". These are two different fallbacks for
     // two different reasons (accessibility vs. no pin-scrub on touch).
     if (reducedMotion) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reads matchMedia (client-only); SSR renders 'pending' then this picks the mode
       setMode('reduced-final');
     } else if (mobile) {
       setMode('mobile-frames');

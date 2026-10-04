@@ -107,8 +107,9 @@ interface StorylineGraphProps {
 }
 
 export default function StorylineGraph({ highlightId = null }: StorylineGraphProps) {
-  // Stable graphology graph object — never recreated, SigmaContainer holds the WebGL context
-  const sigmaGraph = useRef(new UndirectedGraph()).current;
+  // Stable graphology graph object — never recreated, SigmaContainer holds the WebGL context.
+  // Lazy useState initializer: built once (useRef(new …) constructed a throwaway graph every render).
+  const [sigmaGraph] = useState(() => new UndirectedGraph());
   const sigmaRef = useRef<Sigma | null>(null);
 
   const { graph, isLoading, error, refresh } = useGraphNetwork();
@@ -184,19 +185,22 @@ export default function StorylineGraph({ highlightId = null }: StorylineGraphPro
   // Lets the analyst back-track without losing the starting point. Derived from
   // selectedId changes: re-visiting a node in the trail truncates back to it;
   // clearing the selection (click on empty stage) resets the trail.
+  // Updated during render on selectedId change (not in an effect, which costs an extra render).
   const [navHistory, setNavHistory] = useState<number[]>([]);
-  useEffect(() => {
+  const [prevSelectedId, setPrevSelectedId] = useState<number | null>(null);
+  if (selectedId !== prevSelectedId) {
+    setPrevSelectedId(selectedId);
     if (selectedId == null) {
       setNavHistory([]);
-      return;
+    } else {
+      setNavHistory((prev) => {
+        if (prev[prev.length - 1] === selectedId) return prev;
+        const idx = prev.indexOf(selectedId);
+        if (idx !== -1) return prev.slice(0, idx + 1); // went back to an earlier node
+        return [...prev, selectedId];
+      });
     }
-    setNavHistory((prev) => {
-      if (prev[prev.length - 1] === selectedId) return prev;
-      const idx = prev.indexOf(selectedId);
-      if (idx !== -1) return prev.slice(0, idx + 1); // went back to an earlier node
-      return [...prev, selectedId];
-    });
-  }, [selectedId]);
+  }
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
 

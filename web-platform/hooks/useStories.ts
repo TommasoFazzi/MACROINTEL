@@ -48,13 +48,14 @@ const fetcher = async <T>(url: string): Promise<T> => {
  * Hook for fetching the full narrative graph (nodes + links).
  * Polls every 60 seconds.
  */
-export function useGraphNetwork() {
+export function useGraphNetwork(enabled = true) {
   // min_edge_weight raised from the API default (0.10) to 0.18: at 0.10 the graph
   // returns ~18k edges (11.9/node) and collapses into an unreadable hairball.
   // 0.18 keeps the meaningful TF-IDF links; isolated high-momentum nodes are still
   // kept server-side as "lone stars".
+  // `enabled=false` → null SWR key → no fetch and no 60s polling (the payload is ~0.5 MB).
   const { data, error, isLoading, mutate } = useSWR<GraphNetworkResponse, ApiError>(
-    '/api/proxy/stories/graph?min_edge_weight=0.18',
+    enabled ? '/api/proxy/stories/graph?min_edge_weight=0.18' : null,
     fetcher,
     {
       refreshInterval: 60000,

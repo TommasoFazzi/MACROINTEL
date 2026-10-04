@@ -36,6 +36,45 @@ function formatDate(dateString: string | null): string {
   });
 }
 
+// Top-level (not defined inside ReportsTable): a component created during render is a new
+// type every render, so React remounts it and the Next/Previous button loses focus.
+function PaginationControls({
+  pagination,
+  currentPage,
+  onPageChange,
+}: Pick<ReportsTableProps, 'pagination' | 'currentPage' | 'onPageChange'>) {
+  if (!pagination || pagination.pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between px-2">
+      <p className="text-sm text-gray-400">
+        Page {currentPage} of {pagination.pages} ({pagination.total} reports)
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage <= 1}
+          className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50"
+        >
+          <ChevronLeft className="w-4 h-4 mr-1" />
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage >= pagination.pages}
+          className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50"
+        >
+          Next
+          <ChevronRight className="w-4 h-4 ml-1" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function ReportsTable({ reports, pagination, currentPage, onPageChange }: ReportsTableProps) {
   if (!reports || reports.length === 0) {
     return (
@@ -45,38 +84,6 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
       </div>
     );
   }
-
-  const PaginationControls = () => (
-    pagination && pagination.pages > 1 ? (
-      <div className="flex items-center justify-between px-2">
-        <p className="text-sm text-gray-400">
-          Page {currentPage} of {pagination.pages} ({pagination.total} reports)
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(currentPage - 1)}
-            disabled={currentPage <= 1}
-            className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50"
-          >
-            <ChevronLeft className="w-4 h-4 mr-1" />
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(currentPage + 1)}
-            disabled={currentPage >= pagination.pages}
-            className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50"
-          >
-            Next
-            <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
-      </div>
-    ) : null
-  );
 
   return (
     <div className="space-y-4">
@@ -165,7 +172,7 @@ export default function ReportsTable({ reports, pagination, currentPage, onPageC
         </Table>
       </div>
 
-      <PaginationControls />
+      <PaginationControls pagination={pagination} currentPage={currentPage} onPageChange={onPageChange} />
     </div>
   );
 }

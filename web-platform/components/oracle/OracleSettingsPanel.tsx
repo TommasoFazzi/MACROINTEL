@@ -30,9 +30,12 @@ export function OracleSettingsPanel({
     return () => window.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
-  useEffect(() => {
+  // Reset the pending "confirm clear" when the panel closes — during render, not in an effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (!open) setConfirmClear(false);
-  }, [open]);
+  }
 
   const handleClearSession = () => {
     if (!confirmClear) {

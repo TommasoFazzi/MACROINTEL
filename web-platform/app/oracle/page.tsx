@@ -78,6 +78,7 @@ export default function OraclePage() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('q');
     if (!q) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads window.location (client-only); a render-time read would mismatch SSR
     setInput(q);
     // Left in the composer rather than auto-sent: the reader should see and be able to edit
     // the query before it costs an LLM call.

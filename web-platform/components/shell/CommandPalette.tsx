@@ -41,13 +41,22 @@ export default function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
 
   // Only fetched once the palette has been opened: the shell mounts on every app route, and
-  // the graph is a heavy payload nobody needs until they actually search.
-  const [everOpened, setEverOpened] = useState(false);
-  useEffect(() => {
-    if (open) setEverOpened(true);
-  }, [open]);
-  const { graph } = useGraphNetwork();
-  const storylines = everOpened ? graph?.nodes ?? [] : [];
+  // the graph is a heavy payload (~0.5 MB, polled every 60s) nobody needs until they search.
+  // The flag must gate the fetch itself — gating only the data still downloaded it everywhere.
+  const [everOpened, setEverOpened] = useState(open);
+  // Open/close transitions adjust state during render (not in an effect, which re-renders).
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setEverOpened(true);
+    } else {
+      setQuery('');
+      setCursor(0);
+    }
+  }
+  const { graph } = useGraphNetwork(everOpened);
+  const storylines = useMemo(() => graph?.nodes ?? [], [graph]);
 
   const close = () => onOpenChange(false);
 
@@ -108,19 +117,14 @@ export default function CommandPalette({
     return () => window.removeEventListener('keydown', onKey);
   }, [onOpenChange]);
 
+  // Focus is a real DOM side effect, so it stays in an effect; the state reset is above.
   useEffect(() => {
     if (!open) {
-      setQuery('');
-      setCursor(0);
       restoreFocusRef.current?.focus?.();
       return;
     }
     inputRef.current?.focus();
   }, [open]);
-
-  useEffect(() => {
-    setCursor(0);
-  }, [query]);
 
   // Keep the highlighted row in view when arrowing past the visible window.
   useEffect(() => {
@@ -170,7 +174,10 @@ export default function CommandPalette({
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setCursor(0);
+            }}
             placeholder="Go to a page, find a storyline, or ask Oracle…"
             className="h-14 w-full bg-transparent text-base text-foreground outline-none placeholder:text-fg-subtle"
             aria-label="Search"

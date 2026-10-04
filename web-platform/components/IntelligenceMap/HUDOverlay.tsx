@@ -16,6 +16,7 @@ export default function HUDOverlay({ latitude, longitude, zoom, entityCount, sta
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- post-hydration mount flag: the clock must not render on the server
         setMounted(true);
         const timer = setInterval(() => {
             setCurrentTime(new Date());
