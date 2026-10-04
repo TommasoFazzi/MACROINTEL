@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown } from 'lucide-react';
-import type { ReportSection, TOCEntry, ParsedReport } from '@/lib/parseReport';
+import type { ReportSection, TOCEntry } from '@/lib/parseReport';
 import type { ReportSource } from '@/types/dashboard';
 
 // ── Table of Contents ──────────────────────────────────────────────────

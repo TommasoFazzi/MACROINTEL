@@ -26,10 +26,9 @@ import {
   BookOpen,
   Link2,
   FileText,
-  ExternalLink,
   X,
 } from 'lucide-react';
-import type { ApiError, ReportType } from '@/types/dashboard';
+import type { ApiError } from '@/types/dashboard';
 
 // ── Constants ──────────────────────────────────────────────────────────
 

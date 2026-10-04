@@ -13,7 +13,7 @@ export interface EntityFeature {
     name: string;
     entity_type: string;
     mention_count: number;
-    metadata: Record<string, any>;
+    metadata: Record<string, unknown>;
     first_seen: string | null;
     last_seen: string | null;
   };
@@ -44,7 +44,7 @@ export interface EntityDetails {
   mention_count: number;
   first_seen: string | null;
   last_seen: string | null;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   related_articles: Article[];
   related_storylines: EntityStoryline[];
 }

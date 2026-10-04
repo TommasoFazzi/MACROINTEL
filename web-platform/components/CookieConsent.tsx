@@ -15,6 +15,8 @@ declare global {
 
 function pushConsentUpdate(choice: ConsentChoice) {
   window.dataLayer = window.dataLayer || [];
+  // gtag.js requires the real Arguments object, not an array — rest params would break consent updates
+  // eslint-disable-next-line prefer-rest-params
   window.gtag = window.gtag || function gtag() { window.dataLayer.push(arguments); };
   window.gtag('consent', 'update', {
     analytics_storage: choice,

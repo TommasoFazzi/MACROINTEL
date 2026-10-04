@@ -54,12 +54,12 @@ export function communityColor(id: number | null | undefined): string {
 
 /**
  * Build a Mapbox GL JS 'match' expression that maps community_id → colour.
- * Covers ids 0–(TOP-1); everything else maps to COMMUNITY_OTHER.
+ * Ids wrap modulo the palette size; a missing id (coalesced to -1) maps to COMMUNITY_OTHER.
  *
  * Usage in a paint property:
  *   'circle-color': buildCommunityColorExpr()
  */
-export function buildCommunityColorExpr(top = 30): mapboxgl.Expression {
+export function buildCommunityColorExpr(): mapboxgl.Expression {
   const expr: unknown[] = ['match', ['%', ['coalesce', ['get', 'primary_community_id'], -1], COMMUNITY_PALETTE.length]];
   for (let i = 0; i < COMMUNITY_PALETTE.length; i++) {
     expr.push(i, COMMUNITY_PALETTE[i]);

@@ -14,7 +14,6 @@ import { AppShell } from '@/components/shell';
 import { Button } from '@/components/ui/button';
 import { HelpModal } from '@/components/HelpModal';
 import type { HelpSection } from '@/components/HelpModal';
-import Link from 'next/link';
 import type { ApiError } from '@/types/dashboard';
 import { SOURCE_COUNT } from '@/lib/constants';
 

@@ -21,7 +21,6 @@ export default function OraclePage() {
     error,
     sendMessage,
     clearMessages,
-    lastAssistantMessage,
     activeFilters,
     setActiveFilters,
   } = useOracleChat();

@@ -100,7 +100,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
 
     // ── Build all map layers ─────────────────────────────────────────────────
 
-    const addSourceAndLayers = useCallback((entityData: any) => {
+    const addSourceAndLayers = useCallback((entityData: EntityCollection) => {
         if (!map.current) return;
 
         // Entity source (clustered)
@@ -203,7 +203,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
             filter: ['!', ['has', 'point_count']],
             paint: {
                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 10, 12],
-                'circle-color': ENTITY_COLOR_MATCH as any,
+                'circle-color': ENTITY_COLOR_MATCH,
                 'circle-stroke-width': [
                     'case',
                     ['==', ['get', '_hl'], 'on'], 4,
@@ -234,7 +234,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 'circle-radius': 8,
                 'circle-color': 'transparent',
                 'circle-stroke-width': 2,
-                'circle-stroke-color': ENTITY_COLOR_MATCH as any,
+                'circle-stroke-color': ENTITY_COLOR_MATCH,
                 'circle-stroke-opacity': 1,
                 'circle-opacity': 0,
             },
@@ -254,7 +254,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 'text-anchor': 'top',
             },
             paint: {
-                'text-color': ENTITY_COLOR_MATCH as any,
+                'text-color': ENTITY_COLOR_MATCH,
                 'text-halo-color': '#0A1628',
                 'text-halo-width': 1,
                 'text-opacity': [
@@ -423,7 +423,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
         const clearHighlight = () => {
             if (!map.current || !entityDataRef.current) return;
             const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource | undefined;
-            if (source) source.setData(entityDataRef.current as any);
+            if (source) source.setData(entityDataRef.current);
             setStorylineBanner(null);
         };
 
@@ -447,7 +447,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 // Stamp each feature with _hl: 'on' | 'off'
                 const stamped = {
                     ...original,
-                    features: original.features.map((f: any) => ({
+                    features: original.features.map((f) => ({
                         ...f,
                         properties: {
                             ...f.properties,
@@ -457,7 +457,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 };
 
                 const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource;
-                if (source) source.setData(stamped as any);
+                if (source) source.setData(stamped);
 
                 // Fit bounds to highlighted entities (maxZoom: 5 to avoid ocean zoom)
                 const bounds = new mapboxgl.LngLatBounds();
@@ -499,7 +499,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
         if (!map.current || !entityDataRef.current) return;
         // Restore original data without _hl properties
         const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource | undefined;
-        if (source) source.setData(entityDataRef.current as any);
+        if (source) source.setData(entityDataRef.current);
         setStorylineBanner(null);
         window.history.replaceState(null, '', '/map');
     }, [entityDataRef]);

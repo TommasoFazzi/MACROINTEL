@@ -9,9 +9,6 @@ const ALLOWED_GET_PREFIXES = ['dashboard', 'reports', 'stories', 'map', 'insight
 // Allowed API path prefixes for POST requests
 const ALLOWED_POST_PREFIXES = ['oracle', 'ingest', 'waitlist'];
 
-function validatePath(pathStr: string, prefix: string): boolean {
-  return !pathStr.includes('..') && !pathStr.startsWith('/') && pathStr.startsWith(prefix);
-}
 
 export async function GET(
   request: NextRequest,
@@ -105,7 +102,7 @@ export async function POST(
     const xRealIp = request.headers.get('x-real-ip');
 
     let body;
-    let headers: HeadersInit = {
+    const headers: HeadersInit = {
       ...(API_KEY && { 'X-API-Key': API_KEY }),
       ...(xff && { 'X-Forwarded-For': xff }),
       ...(xRealIp && { 'X-Real-IP': xRealIp }),

@@ -27,12 +27,12 @@ export default function LivingGraphPrototype() {
           a 30-day window, colored by community and sized by total coverage; individual
           storylines still show as small points inside it (real data, not an abstract
           shape). Cross-community links become flowing streams of light between clusters.
-          True "lone stars" — high-momentum storylines with no connections — render as a
+          True &quot;lone stars&quot; — high-momentum storylines with no connections — render as a
           single bright point, not a nebula. About a third of storylines fade back out
           partway through the hold, before the whole scene dissolves and the loop restarts
           — it keeps changing throughout, not just accumulating until the reset. This is a
           reconstruction from real fields, not a replay of exact history — the graph has no
-          per-edge timestamp, so a connection's appearance time is approximated from its
+          per-edge timestamp, so a connection&apos;s appearance time is approximated from its
           two storylines, not observed directly.
         </p>
       </div>
