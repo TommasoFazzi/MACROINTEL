@@ -180,7 +180,7 @@ soupsieve==2.9
 spacy==3.8.11
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
-srsly==2.5.2
+srsly==2.5.4
 starlette==0.50.0
 streamlit==1.55.0
 sympy==1.14.0
