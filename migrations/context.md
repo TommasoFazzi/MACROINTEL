@@ -74,7 +74,7 @@ Schema evolution layer that extends the core database as new features are added.
   - `026_postgis_rollback.sql` — Drops PostGIS extension (CASCADE: drops all spatial tables)
 - `027_country_profiles.sql` — Creates `country_profiles` reference table (ISO3 PK, macro data, governance score). Populated by `scripts/load_world_bank.py`.
 - `028_country_boundaries.sql` — Creates `country_boundaries` table with `GEOMETRY(MultiPolygon, 4326)` + GIST index. Populated by `scripts/load_natural_earth.sh` (50m resolution via ephemeral GDAL container).
-- `029_conflict_events.sql` — Creates `conflict_events` table with `GEOMETRY(Point, 4326)` + GIST/temporal indexes. Populated by `scripts/load_ucdp.py` (UCDP GED API v24.1).
+- `029_conflict_events.sql` — Creates `conflict_events` table with `GEOMETRY(Point, 4326)` + GIST/temporal indexes. Populated by `scripts/load_ucdp.py` (UCDP GED API: stable v26.1 = 1989–2025, candidate v26.0.2 = 2026+). `source` distinguishes `UCDP_GED` (verified) from `UCDP_GED_CANDIDATE` (provisional, fatality counts subject to revision).
 - `030_sanctions_registry.sql` — Creates `sanctions_registry` table with GIN indexes on `countries[]` and `datasets[]`. Populated by `scripts/load_opensanctions.py` (FtM NDJSON).
 - `031_strategic_infra.sql` — Creates `strategic_infrastructure` table with `Point` + `LineString` geometries, GIST indexes, and `infra_type` CHECK constraint (11 types). Populated by TeleGeography data.
 - `032_macro_forecasts.sql` — Creates `macro_forecasts` table for IMF WEO forward-looking projections with vintage tracking. Populated by `scripts/load_imf_weo.py`.
