@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { ENTITY_TYPE_COLORS } from '@/types/entities';
-import { COMMUNITY_PALETTE, COMMUNITY_OTHER } from '@/lib/communityColors';
+import { buildCommunityColorExpr } from '@/lib/communityColors';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ export interface LayerToggles {
 
 // ── Color expressions ────────────────────────────────────────────────────────
 
-export const ENTITY_COLOR_MATCH: any[] = [
+export const ENTITY_COLOR_MATCH: mapboxgl.Expression = [
     'match',
     ['get', 'entity_type'],
     'GPE',    ENTITY_TYPE_COLORS.GPE,
@@ -28,16 +28,6 @@ export const ENTITY_COLOR_MATCH: any[] = [
     'FAC',    ENTITY_TYPE_COLORS.FAC,
     '#888888',
 ];
-
-const buildCommunityColorExpr = (): any[] => {
-    const n = COMMUNITY_PALETTE.length;
-    const expr: any[] = ['match', ['%', ['coalesce', ['get', 'primary_community_id'], -1], n]];
-    for (let i = 0; i < n; i++) {
-        expr.push(i, COMMUNITY_PALETTE[i]);
-    }
-    expr.push(COMMUNITY_OTHER);
-    return expr;
-};
 
 export const COMMUNITY_COLOR_MATCH = buildCommunityColorExpr();
 
@@ -96,8 +86,8 @@ export function useMapLayers({ mapRef }: UseMapLayersOptions) {
             const { fetchEntityArcs } = await import('@/utils/api');
             const arcsData = await fetchEntityArcs(0.3, 300);
             const source = mapRef.current.getSource('entity-arcs') as mapboxgl.GeoJSONSource;
-            if (source) source.setData(arcsData as any);
-            console.log(`✓ Loaded ${(arcsData as any).arc_count ?? 0} entity arcs`);
+            if (source) source.setData(arcsData);
+            console.log(`✓ Loaded ${(arcsData as typeof arcsData & { arc_count?: number }).arc_count ?? 0} entity arcs`);
         } catch (error) {
             console.error('Error loading arcs:', error);
         }
@@ -128,10 +118,10 @@ export function useMapLayers({ mapRef }: UseMapLayersOptions) {
         // Community vs entity_type color mode
         const colorExpr = layers.colorMode === 'community' ? COMMUNITY_COLOR_MATCH : ENTITY_COLOR_MATCH;
         if (mapRef.current.getLayer('entity-markers')) {
-            mapRef.current.setPaintProperty('entity-markers', 'circle-color', colorExpr as any);
+            mapRef.current.setPaintProperty('entity-markers', 'circle-color', colorExpr);
         }
         if (mapRef.current.getLayer('entity-labels')) {
-            mapRef.current.setPaintProperty('entity-labels', 'text-color', colorExpr as any);
+            mapRef.current.setPaintProperty('entity-labels', 'text-color', colorExpr);
         }
     }, [layers, mapRef, loadArcs, startPulse, stopPulse]);
 

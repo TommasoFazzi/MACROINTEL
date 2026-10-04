@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-export function middleware(_req: NextRequest) {
+export function middleware() {
   const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64');
 
   const csp = [

@@ -26,10 +26,9 @@ import {
   BookOpen,
   Link2,
   FileText,
-  ExternalLink,
   X,
 } from 'lucide-react';
-import type { ApiError, ReportType } from '@/types/dashboard';
+import type { ApiError } from '@/types/dashboard';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -119,24 +118,27 @@ export default function ReportDetailPage({
   );
 
   // Parse the markdown
-  const parsed = useMemo(() => {
-    if (!report?.content.full_text) return null;
-    return parseReport(report.content.full_text);
-  }, [report?.content.full_text]);
+  const fullText = report?.content.full_text;
+  const parsed = useMemo(() => (fullText ? parseReport(fullText) : null), [fullText]);
 
   // Parse compare report markdown
-  const parsedCompare = useMemo(() => {
-    if (!compareReport?.content.full_text) return null;
-    return parseReport(compareReport.content.full_text);
-  }, [compareReport?.content.full_text]);
+  const compareFullText = compareReport?.content.full_text;
+  const parsedCompare = useMemo(
+    () => (compareFullText ? parseReport(compareFullText) : null),
+    [compareFullText]
+  );
 
-  // Open Executive Summary by default
-  useMemo(() => {
+  // Open Executive Summary by default whenever a new report is parsed.
+  // "Adjust state when a value changes" during render, not in a memo/effect:
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevParsed, setPrevParsed] = useState<typeof parsed>(null); // null, not `parsed`: a cached report must still open on mount
+  if (parsed !== prevParsed) {
+    setPrevParsed(parsed);
     if (parsed && parsed.sections.length > 0) {
       setOpenSections(new Set([parsed.sections[0].id]));
       setActiveSection(parsed.sections[0].id);
     }
-  }, [parsed]);
+  }
 
   const toggleSection = useCallback((sectionId: string) => {
     setOpenSections((prev) => {

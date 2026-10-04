@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import type { EntityFilters } from '@/utils/api';
-import type { EntityCollection, MapStats } from '@/types/entities';
+import type { Article, EntityCollection, EntityStoryline, MapStats } from '@/types/entities';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,9 +16,9 @@ export interface EntityData {
     mention_count: number;
     first_seen: string;
     last_seen: string;
-    metadata: Record<string, any>;
-    related_articles: any[];
-    related_storylines: any[];
+    metadata: Record<string, unknown>;
+    related_articles: Article[];
+    related_storylines?: EntityStoryline[];
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ export function useMapData({ mapRef, addSourceAndLayers }: UseMapDataOptions) {
 
             const source = mapRef.current.getSource('entities') as mapboxgl.GeoJSONSource;
             if (source) {
-                source.setData(entityData as any);
+                source.setData(entityData);
             } else {
                 addSourceAndLayers(entityData);
             }

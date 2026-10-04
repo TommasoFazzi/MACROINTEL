@@ -16,9 +16,9 @@ const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '
 export function OracleThinkingState() {
   const [stepIndex, setStepIndex] = useState(0);
   const [spinnerIdx, setSpinnerIdx] = useState(0);
-  const startRef = useRef(Date.now());
-  // Stable random source count across renders
-  const sourceCountRef = useRef(Math.floor(Math.random() * 23) + 25);
+  const startRef = useRef(0); // set on mount by the effect below
+  // Stable random source count: lazy initializer runs once, keeping render pure
+  const [sourceCount] = useState(() => Math.floor(Math.random() * 23) + 25);
 
   useEffect(() => {
     startRef.current = Date.now();
@@ -38,7 +38,7 @@ export function OracleThinkingState() {
 
   const label =
     stepIndex === 1
-      ? `Scanning vector database (${sourceCountRef.current} sources)`
+      ? `Scanning vector database (${sourceCount} sources)`
       : STEPS[stepIndex];
 
   return (

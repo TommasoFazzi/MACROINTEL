@@ -2,38 +2,8 @@
 
 import { X, MapPin, Calendar, FileText, ExternalLink, GitBranch, TrendingUp } from 'lucide-react';
 import { ENTITY_TYPE_COLORS, ENTITY_TYPE_LABELS } from '@/types/entities';
+import type { EntityData } from '@/hooks/useMapData';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
-
-interface Article {
-  id: number;
-  title: string;
-  link: string;
-  published_date: string;
-  source: string;
-}
-
-interface Storyline {
-  id: number;
-  title: string;
-  narrative_status: string;
-  momentum_score: number;
-  article_count: number;
-  community_id: number | null;
-}
-
-interface EntityData {
-  id: number;
-  name: string;
-  entity_type: string;
-  latitude: number;
-  longitude: number;
-  mention_count: number;
-  first_seen: string;
-  last_seen: string;
-  metadata: Record<string, any>;
-  related_articles: Article[];
-  related_storylines?: Storyline[];
-}
 
 interface EntityDossierProps {
   entity: EntityData | null;
@@ -51,7 +21,7 @@ function DossierContent({ entity, onClose, showCloseButton = false }: {
   onClose: () => void;
   showCloseButton?: boolean;
 }) {
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | null) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('it-IT', {
       year: 'numeric',

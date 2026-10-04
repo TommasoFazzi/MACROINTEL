@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import GridOverlay from './GridOverlay';
@@ -98,9 +98,105 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
     const [storylineBanner, setStorylineBanner] = useState<StorylineBanner | null>(null);
     const [showHelp, setShowHelp] = useState(false);
 
+    // ── Event handlers ───────────────────────────────────────────────────────
+
+    const setupEventHandlers = () => {
+        if (!map.current) return;
+
+        popup.current = new mapboxgl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            className: 'entity-tooltip',
+            maxWidth: '280px',
+            offset: 15,
+        });
+
+        map.current.on('mouseenter', 'entity-markers', (e) => {
+            if (!map.current || !e.features || e.features.length === 0) return;
+            map.current.getCanvas().style.cursor = 'pointer';
+
+            const feature = e.features[0];
+            const props = feature.properties;
+            if (!props || feature.geometry.type !== 'Point') return;
+
+            const coords = feature.geometry.coordinates as [number, number];
+            const typeColor = ENTITY_TYPE_COLORS[props.entity_type] || '#888';
+            const scoreStr = props.intelligence_score != null
+                ? Number(props.intelligence_score).toFixed(2)
+                : '–';
+            const topStory = props.top_storyline
+                ? `<div style="color:#94a3b8;font-size:10px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;">▸ ${props.top_storyline}</div>`
+                : '';
+
+            popup.current?.setLngLat(coords).setHTML(`
+                <div style="font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:#e2e8f0;line-height:1.5;">
+                    <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:${typeColor};">${props.name}</div>
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColor};"></span>
+                        <span style="color:#94a3b8;font-size:11px;">${props.entity_type}</span>
+                        <span style="color:#475569;">•</span>
+                        <span style="color:#94a3b8;font-size:11px;">${props.mention_count} mentions</span>
+                    </div>
+                    <div style="color:#64748b;font-size:10px;">
+                        score: <span style="color:#00A8E8;">${scoreStr}</span>
+                        &nbsp;·&nbsp;
+                        storylines: <span style="color:#39D353;">${props.storyline_count ?? 0}</span>
+                    </div>
+                    ${topStory}
+                </div>
+            `).addTo(map.current!);
+        });
+
+        map.current.on('mouseleave', 'entity-markers', () => {
+            if (!map.current) return;
+            map.current.getCanvas().style.cursor = '';
+            popup.current?.remove();
+        });
+
+        map.current.on('click', 'entity-markers', async (e) => {
+            if (!e.features || e.features.length === 0) return;
+            const feature = e.features[0];
+            const entityId = feature.properties?.id;
+            if (!entityId) return;
+            popup.current?.remove();
+
+            try {
+                const response = await fetch(`/api/proxy/map/entities/${entityId}`);
+                if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
+                setSelectedEntity(await response.json());
+            } catch (error) {
+                console.error('Error fetching entity details:', error);
+                if (map.current && feature.geometry.type === 'Point') {
+                    new mapboxgl.Popup()
+                        .setLngLat(feature.geometry.coordinates as [number, number])
+                        .setHTML(`<div style="color:#e2e8f0;font-family:monospace;font-size:12px;"><strong>${feature.properties?.name}</strong><br/><span style="color:#ef4444;">Failed to load details</span></div>`)
+                        .addTo(map.current);
+                }
+            }
+        });
+
+        map.current.on('click', 'clusters', (e) => {
+            if (!map.current) return;
+            const features = map.current.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+            if (!features || features.length === 0) return;
+            const clusterId = features[0].properties?.cluster_id;
+            const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource;
+            if (!source || typeof source.getClusterExpansionZoom !== 'function') return;
+            source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+                if (err || !map.current) return;
+                if (features[0].geometry.type === 'Point') {
+                    map.current.easeTo({ center: features[0].geometry.coordinates as [number, number], zoom: zoom || 10, duration: 500 });
+                }
+            });
+        });
+
+        map.current.on('mouseenter', 'clusters', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
+        map.current.on('mouseleave', 'clusters', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+    };
+
     // ── Build all map layers ─────────────────────────────────────────────────
 
-    const addSourceAndLayers = useCallback((entityData: any) => {
+    const addSourceAndLayers = useCallback((entityData: EntityCollection) => {
         if (!map.current) return;
 
         // Entity source (clustered)
@@ -203,7 +299,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
             filter: ['!', ['has', 'point_count']],
             paint: {
                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 10, 12],
-                'circle-color': ENTITY_COLOR_MATCH as any,
+                'circle-color': ENTITY_COLOR_MATCH,
                 'circle-stroke-width': [
                     'case',
                     ['==', ['get', '_hl'], 'on'], 4,
@@ -234,7 +330,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 'circle-radius': 8,
                 'circle-color': 'transparent',
                 'circle-stroke-width': 2,
-                'circle-stroke-color': ENTITY_COLOR_MATCH as any,
+                'circle-stroke-color': ENTITY_COLOR_MATCH,
                 'circle-stroke-opacity': 1,
                 'circle-opacity': 0,
             },
@@ -254,7 +350,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 'text-anchor': 'top',
             },
             paint: {
-                'text-color': ENTITY_COLOR_MATCH as any,
+                'text-color': ENTITY_COLOR_MATCH,
                 'text-halo-color': '#0A1628',
                 'text-halo-width': 1,
                 'text-opacity': [
@@ -270,112 +366,21 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
         setupEventHandlers();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Keep ref in sync
-    addSourceAndLayersRef.current = addSourceAndLayers;
+    // Keep ref in sync (in a layout effect: refs must not be written during render)
+    useLayoutEffect(() => {
+        addSourceAndLayersRef.current = addSourceAndLayers;
+    });
 
-    // ── Event handlers ───────────────────────────────────────────────────────
-
-    const setupEventHandlers = () => {
-        if (!map.current) return;
-
-        popup.current = new mapboxgl.Popup({
-            closeButton: false,
-            closeOnClick: false,
-            className: 'entity-tooltip',
-            maxWidth: '280px',
-            offset: 15,
-        });
-
-        map.current.on('mouseenter', 'entity-markers', (e) => {
-            if (!map.current || !e.features || e.features.length === 0) return;
-            map.current.getCanvas().style.cursor = 'pointer';
-
-            const feature = e.features[0];
-            const props = feature.properties;
-            if (!props || feature.geometry.type !== 'Point') return;
-
-            const coords = feature.geometry.coordinates as [number, number];
-            const typeColor = ENTITY_TYPE_COLORS[props.entity_type] || '#888';
-            const scoreStr = props.intelligence_score != null
-                ? Number(props.intelligence_score).toFixed(2)
-                : '–';
-            const topStory = props.top_storyline
-                ? `<div style="color:#94a3b8;font-size:10px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;">▸ ${props.top_storyline}</div>`
-                : '';
-
-            popup.current?.setLngLat(coords).setHTML(`
-                <div style="font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:#e2e8f0;line-height:1.5;">
-                    <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:${typeColor};">${props.name}</div>
-                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColor};"></span>
-                        <span style="color:#94a3b8;font-size:11px;">${props.entity_type}</span>
-                        <span style="color:#475569;">•</span>
-                        <span style="color:#94a3b8;font-size:11px;">${props.mention_count} mentions</span>
-                    </div>
-                    <div style="color:#64748b;font-size:10px;">
-                        score: <span style="color:#00A8E8;">${scoreStr}</span>
-                        &nbsp;·&nbsp;
-                        storylines: <span style="color:#39D353;">${props.storyline_count ?? 0}</span>
-                    </div>
-                    ${topStory}
-                </div>
-            `).addTo(map.current!);
-        });
-
-        map.current.on('mouseleave', 'entity-markers', () => {
-            if (!map.current) return;
-            map.current.getCanvas().style.cursor = '';
-            popup.current?.remove();
-        });
-
-        map.current.on('click', 'entity-markers', async (e) => {
-            if (!e.features || e.features.length === 0) return;
-            const feature = e.features[0];
-            const entityId = feature.properties?.id;
-            if (!entityId) return;
-            popup.current?.remove();
-
-            try {
-                const response = await fetch(`/api/proxy/map/entities/${entityId}`);
-                if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
-                setSelectedEntity(await response.json());
-            } catch (error) {
-                console.error('Error fetching entity details:', error);
-                if (map.current && feature.geometry.type === 'Point') {
-                    new mapboxgl.Popup()
-                        .setLngLat(feature.geometry.coordinates as [number, number])
-                        .setHTML(`<div style="color:#e2e8f0;font-family:monospace;font-size:12px;"><strong>${feature.properties?.name}</strong><br/><span style="color:#ef4444;">Failed to load details</span></div>`)
-                        .addTo(map.current);
-                }
-            }
-        });
-
-        map.current.on('click', 'clusters', (e) => {
-            if (!map.current) return;
-            const features = map.current.queryRenderedFeatures(e.point, { layers: ['clusters'] });
-            if (!features || features.length === 0) return;
-            const clusterId = features[0].properties?.cluster_id;
-            const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource;
-            if (!source || typeof source.getClusterExpansionZoom !== 'function') return;
-            source.getClusterExpansionZoom(clusterId, (err, zoom) => {
-                if (err || !map.current) return;
-                if (features[0].geometry.type === 'Point') {
-                    map.current.easeTo({ center: features[0].geometry.coordinates as [number, number], zoom: zoom || 10, duration: 500 });
-                }
-            });
-        });
-
-        map.current.on('mouseenter', 'clusters', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
-        map.current.on('mouseleave', 'clusters', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
-    };
 
     // ── Stable refs for init effect (avoid re-running on callback identity change) ──
     const loadEntitiesRef = useRef(loadEntities);
     const loadStatsRef = useRef(loadStats);
     const stopPulseRef = useRef(stopPulse);
-    loadEntitiesRef.current = loadEntities;
-    loadStatsRef.current = loadStats;
-    stopPulseRef.current = stopPulse;
+    useLayoutEffect(() => {
+        loadEntitiesRef.current = loadEntities;
+        loadStatsRef.current = loadStats;
+        stopPulseRef.current = stopPulse;
+    });
 
     // ── Map initialization (runs once) ────────────────────────────────────────
 
@@ -423,7 +428,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
         const clearHighlight = () => {
             if (!map.current || !entityDataRef.current) return;
             const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource | undefined;
-            if (source) source.setData(entityDataRef.current as any);
+            if (source) source.setData(entityDataRef.current);
             setStorylineBanner(null);
         };
 
@@ -447,7 +452,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 // Stamp each feature with _hl: 'on' | 'off'
                 const stamped = {
                     ...original,
-                    features: original.features.map((f: any) => ({
+                    features: original.features.map((f) => ({
                         ...f,
                         properties: {
                             ...f.properties,
@@ -457,7 +462,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
                 };
 
                 const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource;
-                if (source) source.setData(stamped as any);
+                if (source) source.setData(stamped);
 
                 // Fit bounds to highlighted entities (maxZoom: 5 to avoid ocean zoom)
                 const bounds = new mapboxgl.LngLatBounds();
@@ -499,7 +504,7 @@ export default function TacticalMap({ storylineId = null }: TacticalMapProps) {
         if (!map.current || !entityDataRef.current) return;
         // Restore original data without _hl properties
         const source = map.current.getSource('entities') as mapboxgl.GeoJSONSource | undefined;
-        if (source) source.setData(entityDataRef.current as any);
+        if (source) source.setData(entityDataRef.current);
         setStorylineBanner(null);
         window.history.replaceState(null, '', '/map');
     }, [entityDataRef]);

@@ -325,6 +325,7 @@ export default function AskAnythingScene() {
   useEffect(() => {
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const mobile = window.matchMedia('(max-width: 767px)').matches;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads matchMedia (client-only); SSR renders 'pending' then this picks the mode
     setMode(reducedMotion || mobile ? 'static' : 'scrub');
   }, []);
 
