@@ -20,7 +20,7 @@ python-multipart==0.0.27  # openbb-core==1.6.9 requires >=0.0.27,<0.0.28
 yfinance==0.2.66
 curl_cffi>=0.16.3
 pandas==2.3.3
-pandas-market-calendars>=4.3
+pandas-market-calendars>=5.4
 
 # Database
 psycopg2-binary==2.9.11
