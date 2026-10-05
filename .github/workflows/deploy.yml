@@ -155,5 +155,16 @@ jobs:
               sleep 5
             done
 
+            # Reclaim disk only after a successful deploy (a failed one keeps its evidence).
+            # Each build leaves the previous image dangling and grows the BuildKit cache:
+            # 27.6 GB on 2026-10-05, one heavy build away from "no space left on device".
+            # Keep ~10 GB of cache so the next build stays warm. The flag was renamed in
+            # newer Docker (--keep-storage -> --max-used-space); cleanup must never fail a
+            # deploy that already passed the smoke test, hence the `|| true`.
+            sudo docker image prune -f || true
+            sudo docker builder prune -f --keep-storage 10GB 2>/dev/null \
+              || sudo docker builder prune -f --max-used-space 10GB || true
+            df -h / | tail -1
+
             chmod +x deploy/trigger_pipeline.sh
             echo "Deploy completed at $(date)"
