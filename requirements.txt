@@ -17,13 +17,13 @@ blis==1.3.3
 cachetools==6.2.2
 catalogue==2.0.10
 cattrs==25.3.0
-certifi==2025.11.12
+certifi==2026.7.22
 cffi==2.1.1
 charset-normalizer==3.4.4
 click==8.4.2
-cloudpathlib==0.23.0
+cloudpathlib==0.26.0
 cloudscraper==1.2.71
-confection==0.1.5
+confection==1.3.3
 courlan==1.3.2
 cssselect==1.5.0
 curl_cffi>=0.16.3
@@ -128,7 +128,7 @@ pgvector==0.4.1
 pillow==12.3.0
 platformdirs==4.11.8
 pluggy==1.6.0
-preshed==3.0.12
+preshed==3.0.13
 propcache==0.4.1
 proto-plus==1.26.1
 protobuf==5.29.6
@@ -136,14 +136,14 @@ psycopg2-binary==2.9.11
 pyarrow==23.0.1
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
-pycparser==2.23
+pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 pydeck==0.9.1
 Pygments==2.20.0
 PyJWT==2.15.0
 pyparsing==3.2.5
-pytest==9.0.3
+pytest==9.1.1
 pytest-asyncio==1.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
@@ -171,18 +171,18 @@ setuptools==83.0.0
 sgmllib3k==1.0.0
 six==1.17.0
 slowapi==0.1.10
-smart_open==7.5.0
+smart_open==8.0.2
 smmap==5.0.2
 soupsieve==2.9
-spacy==3.8.11
+spacy==3.8.16
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
-srsly==2.5.2
+srsly==2.5.4
 starlette==0.50.0  # capped by fastapi==0.128.0 (starlette<0.51); CVE-2026-48710 fix needs 1.0.1 but blocked by openbb-core
 streamlit==1.55.0
 sympy==1.14.0
 tenacity==9.1.2
-thinc==8.3.10
+thinc==8.3.13
 threadpoolctl==3.6.0
 tinysegmenter==0.3
 tld==0.13.2
@@ -207,7 +207,7 @@ urllib3==2.8.0
 uuid7==0.1.0
 uvicorn==0.40.0
 wasabi==1.1.3
-weasel==0.4.3
+weasel==1.0.0
 weasyprint>=69.0  # CVE-2026-49452: CSS injection via presentational hints; fixed in 69.0
 markdown>=3.10.2
 webencodings==0.5.1
