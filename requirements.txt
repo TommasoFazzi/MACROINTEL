@@ -122,7 +122,7 @@ openpyxl==3.1.5
 orderly-set==5.5.0
 packaging==26.2
 pandas==2.3.3
-pandas-market-calendars>=4.3
+pandas-market-calendars>=5.4.0
 peewee==3.18.3
 pgvector==0.4.1
 pillow==12.3.0
