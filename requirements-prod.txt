@@ -169,7 +169,7 @@ sqlparse>=0.4.4
 scrapling>=0.4.0
 scikit-learn==1.9.0
 scipy==1.16.3
-sentence-transformers==5.6.0
+sentence-transformers==6.1.0
 setuptools==83.0.0
 sgmllib3k==1.0.0
 six==1.17.0
