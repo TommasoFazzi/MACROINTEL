@@ -212,7 +212,7 @@ weasyprint>=69.0  # CVE-2026-49452: CSS injection via presentational hints; fixe
 markdown>=3.10.2
 webencodings==0.5.1
 websockets==16.1.1
-wrapt==2.0.1
+wrapt==2.5.0
 xlrd==2.0.2
 xmltodict==0.13.0
 xx_ent_wiki_sm @ https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl#sha256=6f3c4b853852ea9e9d2dc76cc950dddb10a7e4c42d813308caefe6c5e8be2f0a
