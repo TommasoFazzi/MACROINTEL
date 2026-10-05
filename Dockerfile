@@ -14,7 +14,15 @@ WORKDIR /app
 # Install Python deps (production only, no streamlit/openbb/dev tools)
 # BuildKit cache mount: pip cache persists across builds → no re-download on requirements change
 COPY requirements-prod.txt .
+# torch first, from PyTorch's CPU-only index: the PyPI linux wheel depends on the full CUDA 13
+# toolkit (cuDNN, cuBLAS, NCCL, triton… several GB) — dead weight on the GPU-less CAX31, and
+# enough to fill the disk mid-build (2026-10-05 "no space left on device"). The version is read
+# from requirements-prod.txt so the pin has one source; `torch==X` is then already satisfied by
+# `X+cpu`. A dedicated step, not a global --extra-index-url, so no other package resolves there.
 RUN --mount=type=cache,target=/root/.cache/pip \
+    TORCH_VERSION=$(sed -n 's/^torch==\([^ #]*\).*/\1/p' requirements-prod.txt) && \
+    test -n "$TORCH_VERSION" && \
+    pip install --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}+cpu" && \
     pip install -r requirements-prod.txt
 
 # Pre-download spaCy model

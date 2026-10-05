@@ -87,6 +87,13 @@ jobs:
             intelligence-ita:arm64-check \
             -c "import leidenalg, igraph, unidecode; from scipy.optimize import linear_sum_assignment; from sentence_transformers import SentenceTransformer; print('arm64 critical imports OK')"
 
+      - name: Verify CPU-only torch (no CUDA wheels in the image)
+        run: |
+          docker run --rm --platform linux/arm64 --entrypoint sh intelligence-ita:arm64-check -c '
+            python -c "import torch; v=torch.__version__; print(\"torch\", v); assert v.endswith(\"+cpu\"), v"
+            if pip list 2>/dev/null | grep -iE "^(nvidia-|cuda-|triton )"; then echo "CUDA packages found in image"; exit 1; fi
+            echo "no CUDA packages"'
+
   deploy:
     needs: test
     runs-on: ubuntu-latest

@@ -46,6 +46,9 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # CPU-only torch first (see Dockerfile): skips the multi-GB CUDA toolkit on the runner
+          TORCH_VERSION=$(sed -n 's/^torch==\([^ #]*\).*/\1/p' requirements-prod.txt)
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}+cpu"
           pip install -r requirements-prod.txt
           python -m spacy download xx_ent_wiki_sm
 
