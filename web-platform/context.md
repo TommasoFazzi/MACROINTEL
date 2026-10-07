@@ -259,7 +259,7 @@ Next.js Route Handler that forwards GET/POST requests from the browser to the Fa
   - `mapbox-gl` (3.x) - Map rendering
   - **`react-force-graph-2d`** - Force-directed graph visualization (d3-force based)
   - `swr` - Data fetching with polling
-  - **`motion`** (12.x) - Animations. Sostituisce `framer-motion`, **rimosso**: `motion` è il pacchetto successore, e l'uso passa da `components/motion/Reveal.tsx` (`LazyMotion` + `m`) per non spedire l'intero runtime di animazione
+  - **`motion`** (14.x) - Animations. Sostituisce `framer-motion` come dipendenza diretta (resta solo come dipendenza interna di `motion`, pinnata alla stessa versione): `motion` è il pacchetto successore, e l'uso passa da `components/motion/Reveal.tsx` (`LazyMotion` + `m`) per non spedire l'intero runtime di animazione
   - **`gsap`** (3.x) + ScrollTrigger - Solo per le Scene 1 e 3 della landing, **importato dinamicamente** dentro i componenti scena così non entra nel bundle iniziale
   - `sigma` (3.x) + `graphology` - Grafo su `/stories`
   - `tailwindcss` (4.x) - Styling. Il layer di token in `app/globals.css` (`@theme`) è **la sorgente unica** per scala tipografica, durate, easing e palette `--data-1..15`; i componenti non devono reintrodurre letterali `text-[Npx]`/`#hex`
