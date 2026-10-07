@@ -7,19 +7,30 @@ and inserts into the conflict_events table with PostGIS Point geometries.
 
 Uses tenacity exponential backoff for API resilience.
 
-Two dataset modes:
-  - Stable GED (default): UCDP_GED_API — verified data, coverage 1989 through 2025-12-31
-  - GED Candidate (--candidate): UCDP_CANDIDATE_API — provisional monthly data,
-    coverage 2026-01-01 through ~Feb 2026 only. A candidate starts where the
-    stable release ends; it does not overlap it. Fatality counts are provisional
-    and get revised in the next annual release — label them as such downstream.
+Dataset modes (verified against https://ucdp.uu.se/apidocs/ and the Candidate
+codebook v1.5, 2026-10):
+  - Stable GED (default): UCDP_GED_API — verified annual release, 1989 through
+    2025-12-31 (v26.1).
+  - GED Candidate (--candidate / --candidate-version): provisional data with at
+    most a month's lag. Three kinds of version exist:
+      * monthly  `26.0.N`  — events whose date_start OR date_end falls inside
+        month N ONLY (a delta, NOT cumulative). The same event can appear in two
+        consecutive monthly releases. To cover a period you must load every
+        monthly version in it.
+      * quarterly/combined `26.01.26.03`, `26.01.26.06`, … — cumulative from
+        January up to the given month (3/6/9/12 months). One load replaces the
+        corresponding monthly ones.
+      * Not every candidate event survives into the final annual GED, and
+        fatality counts get revised — rows are tagged source='UCDP_GED_CANDIDATE'.
 
 Usage:
     python scripts/load_ucdp.py                              # Full stable load (1989-2025)
     python scripts/load_ucdp.py --dry-run                    # Count without saving
     python scripts/load_ucdp.py --limit 5000                 # Limit events fetched
     python scripts/load_ucdp.py --start-date 2025-01-01 --end-date 2025-12-31  # one year
-    python scripts/load_ucdp.py --candidate                  # Full candidate load (2026+)
+    python scripts/load_ucdp.py --candidate-version 26.01.26.06   # Jan-Jun 2026 (cumulative)
+    python scripts/load_ucdp.py --candidate-version 26.0.7        # July 2026 only
+    python scripts/load_ucdp.py --candidate                  # default monthly (UCDP_CANDIDATE_API)
 
 NOTE: StartDate/EndDate filter on the date_end field (YYYY-MM-DD) and work on
 all GED versions. Unrecognised params are silently IGNORED by the UCDP API, not
@@ -28,6 +39,7 @@ check the returned sample dates before trusting that a filter applied.
 Deduplication is handled via ON CONFLICT on data_source_id.
 """
 
+import re
 import sys
 import time
 import argparse
@@ -52,16 +64,21 @@ logger = get_logger(__name__)
 
 # Stable GED: verified data, updated annually. v26.1 covers 1989–2025-12-31
 # (417,968 events). Each annual release is a full re-issue that also *revises*
-# prior years; INSERT_SQL upserts fatalities/notes ON CONFLICT, so re-running a
-# full load against a newer version does pull those corrections in.
+# prior years; INSERT_SQL upserts every mutable column ON CONFLICT, so re-running
+# a load against a newer version pulls in corrections (fatalities AND recoded
+# actors). Candidate rows carry provisional actor codes `XXX<id>` (~15-30% of
+# recent months) that UCDP resolves later; this refresh is what picks that up.
+# Rows UCDP later DROPS are never deleted by an upsert (a provisional event that
+# vanishes from a newer candidate stays in the table until removed by hand).
 UCDP_GED_API = "https://ucdpapi.pcr.uu.se/api/gedevents/26.1"
 
-# GED Candidate: provisional monthly data. A candidate covers ONLY the months
-# after the stable release it extends — v26.0.2 is 2026-01-01 onward (1,298
-# events), it does NOT contain 2025. Use the stable endpoint for any completed
-# year. Candidate versions also supersede each other and may drop months
-# (v26.0.1 held 1,727 events, v26.0.2 holds 1,298).
-UCDP_CANDIDATE_API = "https://ucdpapi.pcr.uu.se/api/gedevents/26.0.2"
+# GED Candidate default: latest monthly delta (see module docstring — monthly
+# versions are NOT cumulative; use --candidate-version for other periods).
+UCDP_API_BASE = "https://ucdpapi.pcr.uu.se/api/gedevents/"
+UCDP_CANDIDATE_API = UCDP_API_BASE + "26.0.8"
+
+# Accepted --candidate-version shapes: monthly `26.0.8`, combined `26.01.26.06`.
+CANDIDATE_VERSION_RE = re.compile(r"^\d{2}\.0\.\d{1,2}$|^\d{2}\.\d{2}\.\d{2}\.\d{2}$")
 
 
 def _get_headers() -> dict:
@@ -209,6 +226,13 @@ INSERT_SQL = """
         %(actor1)s, %(actor2)s, %(fatalities)s, %(fatalities_low)s, %(fatalities_high)s,
         %(notes)s, %(source)s, %(data_source_id)s)
     ON CONFLICT (data_source_id) DO UPDATE SET
+        event_date = EXCLUDED.event_date,
+        event_type = EXCLUDED.event_type,
+        country = EXCLUDED.country,
+        location = EXCLUDED.location,
+        geom = EXCLUDED.geom,
+        actor1 = EXCLUDED.actor1,
+        actor2 = EXCLUDED.actor2,
         fatalities = EXCLUDED.fatalities,
         fatalities_low = EXCLUDED.fatalities_low,
         fatalities_high = EXCLUDED.fatalities_high,
@@ -222,14 +246,24 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Count events without saving')
     parser.add_argument('--candidate', action='store_true',
                         help='Use GED Candidate endpoint (provisional, more recent data)')
+    parser.add_argument('--candidate-version', type=str, metavar='VER',
+                        help='Candidate version to load, e.g. 26.0.7 (monthly) or '
+                             '26.01.26.06 (Jan-Jun, cumulative). Implies --candidate.')
     parser.add_argument('--start-date', type=str, metavar='YYYY-MM-DD',
-                        help='Filter by start date (Candidate endpoint only)')
+                        help='Filter on date_end, inclusive (all versions)')
     parser.add_argument('--end-date', type=str, metavar='YYYY-MM-DD',
-                        help='Filter by end date (Candidate endpoint only)')
+                        help='Filter on date_end, inclusive (all versions)')
     parser.add_argument('--limit', type=int, help='Maximum events to fetch')
     args = parser.parse_args()
 
-    base_url = UCDP_CANDIDATE_API if args.candidate else UCDP_GED_API
+    if args.candidate_version:
+        if not CANDIDATE_VERSION_RE.match(args.candidate_version):
+            parser.error(f"invalid --candidate-version {args.candidate_version!r} "
+                         "(expected e.g. 26.0.7 or 26.01.26.06)")
+        args.candidate = True
+        base_url = UCDP_API_BASE + args.candidate_version
+    else:
+        base_url = UCDP_CANDIDATE_API if args.candidate else UCDP_GED_API
 
     logger.info("=" * 80)
     logger.info("UCDP GED CONFLICT EVENTS LOADER")
