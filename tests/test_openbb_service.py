@@ -177,6 +177,20 @@ class TestDatabaseOperations:
         assert any('ON CONFLICT' in sql for sql in all_calls)
         assert any('UPDATE macro_indicators' in sql for sql in all_calls)
 
+    @pytest.mark.parametrize("bad", [float('nan'), float('inf'), None])
+    def test_save_macro_indicator_rejects_non_finite(self, service, mock_db, bad):
+        """NaN/inf/None must never reach the DB (NaN is a valid NUMERIC and poisons rolling windows)."""
+        mock_cursor = MagicMock()
+        mock_db.get_connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+        assert service._save_macro_indicator(date.today(), 'SP500', bad, 'Index', 'EQUITY') is False
+        assert not mock_cursor.execute.called
+
+    def test_usd_cny_uses_cny_per_usd_symbol(self):
+        """Ontology expects CNY per USD (~6.8); CNYUSD=X is the inverse (~0.146)."""
+        from src.integrations.openbb_service import OpenBBMarketService as S
+        assert S.MACRO_INDICATORS['USD_CNY']['symbol'] == 'CNY=X'
+
 
 # =============================================================================
 # Unit Tests - Ticker Price

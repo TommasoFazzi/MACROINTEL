@@ -20,6 +20,7 @@ Usage:
     # Inject into LLM prompt
 """
 
+import math
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -292,7 +293,7 @@ class OpenBBMarketService:
         # ================================================================
         # --- EXCHANGE RATES (yfinance daily — preferred over FRED monthly) ---
         'USD_CNY': {
-            'symbol': 'CNYUSD=X',
+            'symbol': 'CNY=X',  # CNY per USD (ontology convention); CNYUSD=X is the inverse
             'unit': 'Rate',
             'category': 'FX',
             'description': 'USD/CNY Exchange Rate (China trade proxy)',
@@ -814,6 +815,9 @@ class OpenBBMarketService:
                 actual_ts = hist.index[-1]
                 value = float(hist['Close'].iloc[-1])
                 actual_date = actual_ts.date()
+                if not math.isfinite(value):
+                    logger.warning(f"yfinance {symbol}: non-finite close on {actual_date}, discarded")
+                    return None
                 logger.debug(f"yfinance {symbol}: latest available = {actual_date} ({value})")
                 return value, actual_date
 
@@ -828,6 +832,10 @@ class OpenBBMarketService:
             actual_ts = available_before.max()
             value = float(hist.loc[actual_ts, 'Close'])
             actual_date = actual_ts.date()
+
+            if not math.isfinite(value):
+                logger.warning(f"yfinance {symbol}: non-finite close on {actual_date}, discarded")
+                return None
 
             if actual_date != target_date:
                 logger.info(
@@ -2315,6 +2323,12 @@ class OpenBBMarketService:
         If ma_7d column doesn't exist, the UPDATE will fail and roll back the entire
         transaction (including the INSERT). Apply migration 038 before deploying this code.
         """
+        # NaN is a valid NUMERIC in Postgres (NaN != NULL, sorts above every number) and would
+        # poison the rolling windows; a missing observation must stay a gap, never a value.
+        if value is None or not math.isfinite(float(value)):
+            logger.warning(f"Refusing to save non-finite macro value for {key} on {target_date}: {value}")
+            return False
+
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:

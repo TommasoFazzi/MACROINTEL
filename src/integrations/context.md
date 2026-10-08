@@ -27,7 +27,7 @@ Data acquisition layer for financial intelligence. Used by `src/finance/` for tr
     - FRED monthly (structural context): NICKEL, US_CPI, US_UNEMPLOYMENT, US_INDUSTRIAL_PROD, CASS_FREIGHT_INDEX
     - yfinance daily futures: BRENT_OIL, WTI_OIL, GOLD, COPPER, SILVER, NATURAL_GAS, TTF_GAS (TTF=F — European gas benchmark, EUR/MWh), URANIUM, ALUMINUM (ALI=F), WHEAT (ZW=F)
     - yfinance equity/indices: SP500, NASDAQ, VIX
-    - yfinance FX: EUR_USD, USD_JPY, DOLLAR_INDEX, USD_GBP (GBPUSD=X), USD_CNY (CNYUSD=X), USD_CNH (⚠️ restricted)
+    - yfinance FX: EUR_USD, USD_JPY, DOLLAR_INDEX, USD_GBP (GBPUSD=X), USD_CNY (CNY=X — CNY per USD; the old CNYUSD=X was the inverse and spliced the series on 2026-04-09), USD_CNH (⚠️ restricted)
     - yfinance crypto: BITCOIN
     - **Removed**: TED_SPREAD (LIBOR→SOFR degraded), EPU_GLOBAL (4-6w lag), USD_RUB (bimodal post-sanctions)
     - **Fixed (Phase 1)**: ALUMINUM and WHEAT switched from FRED monthly to daily CME futures; USD_GBP and USD_CNY switched from FRED to yfinance daily
