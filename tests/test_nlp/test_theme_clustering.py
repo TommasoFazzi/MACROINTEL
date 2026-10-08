@@ -330,6 +330,71 @@ def test_count_consecutive_drift_signals_zero_when_latest_clean():
     assert tc.count_consecutive_drift_signals(db) == 0
 
 
+def test_count_consecutive_drift_signals_filters_on_drift_signals_not_pipeline_step():
+    """Regression test (2026-10-08): the query must filter on
+    `drift_signals IS NOT NULL`, not `pipeline_step = 'community_detection'`.
+    Louvain's own rows always have drift_signals=NULL but share the same
+    pipeline_step value as theme_clustering's rows — filtering on
+    pipeline_step alone would interleave Louvain's NULL rows into the
+    ORDER BY ts DESC sequence and break the consecutive-count loop after at
+    most 1 row, making the documented ">=2 consecutive" check unreachable.
+    """
+    cursor = _FakeCursor(fetchall_results=[[]])
+    db = _FakeDB(cursor)
+    tc.count_consecutive_drift_signals(db)
+    query, _params = cursor.queries[0]
+    assert "drift_signals is not null" in query.lower()
+    assert "pipeline_step" not in query.lower()
+
+
+# ---------------------------------------------------------------------------
+# _is_refit_due (regression tests, 2026-10-08)
+# ---------------------------------------------------------------------------
+
+def test_is_refit_due_filters_on_shadow_partitions_not_drift_signals():
+    """Regression test: the query must filter on `shadow_partitions IS NOT
+    NULL`, not `drift_signals IS NOT NULL`. Since the 2026-08-12 fix,
+    drift_signals is populated on EVERY theme_clustering.py run (daily
+    nearest-centroid AND periodic refit alike), so it can no longer identify
+    "the last periodic refit" — it would always find yesterday's run,
+    whatever kind it was, permanently suppressing the 7-day baseline cadence
+    (observed in prod as 24-30 day gaps between refits instead of ~7).
+    shadow_partitions is written ONLY on the refit_due branch.
+    """
+    cursor = _FakeCursor(fetchone_results=[None])
+    db = _FakeDB(cursor)
+    tc._is_refit_due(db, refit_cadence_days=7)
+    query, _params = cursor.queries[0]
+    assert "shadow_partitions is not null" in query.lower()
+    assert "drift_signals" not in query.lower()
+
+
+def test_is_refit_due_true_on_first_ever_run():
+    cursor = _FakeCursor(fetchone_results=[None])
+    db = _FakeDB(cursor)
+    assert tc._is_refit_due(db, refit_cadence_days=7) is True
+
+
+def test_is_refit_due_true_when_cadence_elapsed():
+    import datetime
+    cursor = _FakeCursor(fetchone_results=[
+        (datetime.datetime(2026, 1, 1),),
+        (True,),
+    ])
+    db = _FakeDB(cursor)
+    assert tc._is_refit_due(db, refit_cadence_days=7) is True
+
+
+def test_is_refit_due_false_within_cadence():
+    import datetime
+    cursor = _FakeCursor(fetchone_results=[
+        (datetime.datetime(2026, 1, 1),),
+        (False,),
+    ])
+    db = _FakeDB(cursor)
+    assert tc._is_refit_due(db, refit_cadence_days=7) is False
+
+
 # ---------------------------------------------------------------------------
 # _read_previous_partition (clustering-shadow-metrics-umap task 8.1)
 # ---------------------------------------------------------------------------

@@ -712,18 +712,28 @@ def detect_drift(db: DatabaseManager, cfg_drift, baseline_window_days: Optional[
 
 
 def count_consecutive_drift_signals(db: DatabaseManager) -> int:
-    """Count how many of the most recent community_detection runs (starting
+    """Count how many of the most recent theme_clustering.py runs (starting
     from the latest) had drift_signals populated with a non-empty reasons list.
 
     Used by the retune-k trigger (design.md § Decision 5): k-retune fires only
     on >=2 consecutive drift-flagged runs, not on a single isolated one.
+
+    Filters on `drift_signals IS NOT NULL`, NOT on `pipeline_step` (which is
+    hardcoded to "community_detection" for every caller of
+    _persist_run_metrics, including Louvain's own rows — see design.md
+    Decision 6a in clustering-shadow-metrics-umap). Louvain never sets
+    drift_signals, so filtering on pipeline_step alone would interleave
+    Louvain's always-NULL rows between theme_clustering's own, breaking the
+    loop after at most 1 row and making ">=2 consecutive" unreachable —
+    fixed 2026-10-08 (found while investigating 2 months of near-zero
+    k-retune activity post the 2026-08-12 drift_signals persistence fix).
     """
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT drift_signals FROM narrative_run_metrics
-                WHERE pipeline_step = 'community_detection'
+                WHERE drift_signals IS NOT NULL
                 ORDER BY ts DESC LIMIT 10
                 """
             )
@@ -822,14 +832,26 @@ def _active_storyline_ids(db: DatabaseManager) -> list:
 
 def _is_refit_due(db: DatabaseManager, refit_cadence_days: int) -> bool:
     """True when no periodic re-fit has run within refit_cadence_days, or none
-    has ever run (first-run bootstrap always re-fits)."""
+    has ever run (first-run bootstrap always re-fits).
+
+    Filters on `shadow_partitions IS NOT NULL`, NOT on `drift_signals IS NOT
+    NULL` — drift_signals is now written on every theme_clustering.py run
+    (daily nearest-centroid AND periodic refit alike, set unconditionally
+    before this function is even called), so it can no longer distinguish
+    "the last refit" from "yesterday's run of any kind". shadow_partitions
+    is written ONLY on the refit_due branch (design.md Decision 1), so it's
+    the correct discriminator — same pattern as _read_previous_partition.
+    Fixed 2026-10-08: before this fix (since the 2026-08-12 drift_signals
+    persistence fix), this always found "yesterday", making refit_due
+    effectively drift-only — the 7-day baseline cadence never fired on its
+    own (observed as ~24-30 day gaps between refits instead of ~7).
+    """
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT ts FROM narrative_run_metrics
-                WHERE pipeline_step = 'community_detection'
-                  AND drift_signals IS NOT NULL
+                WHERE shadow_partitions IS NOT NULL
                 ORDER BY ts DESC LIMIT 1
                 """
             )
@@ -883,6 +905,10 @@ def run_theme_clustering(
     if refit_due:
         # Retune k only when drift has persisted >=2 consecutive re-fits
         # (design.md § Decision 5) — a single isolated drift keeps k fixed.
+        # count_consecutive_drift_signals() is called BEFORE today's own row
+        # is persisted, so it counts PRIOR consecutive drift-flagged runs
+        # only (not today) — threshold >=1 prior + today's own drift_result
+        # being True == >=2 consecutive total. Not an off-by-one bug.
         if drift_result["drift"] and count_consecutive_drift_signals(db) >= 1:
             k = sweep_k_for_best_silhouette(
                 db, storyline_ids, theme_cfg.k_sweep_range, embedding_cache=embedding_cache,
