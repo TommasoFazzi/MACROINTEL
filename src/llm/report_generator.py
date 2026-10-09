@@ -11,8 +11,9 @@ import os
 import re
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 
 import numpy as np
@@ -114,6 +115,75 @@ def _adapt_articles_for_strategic_prompt(articles: list) -> list:
             "summary": (a.get("summary") or a.get("full_text") or "")[:500],
         })
     return result
+
+
+# ── Generation context (what the writer LLM actually saw) ─────────────────────
+# Persisted to report_generation_context (migration 048) and used by the
+# citation verifier as the evidence for [Article N] / [Storyline N].
+
+def _json_safe(obj: Any) -> Any:
+    """Round-trip through JSON so Decimal/date values survive psycopg2 Json and json.dump."""
+    return json.loads(json.dumps(
+        obj, default=lambda o: float(o) if isinstance(o, Decimal) else str(o)
+    ))
+
+
+def _articles_in_prompt(articles: list, excerpts: list) -> list:
+    """[{n, article_id, link, title, source, date, excerpt}] — n is the [Article N] index."""
+    return [
+        {
+            "n": n,
+            "article_id": a.get("id"),
+            "link": a.get("link"),
+            "title": a.get("title"),
+            "source": a.get("source"),
+            "date": str(a.get("published_date", "")),
+            "excerpt": excerpt,
+        }
+        for n, (a, excerpt) in enumerate(zip(articles, excerpts), 1)
+    ]
+
+
+def _v1_article_excerpt(article: dict) -> str:
+    """Summary + full_text[:2000]: the evidence format_recent_articles() puts in the v1 prompt."""
+    summary = article.get("summary", "No summary available")
+    full_text = (article.get("full_text") or "")[:2000]
+    return f"{summary}\n\n{full_text}".strip()
+
+
+def _storylines_in_prompt(narrative_ctx: dict) -> list:
+    """[{rank, storyline_id, title, summary}] as rendered by _format_narrative_xml()."""
+    return [
+        {
+            "rank": s.get("rank"),
+            "storyline_id": s.get("id"),
+            "title": s.get("title"),
+            "summary": (s.get("summary") or "")[:500],
+        }
+        for s in narrative_ctx.get("storylines", [])
+    ]
+
+
+def _capture_macro_snapshot(openbb_service, target_date: date) -> dict:
+    """Macro rows as read now, before the 23:00 UTC evening fetch overwrites them.
+
+    Looks back up to 5 days like get_macro_context_text(), so the snapshot
+    matches the values that went into the prompt.
+    """
+    snapshot = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "requested_date": str(target_date),
+        "target_date": None,
+        "rows": [],
+    }
+    for offset in range(6):
+        day = target_date - timedelta(days=offset)
+        rows = openbb_service._get_macro_indicators(day)
+        if rows:
+            snapshot["target_date"] = str(day)
+            snapshot["rows"] = rows
+            break
+    return _json_safe(snapshot)
 
 
 def _linkify_citations(text: str, links_map: dict) -> str:
@@ -2390,8 +2460,15 @@ Respond with JSON only:"""
         gemini-2.5-flash with system_instruction.
 
         Falls back to v1 path if this raises or returns success=False.
+
+        On success also returns ``system_prompt``, ``user_prompt`` and
+        ``articles_in_prompt`` (only the top _MAX_ARTICLES_IN_PROMPT the prompt
+        renders, with the exact summary excerpt) for the generation context.
         """
-        from src.macro.strategic_intelligence_prompt import build_strategic_intelligence_prompt
+        from src.macro.strategic_intelligence_prompt import (
+            build_strategic_intelligence_prompt,
+            _MAX_ARTICLES_IN_PROMPT,
+        )
         from src.macro.macro_regime_persistence import get_macro_regime_persistence_singleton
 
         date_str = (target_date.strftime('%Y-%m-%d')
@@ -2425,7 +2502,17 @@ Respond with JSON only:"""
                 temperature=0.35,
                 max_tokens=8192,
             )
-            return {'success': True, 'report_text': report_text}
+            return {
+                'success': True,
+                'report_text': report_text,
+                'system_prompt': system_prompt,
+                'user_prompt': user_prompt,
+                # adapted summaries are already capped at the 500 chars the prompt renders
+                'articles_in_prompt': _articles_in_prompt(
+                    articles[:_MAX_ARTICLES_IN_PROMPT],
+                    [a['summary'] for a in adapted_articles[:_MAX_ARTICLES_IN_PROMPT]],
+                ),
+            }
         except Exception as e:
             logger.warning(f"[v2] _generate_strategic_report failed: {e}")
             return {'success': False, 'error': str(e)}
@@ -2501,6 +2588,7 @@ Respond with JSON only:"""
         macro_v2_result = None
         phase3_data: dict = {}
         today = None
+        macro_snapshot = None
 
         OpenBBMarketService = get_openbb_service()
         if OpenBBMarketService:
@@ -2516,6 +2604,12 @@ Respond with JSON only:"""
                 # Romania vertical skips global LLM macro analysis — RO indicators are
                 # read from DB directly by _format_romania_macro_header() later.
                 is_romania = report_type.startswith("romania-")
+
+                if not is_romania:
+                    try:
+                        macro_snapshot = _capture_macro_snapshot(openbb_service, today)
+                    except Exception as snap_err:
+                        logger.warning(f"Macro snapshot capture failed (non-blocking): {snap_err}")
 
                 # Get formatted macro context for LLM prompt (raw data)
                 macro_context_text = openbb_service.get_macro_context_text(today)
@@ -2742,6 +2836,12 @@ Use them to:
             )
             if strategic_result.get('success'):
                 report_text = strategic_result['report_text']
+                generation_context = {
+                    'writer_path': 'v2',
+                    'system_prompt': strategic_result['system_prompt'],
+                    'user_prompt': strategic_result['user_prompt'],
+                    'articles_in_prompt': strategic_result['articles_in_prompt'],
+                }
                 v2_dashboard = self._format_macro_dashboard_v2(macro_v2_result['result'], today)
                 report_text = (
                     f"# 🌍 Intelligence Briefing — {report_date}\n\n"
@@ -2777,6 +2877,8 @@ Use them to:
 
 """
                 logger.info("  Macro context injected as reference for LLM")
+
+            from src.macro.strategic_intelligence_prompt import CITE_OR_OMIT_RULE
 
             # Step 4: Construct prompt
             prompt = f"""{header_section}You are an intelligence analyst generating a daily intelligence briefing.
@@ -2855,8 +2957,9 @@ For each of the top 5 storylines by momentum from the strategic context:
 
 If no storyline data is provided, skip this section entirely.
 
+{CITE_OR_OMIT_RULE}
+
 **ADDITIONAL GUIDELINES:**
-- Cite specific articles with [Article N] references
 - Use professional, analytical tone
 - Prioritize events that are strategic break points, not just high-volume news
 - When information is unverified or conflicting, use confidence indicators (High/Medium/Low) and cite multiple sources
@@ -2896,6 +2999,14 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                     request_options={"timeout": 240},
                 )
                 logger.info(f"✓ Report generated successfully ({len(report_text)} characters)")
+                generation_context = {
+                    'writer_path': 'v1',
+                    'system_prompt': '',
+                    'user_prompt': prompt,
+                    'articles_in_prompt': _articles_in_prompt(
+                        recent_articles, [_v1_article_excerpt(a) for a in recent_articles]
+                    ),
+                }
 
                 # Prepend pre-built title + macro dashboard programmatically
                 # This guarantees consistent ticker format regardless of LLM variability.
@@ -2965,6 +3076,14 @@ Se fonti di tier diverso riportano posizioni divergenti sullo stesso evento, seg
                 ]
             }
         }
+
+        generation_context.update({
+            'writer_model': self._reasoning_model.model_name,
+            'storylines_in_prompt': _storylines_in_prompt(narrative_ctx) if narrative_xml else [],
+            'macro_context_text': macro_context_text,
+            'macro_snapshot': macro_snapshot,
+        })
+        report['generation_context'] = _json_safe(generation_context)
 
         logger.info("\n✓ Report generation complete")
         return report
@@ -3975,6 +4094,30 @@ Respond with JSON only:"""
             stats['errors'] += 1
             return stats
 
+    def _verify_citations(self, report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Run the T3 citation verifier on a daily report.
+
+        Returns the dict stored as metadata.faithfulness: the FaithfulnessReport
+        plus status='ok', or {'status': 'error', 'error': ...} if the verifier
+        raised. Returns None when the report has no generation_context
+        (Romania and other non-daily variants are not verified).
+        """
+        context = report.get('generation_context')
+        if not context:
+            return None
+        logger.info("\n[VERIFY] Checking citations against the writer's context (T3)...")
+        try:
+            from .citation_verifier import CitationVerifier
+            result = CitationVerifier().verify(report['report_text'], context)
+        except Exception as e:
+            logger.error(f"Citation verifier failed: {e}")
+            return {'status': 'error', 'error': str(e)[:500]}
+        logger.info(
+            f"✓ Citations: coverage={result.event_citation_coverage:.0%} "
+            f"verdicts={result.verdict_counts} invalid_refs={result.invalid_refs}"
+        )
+        return {'status': 'ok', **result.model_dump()}
+
     def run_macro_first_pipeline(
         self,
         focus_areas: Optional[List[str]] = None,
@@ -4014,7 +4157,11 @@ Respond with JSON only:"""
             skip_article_signals: If True, only extract report-level signals (faster)
 
         Returns:
-            Extended report dictionary with trade_signals data
+            Extended report dictionary with trade_signals data. On success it
+            also carries ``degraded_reasons`` (list[str]): the report was saved
+            but condensation/signal extraction failed, produced 0 signals, or
+            the citation verifier failed. Verifier output is stored in
+            ``metadata.faithfulness`` before the report is saved.
         """
         logger.info("=" * 80)
         logger.info("MACRO-FIRST PIPELINE (Serialized)")
@@ -4037,6 +4184,9 @@ Respond with JSON only:"""
             return report
 
         report_text = report['report_text']
+        # Failures that leave the report usable but must not pass silently
+        # (a T3 401 once produced 0 signals for three months with a green run).
+        degraded_reasons: List[str] = []
 
         # Step 2: Condense macro context
         logger.info("\n[STEP 2/6] Condensing macro context for efficiency...")
@@ -4044,6 +4194,7 @@ Respond with JSON only:"""
 
         if not condensed_result['success']:
             logger.warning("Failed to condense context, using fallback")
+            degraded_reasons.append('condensation_failed')
             condensed_context = {
                 'key_themes': [],
                 'dominant_sentiment': 'MIXED',
@@ -4059,6 +4210,10 @@ Respond with JSON only:"""
         logger.info("\n[STEP 3/6] Extracting report-level trade signals...")
         macro_signals_result = self.extract_macro_signals(report_text, condensed_context)
         report_signals = macro_signals_result.get('signals', [])
+        if not macro_signals_result.get('success'):
+            degraded_reasons.append('signals_extraction_failed')
+        elif not report_signals:
+            degraded_reasons.append('signals_zero')
 
         # Step 4 & 5: Article-level signals (optional)
         article_signals = []
@@ -4112,6 +4267,13 @@ Respond with JSON only:"""
             logger.info("\n[STEP 4/6] Skipping article filtering (--skip-article-signals)")
             logger.info("[STEP 5/6] Skipping article-level signals (--skip-article-signals)")
 
+        # Citation check against exactly what the writer saw (advisory only)
+        faithfulness = self._verify_citations(report)
+        if faithfulness is not None:
+            report.setdefault('metadata', {})['faithfulness'] = faithfulness
+            if faithfulness.get('status') == 'error':
+                degraded_reasons.append('verifier_failed')
+
         # Step 6: Save to database
         logger.info("\n[STEP 6/6] Saving to database...")
         report_id = None
@@ -4146,6 +4308,7 @@ Respond with JSON only:"""
         report['articles_with_tickers_count'] = len(articles_with_tickers)
         report['trade_signals_stats'] = signal_stats
         report['token_savings_estimate'] = condensed_result.get('token_estimate', 0)
+        report['degraded_reasons'] = degraded_reasons
 
         # Summary
         total_article_signals = sum(len(a.get('signals', [])) for a in article_signals)
@@ -4158,6 +4321,8 @@ Respond with JSON only:"""
         logger.info(f"Articles with tickers: {len(articles_with_tickers)}")
         logger.info(f"Article-level signals: {total_article_signals}")
         logger.info(f"Token savings (condensed context): ~{5000 - condensed_result.get('token_estimate', 500)} tokens/article")
+        if degraded_reasons:
+            logger.error(f"Report saved but DEGRADED: {', '.join(degraded_reasons)}")
 
         return report
 

@@ -33,6 +33,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
   - **Auto weekly**: Runs on Sundays (after main pipeline succeeds)
   - **Auto monthly**: Runs after 4 weekly reports since last recap (DB-counted)
   - **narrative_processing** has `continue_on_failure=True` (report generated even if storylines fail)
+  - **Degraded steps** (`EXIT_DEGRADED = 3`): a step exiting 3 is recorded as `StepResult(success=True, degraded=True)`. Later steps (Romania, email) and the conditional weekly/monthly steps still run, but `PipelineResult.success` is False, so `main()` returns 1 and the GitHub Actions run goes red. The summary and notification list DEGRADED steps separately from FAILED ones. Only `generate_report.py --macro-first` uses exit 3 today.
   - Logs written to `logs/daily_pipeline_{run_id}.log`; old logs auto-cleaned after `PIPELINE_MAX_LOG_DAYS` (default 30)
   - Notifications: macOS `osascript`/`terminal-notifier` locally; SMTP email in production (if `SMTP_HOST` + `NOTIFY_EMAIL` env vars set)
 - `pipeline_status_check.py` - **Daily status checker**: runs at 9:00 AM via launchd (separate plist)
@@ -55,6 +56,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
   - Called as step 11 in `daily_pipeline.py` (`continue_on_failure=True`)
 - `generate_report.py` - Generate daily intelligence reports (now includes Storyline Tracker section)
   - `--macro-first` flag for serialized pipeline with trade signals
+  - **Exit codes (`--macro-first`)**: 0 = healthy; 1 = hard failure (no report); **3 = `EXIT_DEGRADED`**: the report was saved but `degraded_reasons` is non-empty (`condensation_failed`, `signals_extraction_failed`, `signals_zero`, `verifier_failed`); each reason is logged at ERROR.
   - `--report-type {global,romania-daily,romania-weekly}` (default: `global`) — Romania variants bypass macro-first pipeline, use Italian system prompts, apply Romania storyline scoring. `--days` defaults to 1 for romania-daily and 7 for romania-weekly unless explicitly overridden.
 - `generate_weekly_report.py` - Generate weekly aggregated meta-analysis
 - `generate_recap_report.py` - Generate recap reports for date ranges

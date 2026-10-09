@@ -677,3 +677,42 @@ class RomaniaReportResult(BaseModel):
     relevance_signal_breakdown: List[RomaniaStorylineSignal] = Field(default_factory=list)
     error: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+# =============================================================================
+# CITATION VERIFIER (report-faithfulness-guardrails)
+# Output of src/llm/citation_verifier.py, stored in reports.metadata.faithfulness
+# =============================================================================
+
+Verdict = Literal["SUPPORTED", "PARTIAL", "NOT_SUPPORTED", "CONTRADICTED"]
+
+
+class ExtractedClaim(BaseModel):
+    """One claim extracted from a daily report, with the citation markers attached to it."""
+    claim: str
+    kind: Literal["event", "numeric", "inference"]
+    article_refs: List[int] = Field(default_factory=list)
+    storyline_refs: List[int] = Field(default_factory=list)
+
+
+class ClaimVerdict(BaseModel):
+    """Judge verdict for an event claim, against exactly the items it cites."""
+    claim: str
+    article_refs: List[int]
+    storyline_refs: List[int]
+    verdict: Verdict
+    quote: str = ""
+    reason: str = ""
+
+
+class FaithfulnessReport(BaseModel):
+    """Per-report citation metrics. Advisory only: the report text is never changed."""
+    verifier_version: str
+    writer_path: Literal["v1", "v2"]
+    n_claims_by_kind: Dict[str, int]
+    event_citation_coverage: float  # event claims with >=1 ref / event claims
+    invalid_refs: List[int]  # [Article N] markers with no article N in the prompt
+    invalid_storyline_refs: List[int] = Field(default_factory=list)
+    verdict_counts: Dict[str, int]
+    verdict_shares: Dict[str, float]
+    flagged: List[ClaimVerdict]  # non-SUPPORTED, max 30, CONTRADICTED > NOT_SUPPORTED > PARTIAL

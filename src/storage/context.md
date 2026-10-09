@@ -36,7 +36,7 @@ Central persistence layer between the processing pipeline and intelligence gener
   - `semantic_search()` - Vector similarity search on chunks with filters
   - `full_text_search()` - PostgreSQL `ts_query` for keyword search
   - `hybrid_search()` - Combines vector + keyword with RRF fusion
-  - `save_report()` / `update_report()` - Report lifecycle management
+  - `save_report()` / `update_report()` - Report lifecycle management. When the report carries `generation_context`, `save_report()` also inserts it into `report_generation_context` (migration 048) via `_save_generation_context()`, in the same transaction under a savepoint. A missing table or bad payload loses only the context row, logs an error, and never fails the report.
   - `save_feedback()` / `get_report_feedback()` - HITL feedback storage
 
   **Specialized Methods:**

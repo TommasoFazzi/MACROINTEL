@@ -40,6 +40,10 @@ Quality assurance layer ensuring code correctness before deployment. Tests are o
   - Query analyzer tests (filter extraction)
   - Report generator tests (structure validation)
   - Query expansion tests
+  - Macro-first degraded reasons (`test_macro_first_degraded.py`)
+
+- `test_scripts/` - Pipeline script tests
+  - Degraded exit path: `generate_report.py` exit 3, `daily_pipeline.py` continues and ends red
 
 - `test_finance/` - Financial scoring tests
   - Technical penalty calculation

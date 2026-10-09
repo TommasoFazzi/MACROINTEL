@@ -44,6 +44,11 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)  # optional: env vars from Do
 from src.utils.logger import get_logger
 from scripts.pipeline_manifest import create_manifest, cleanup_old_manifests
 
+# Exit code meaning "completed but degraded" (scripts/generate_report.py: report
+# saved, but signals/condensation/verifier failed). The step counts as completed
+# — later steps and delivery still run — but the pipeline ends non-zero.
+EXIT_DEGRADED = 3
+
 
 # =============================================================================
 # Data Classes
@@ -59,6 +64,7 @@ class StepResult:
     stderr: str = ""
     duration_seconds: float = 0.0
     error: Optional[str] = None
+    degraded: bool = False  # exit EXIT_DEGRADED: completed, but the run must end red
 
 
 @dataclass
@@ -81,6 +87,10 @@ class PipelineResult:
     steps_total: int
     step_results: List[StepResult]
     error: Optional[str] = None
+
+    @property
+    def degraded_steps(self) -> List[str]:
+        return [r.step_name for r in self.step_results if r.degraded]
 
 
 # =============================================================================
@@ -426,9 +436,10 @@ class DailyPipeline:
             step_results.append(result)
 
             # Log result
-            emoji = "\u2713" if result.success else "\u2717"
-            status = "completed" if result.success else "FAILED"
+            emoji, status = self._status_label(result)
             self.logger.info(f"[STEP {step_num}] {emoji} {step.name} {status} ({result.duration_seconds:.1f}s)")
+            if result.degraded:
+                self.logger.error(f"Step {step_num} completed but DEGRADED (exit {EXIT_DEGRADED}), continuing...")
 
             if not result.success:
                 if result.error:
@@ -447,14 +458,15 @@ class DailyPipeline:
 
         # Summary
         total_duration = time.time() - start_time
-        success = not pipeline_failed and all(
-            r.success or self.steps[i].continue_on_failure
-            for i, r in enumerate(step_results)
+        completed = not pipeline_failed and all(
+            r.success or step.continue_on_failure
+            for step, r in zip(steps_to_run, step_results)
         )
+        degraded = any(r.degraded for r in step_results)
 
         pipeline_result = PipelineResult(
             run_id=self.run_id,
-            success=success,
+            success=completed and not degraded,
             total_duration=total_duration,
             steps_completed=len([r for r in step_results if r.success]),
             steps_total=len(steps_to_run),
@@ -464,8 +476,9 @@ class DailyPipeline:
 
         self._log_summary(pipeline_result)
 
-        # Run conditional steps (weekly/monthly) if main pipeline succeeded
-        if pipeline_result.success and not self.skip_weekly and only_step is None:
+        # Run conditional steps (weekly/monthly) if the main pipeline completed,
+        # degraded included: a degraded daily report must not cost the weekly.
+        if completed and not self.skip_weekly and only_step is None:
             self._run_conditional_steps(step_results)
 
         # Notification
@@ -612,9 +625,11 @@ class DailyPipeline:
             )
 
             duration = time.time() - start_time
+            degraded = result.returncode == EXIT_DEGRADED
+            success = result.returncode == 0 or degraded
 
             # Log subprocess output (Python logging → stderr; script prints → stdout)
-            if result.returncode == 0:
+            if success:
                 # On success: always forward stderr (Python logger output) and stdout if verbose
                 if result.stderr:
                     for line in result.stderr.splitlines():
@@ -626,11 +641,12 @@ class DailyPipeline:
 
             return StepResult(
                 step_name=step.name,
-                success=(result.returncode == 0),
+                success=success,
                 exit_code=result.returncode,
                 stdout=result.stdout,
                 stderr=result.stderr,
-                duration_seconds=duration
+                duration_seconds=duration,
+                degraded=degraded
             )
 
         except subprocess.TimeoutExpired as e:
@@ -717,7 +733,7 @@ class DailyPipeline:
         seconds = int(result.total_duration % 60)
         duration_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
 
-        status = "SUCCESS" if result.success else "FAILED"
+        status = self._pipeline_status(result)
         emoji = "\u2713" if result.success else "\u2717"
 
         self.logger.info(f"Status: {emoji} {status}")
@@ -727,15 +743,33 @@ class DailyPipeline:
         self.logger.info("Step Results:")
 
         for i, step_result in enumerate(result.step_results, 1):
-            emoji = "\u2713" if step_result.success else "\u2717"
+            emoji, step_status = self._status_label(step_result)
             self.logger.info(
                 f"  [{i}] {emoji} {step_result.step_name:<20} - {step_result.duration_seconds:.1f}s"
+                + (f" ({step_status})" if step_result.degraded else "")
             )
 
         self.logger.info("=" * 80)
 
+        if result.degraded_steps:
+            self.logger.error(f"DEGRADED steps: {', '.join(result.degraded_steps)}")
         if result.error:
             self.logger.error(f"Error: {result.error}")
+
+    @staticmethod
+    def _status_label(result: StepResult) -> tuple[str, str]:
+        """(emoji, status) for a step: completed / DEGRADED / FAILED."""
+        if result.degraded:
+            return "!", "DEGRADED"
+        if result.success:
+            return "\u2713", "completed"
+        return "\u2717", "FAILED"
+
+    @staticmethod
+    def _pipeline_status(result: PipelineResult) -> str:
+        if result.success:
+            return "SUCCESS"
+        return "DEGRADED" if result.error is None and result.degraded_steps else "FAILED"
 
     def _send_notification(self, result: PipelineResult):
         """Send pipeline notification (cross-platform)."""
@@ -747,10 +781,12 @@ class DailyPipeline:
         if not result.success and not notify_on_failure:
             return
 
-        status = "SUCCESS" if result.success else "FAILED"
+        status = self._pipeline_status(result)
         title = f"[Intelligence ITA] Pipeline {status}"
         if result.success:
             message = f"Pipeline completed successfully ({result.steps_completed}/{result.steps_total} steps)"
+        elif status == "DEGRADED":
+            message = f"Pipeline completed but DEGRADED: {', '.join(result.degraded_steps)}"
         else:
             message = f"Pipeline FAILED at step {result.steps_completed + 1}"
 

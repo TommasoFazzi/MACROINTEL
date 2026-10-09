@@ -160,6 +160,32 @@ Apply these rules before writing any section.
 
 
 # =============================================================================
+# CITE-OR-OMIT RULE
+# Shared by the v2 output instructions and the v1 fallback prompt
+# (report_generator.py). The post-generation citation verifier
+# (src/llm/citation_verifier.py) checks each cited claim against exactly the
+# item it cites, so the [Storyline N] = rank convention must stay in sync with
+# _format_narrative_xml().
+# =============================================================================
+
+CITE_OR_OMIT_RULE = """
+=== CITE-OR-OMIT RULE (sourcing) ===
+Every concrete event claim (who did what, a number, a name, a place, a date)
+MUST cite the item it comes from:
+  - [Article N]  = the article labelled [Article N] in the articles section
+  - [Storyline N] = the storyline with rank="N" in the storyline XML
+If no item in this prompt supports a specific, OMIT the specific: keep the
+statement general or drop it. Never write an uncited concrete event claim.
+  - Never add names, figures or dates that are not in the cited item.
+  - Match the source's strength: "plans to", "is considering", "reportedly"
+    must not become "announced", "launched" or "confirmed".
+Exempt: analysis, inference, hypotheses and scenarios (what events mean or may
+lead to), and indicator values taken from the macro data sections. Exempt
+sentences must not introduce new concrete facts.
+""".strip()
+
+
+# =============================================================================
 # OUTPUT INSTRUCTIONS
 # =============================================================================
 
@@ -198,7 +224,7 @@ Required elements per development:
   - Relationship context: how the actors involved relate to each other
     (allies, adversaries, dependency, leverage)
   - Macro connection: link to today's active regime, a convergence, or an indicator
-  - [Article N] for every specific factual claim
+  - [Article N] or [Storyline N] for every concrete event claim (cite-or-omit)
 
 When only one event exists in a domain, omit the category header — use a flat
 paragraph with the domain noted inline instead.
@@ -306,14 +332,17 @@ Format per storyline:
   [STORYLINE TITLE] | Momentum: [score] | Active: [X days]
   Status: 1-2 sentences on latest development.
   Macro connection: how today's regime/convergences affect this storyline.
-  [Article N] if today's OSINT adds new information.
+  [Storyline N] (its rank) for facts from the storyline; [Article N] if today's
+  OSINT adds new information.
 
 ---
+
+{CITE_OR_OMIT_RULE}
 
 FORMATTING RULES:
 - No filler phrases ("it is worth noting", "as we can see", "importantly")
 - Each section adds information not repeated elsewhere
-- [Article N] required for every specific factual claim from OSINT
+- Cite-or-omit: [Article N] / [Storyline N] on every concrete event claim
 - Data quality caveats inline, not grouped
 - Low-signal days: shorter report is correct, do not pad
 """.strip()

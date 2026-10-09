@@ -11,10 +11,12 @@ Large Language Model integration layer for intelligence report generation, RAG-b
 |------|-------|----------|-----------|
 | T1 | Gemini 3.1 Pro (`gemini-3.1-pro-preview`) | google-generativeai | macro_analysis, strategic_report, report_compare |
 | T2 | Claude Sonnet 4.6 | anthropic | Oracle agentic loop + synthesis |
-| T3 | DeepSeek V3.2 | openai-compatible | structured_analysis, macro_signals, article_signals |
+| T3 | DeepSeek V3.2 | openai-compatible | structured_analysis, macro_signals, article_signals, citation_verifier |
 | T4a | Gemini 2.5 Flash-Lite | google-generativeai | query_analyzer, geocode_geonames (entity disambiguation) |
 | T4b | Mistral Codestral 2 | openai-compatible | sql_generation (query_router) |
 | T5 | Gemini 2.5 Flash-Lite | google-generativeai | relevance_filter, bullet_generator, report_title, communities |
+
+`LLMFactory.get(tier, timeout=None)` — optional `timeout` overrides the tier's configured value for callers with long outputs (the citation verifier uses T3 with 180s; the T3 default is 45s). `BaseLLMClient.model_name` returns the provider model id (used for `generation_context.writer_model`).
 
 `GeminiClient.generate_content_raw(prompt, generation_config)` — compatibility shim for `report_generator.py` call sites that pass raw `generation_config` dicts. Remove once full migration to `generate()` is complete.
 
@@ -45,6 +47,10 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - Cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) for precision
   - Trade signal extraction with ticker whitelist
   - Macro-first pipeline (`--macro-first` flag)
+    - **Degraded reasons** (report-faithfulness-guardrails): `run_macro_first_pipeline()` returns `degraded_reasons: list[str]` — `condensation_failed`, `signals_extraction_failed`, `signals_zero`, `verifier_failed`. The report is still saved with `success=True`; `scripts/generate_report.py` turns a non-empty list into exit 3. Before this, a T3 401 produced 0 signals for three months on a green run.
+    - **Citation verifier**: `_verify_citations(report)` runs `CitationVerifier` (see `citation_verifier.py`) before `save_report()` and stores the result in `metadata.faithfulness` (`status: ok` + metrics, or `status: error`). Skipped for reports without `generation_context` (Romania).
+  - **Generation context** (`report['generation_context']`, daily global reports, v1 and v2): exactly what the writer saw — `writer_path`, `writer_model`, `system_prompt`, `user_prompt`, `articles_in_prompt` (`{n, article_id, link, title, source, date, excerpt}`; v2 = top 10 with `summary[:500]`, v1 = all with summary + `full_text[:2000]`), `storylines_in_prompt` (`{rank, storyline_id, title, summary}` — `[Storyline N]` = `rank`), `macro_context_text`, `macro_snapshot` (`_capture_macro_snapshot()`: `_get_macro_indicators()` rows read right after `ensure_daily_macro_data()`, same 5-day lookback as `get_macro_context_text()`, so the morning values survive the 23:00 UTC evening overwrite). Made JSON-safe by `_json_safe()`; persisted by `DatabaseManager.save_report()` into `report_generation_context` (migration 048).
+  - **Cite-or-omit rule**: the v1 prompt embeds `CITE_OR_OMIT_RULE` from `src/macro/strategic_intelligence_prompt.py` (same constant as v2).
   - Output metadata includes `narrative_context` (storylines used, edges count)
   - **Citation linkification** (Phase 2): Converts `[Article N]` references in report to Markdown links `[Article N](url)` using article URLs from `recent_articles` list. Applied post-generation before header prepend.
   - **LLM title generation** (`_generate_report_title()`, `_extract_bluf_from_text()`): After report text is produced, calls `gemini-2.0-flash` with date + focus_areas + BLUF to generate a headline (max 80 chars). Stored in `metadata['title']`. Non-critical — falls back to `""` on failure.
@@ -67,6 +73,12 @@ Intelligence synthesis layer that consumes context from the vector database and 
     - **Romania default focus areas** (2026-05-10): When `report_type.startswith("romania-")` and `focus_areas is None`, `generate_report()` auto-sets 10 Romania-specific focus areas written in English with specific entities (Neptun Deep, OMV Petrom, Via Carpathia, Mihail Kogalniceanu, etc.). These drive both article relevance filtering and RAG queries.
     - **Romania graph expansion** (2026-05-10): After Romania storyline scoring, `_get_narrative_context()` performs a 1-hop graph traversal on `storyline_edges` to find storylines *connected to* Romania storylines (edge weight ≥ 0.25) that are not themselves Romania-qualified. These `global_connected` storylines capture global dynamics (NATO, ECB, EU energy) that affect Romania indirectly. Returned as `global_connected` key in narrative context dict, formatted as `<global_context_via_graph>` XML block by `_format_narrative_xml()`. System prompts instruct the LLM to use this section for the geopolitical deep-dive with explicit causal framing.
   - **`storyline_scoring.py`** — `_entity_set()` fix (2026-05-10): `key_entities` from `v_active_storylines` is a **flat list**, not a dict. Added `isinstance(entities, list)` branch before the dict branch so entity scoring returns non-empty sets and `compute_romania_relevance_score()` works correctly. Without this fix, all Romania relevance scores were 0.0 (fallback to top-3 global).
+
+- `citation_verifier.py` - **Post-generation citation verifier** (report-faithfulness-guardrails)
+  - `CitationVerifier(client=None).verify(report_text, generation_context) -> FaithfulnessReport`. T3 only (DeepSeek: a different vendor from the T1 writer, so no self-grading), `timeout=180`.
+  - Call 1 extracts ≤40 claims with `kind` (event/numeric/inference) and their `[Article N]` / `[Storyline N]` markers. Then event claims with resolvable refs are judged in batches of 10 against exactly the writer's evidence (`articles_in_prompt[n].excerpt`, `storylines_in_prompt[rank]`). Refs not in the prompt go to `invalid_refs` / `invalid_storyline_refs` and are not judged.
+  - Output: `event_citation_coverage`, `verdict_counts`/`verdict_shares` (SUPPORTED/PARTIAL/NOT_SUPPORTED/CONTRADICTED), `flagged` (≤30 non-SUPPORTED, worst first). Advisory only — never edits the report. Bump `VERIFIER_VERSION` when prompts/scoring change.
+  - Prompts are ported from the 2026-10 audit (judge vs 100 human labels: 88% agreement, κ 0.83; it over-calls CONTRADICTED). Live smoke test: ~10 s and ~$0.005 per report. Raises on T3/JSON failure → caller marks `verifier_failed`.
 
 - `query_analyzer.py` - Pre-search filter extraction
   - `QueryAnalyzer` class - Extracts structured filters from natural language
@@ -128,6 +140,7 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - **Phase 4 schemas**: `MacroAnalysisResultV2` + nested (`RiskRegimeV2`, `ActiveConvergenceItemV2`, `KeyDivergenceItemV2`, `SCSignalItemV2`, `DashboardItemV2`). `RiskRegimeV2.label` is `Literal`-constrained to 7 values — prevents LLM label drift.
   - **Oracle 2.0 schemas**: `QueryIntent` (enum, used for logging), `QueryComplexity`, `ExecutionStep`, `QueryPlan` (retained for Oracle 1.0 compat and logging)
   - **Romania vertical schemas**: `RomaniaStorylineSignal` (per-storyline relevance breakdown), `RomaniaReportResult` (full output with `report_type`, `is_short_form`, `relevance_signal_breakdown`)
+  - **Citation verifier schemas**: `ExtractedClaim`, `ClaimVerdict`, `FaithfulnessReport` (stored as `reports.metadata.faithfulness`)
 
 - `storyline_scoring.py` - Romania vertical storyline relevance scoring
   - `compute_romania_relevance_score(storyline, source_geo_regions)` — 5-component weighted score: direct (0.35) + regional (0.25) + trade_route (0.15) + source (0.15) + thematic (0.10). Weights and sets loaded from `config/romania_geo_scope.yaml` (lru_cache).

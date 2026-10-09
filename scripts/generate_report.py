@@ -26,6 +26,11 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Report saved, but signal extraction / condensation / verifier degraded.
+# daily_pipeline.py treats it as "completed but degraded": delivery continues,
+# the run still ends non-zero.
+EXIT_DEGRADED = 3
+
 
 def main():
     """Main execution function."""
@@ -259,6 +264,14 @@ def main():
             print("INTELLIGENCE REPORT")
             print("=" * 80)
             print(report['report_text'])
+
+            degraded_reasons = report.get('degraded_reasons', [])
+            if degraded_reasons:
+                for reason in degraded_reasons:
+                    logger.error(f"DEGRADED: {reason}")
+                logger.error("Macro-first pipeline complete but degraded "
+                             f"(exit {EXIT_DEGRADED})")
+                return EXIT_DEGRADED
 
             logger.info("\n✓ Macro-first pipeline complete!")
             return 0
