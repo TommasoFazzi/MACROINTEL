@@ -172,10 +172,12 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
 - `048_report_generation_context.sql` — `report_generation_context` table (`openspec/changes/report-faithfulness-guardrails/`). One row per daily report (`report_id` PK/FK → `reports.id`, `ON DELETE CASCADE`) holding exactly what the writer LLM saw: `writer_path` (v1/v2), `writer_model`, `system_prompt`, `user_prompt`, `articles_in_prompt` / `storylines_in_prompt` (JSONB, ordered; `n` = `[Article N]`, `rank` = `[Storyline N]`), `macro_context_text`, `macro_snapshot` (JSONB, macro rows read at generation time — the evening fetch later overwrites the same-date `macro_indicators` rows with closes).
   - Written by `DatabaseManager.save_report()` in the report's transaction under a savepoint: if the table is missing, the report still saves and an error is logged. Separate table (not `reports.metadata`) because prompts are 30–150 KB/day and the reports API reads `metadata`; ~50 MB/year.
   - Not in `SQLTool.ALLOWED_TABLES` / `ReferenceTool` — prompts are internal.
-  - **Apply in prod via `migrate.yml` before deploying the code that writes it.** Idempotent (`CREATE TABLE IF NOT EXISTS`), additive.
+  - Applied in prod automatically by the deploy (backend entrypoint, 2026-10-10). Idempotent (`CREATE TABLE IF NOT EXISTS`), additive.
   - Rollback: `048_report_generation_context_rollback.sql` (drops the table — lossy, captured prompts cannot be regenerated).
 
 ## Applied in Production
+
+> **How migrations reach prod:** `deploy/entrypoint.sh` runs `scripts/run_migrations.py` on every backend container start, so each deploy applies any new file automatically and records it in `schema_migrations`. A failing migration blocks the backend from starting (`set -euo pipefail`). `migrate.yml` runs the same script inside the running container. It is useful only *after* a deploy has finished: before that, the old image does not contain the new files. The source of truth is `SELECT * FROM schema_migrations`, not the list below.
 
 > ⚠️ **This list is stale (baseline 2026-03-24, partial updates after) — re-verify against the prod DB before relying on it.** Several "Not yet applied" entries below are almost certainly outdated: the features depending on them have been live in production for months — 034 (`v_sanctions_public` is used by Oracle tools in prod), 036–039 (Romania vertical + macro historical columns power the daily RO briefing), 043/046 (the daily pipeline's shadow-clustering steps write `narrative_run_metrics.shadow_partitions`). Verify with a read-only query, e.g.:
 > `docker compose -p app exec postgres psql -U intelligence_user -d intelligence_ita -c "\dt narrative_themes" -c "\dv v_sanctions_public"`
