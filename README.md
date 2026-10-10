@@ -467,6 +467,9 @@ quantitative KPI, both values are annotated with sources instead of silently pic
 2. Extract report-level signals with T3 (high-conviction, multi-article synthesis)
 3. Filter articles with whitelisted tickers
 4. Extract article-level signals with macro alignment score
+5. Verify citations: T3 judges each `[Article N]` / `[Storyline N]` claim against exactly what the writer saw, and writes `reports.metadata.faithfulness` (advisory only)
+
+If the report is saved but condensation, signal extraction (failure or 0 signals) or the verifier fails, `generate_report.py` exits **3** (degraded). The daily pipeline still delivers the email, then ends non-zero. The writer's full context (prompts, article excerpts, storylines, macro snapshot) is stored in `report_generation_context` (migration 048).
 
 **Intelligence Score (0–100):**
 

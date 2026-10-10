@@ -34,6 +34,11 @@ _ROUTING_YAML = Path(__file__).parent.parent.parent / "config" / "llm_routing.ya
 class BaseLLMClient(ABC):
     """Unified interface for all LLM providers."""
 
+    @property
+    def model_name(self) -> str | None:
+        """Provider model id (e.g. 'gemini-3.1-pro-preview'); None if unknown."""
+        return getattr(self, "_model_name", None)
+
     @abstractmethod
     def generate(
         self,
@@ -413,11 +418,13 @@ class LLMFactory:
         return cls._config
 
     @classmethod
-    def get(cls, tier: str) -> BaseLLMClient:
+    def get(cls, tier: str, timeout: int | None = None) -> BaseLLMClient:
         """Return the LLM client for the given tier.
 
         Args:
             tier: One of t1, t2, t3, t4a, t4b, t5
+            timeout: Override the tier's configured timeout (seconds), for callers
+                with long outputs (e.g. the citation verifier's claim extraction).
 
         Raises:
             ValueError: If tier is invalid or required API key is missing.
@@ -431,7 +438,7 @@ class LLMFactory:
         tier_cfg = config[tier]
         provider = tier_cfg["provider"]
         model = tier_cfg["model"]
-        timeout = tier_cfg.get("timeout", 60)
+        timeout = timeout or tier_cfg.get("timeout", 60)
 
         if provider == "gemini":
             return GeminiClient(model=model, timeout=timeout)

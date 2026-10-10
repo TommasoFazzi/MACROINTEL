@@ -1078,12 +1078,45 @@ class DatabaseManager:
                     ))
 
                     report_id = cur.fetchone()[0]
+                    if report.get('generation_context'):
+                        self._save_generation_context(cur, report_id, report['generation_context'])
                     logger.info(f"✓ Report saved to database with ID: {report_id}")
                     return report_id
 
         except Exception as e:
             logger.error(f"Error saving report: {e}")
             return None
+
+    @staticmethod
+    def _save_generation_context(cur, report_id: int, ctx: Dict[str, Any]) -> None:
+        """Insert the writer context (migration 048) in the report's transaction.
+
+        Runs under a savepoint so a missing table (migration not applied) or a bad
+        payload loses only the context row, never the report.
+        """
+        cur.execute("SAVEPOINT generation_context")
+        try:
+            cur.execute("""
+                INSERT INTO report_generation_context
+                (report_id, writer_path, writer_model, system_prompt, user_prompt,
+                 articles_in_prompt, storylines_in_prompt, macro_context_text, macro_snapshot)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                report_id,
+                ctx['writer_path'],
+                ctx.get('writer_model'),
+                ctx.get('system_prompt'),
+                ctx['user_prompt'],
+                Json(ctx.get('articles_in_prompt') or []),
+                Json(ctx.get('storylines_in_prompt') or []),
+                ctx.get('macro_context_text'),
+                Json(ctx['macro_snapshot']) if ctx.get('macro_snapshot') is not None else None,
+            ))
+            cur.execute("RELEASE SAVEPOINT generation_context")
+        except Exception as e:
+            cur.execute("ROLLBACK TO SAVEPOINT generation_context")
+            logger.error(f"Generation context not saved for report {report_id} "
+                         f"(is migration 048 applied?): {e}")
 
     def get_report(self, report_id: int) -> Optional[Dict[str, Any]]:
         """
