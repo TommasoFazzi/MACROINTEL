@@ -131,6 +131,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
+    citation_verifier["citation_verifier.py"]
     conversation_memory["conversation_memory.py"]
     llm_factory["llm_factory.py"]
     oracle_orchestrator["oracle_orchestrator.py"]
@@ -154,6 +155,7 @@ flowchart TD
     EXT_pydantic(("pydantic"))
     EXT_sentence_transformers(("sentence_transformers"))
 
+    citation_verifier --> utils
     conversation_memory --> utils
     oracle_orchestrator --> storage
     oracle_orchestrator --> utils
@@ -178,6 +180,7 @@ flowchart TD
     sql_tool --> utils
     ticker_themes_tool --> services
     ticker_themes_tool --> utils
+    citation_verifier --> EXT_pydantic
     llm_factory --> EXT_pydantic
     query_analyzer --> EXT_pydantic
     report_generator --> EXT_numpy
