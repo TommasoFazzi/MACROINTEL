@@ -97,6 +97,7 @@ flowchart LR
     ingestion --> EXT_trafilatura
     integrations --> EXT_openbb
     integrations --> EXT_pandas
+    integrations --> EXT_pydantic
     integrations --> EXT_yfinance
     llm --> EXT_numpy
     llm --> EXT_psycopg2
