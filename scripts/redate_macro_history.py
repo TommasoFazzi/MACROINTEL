@@ -39,7 +39,7 @@ from pydantic import BaseModel, field_validator
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.integrations.openbb_service import OpenBBMarketService  # noqa: E402
+from src.integrations.openbb_service import OpenBBMarketService, fetch_ecb_fx  # noqa: E402
 
 FRED_OBSERVATIONS_URL = "https://api.stlouisfed.org/fred/series/observations"
 # output_type=4 (initial release only) needs a real-time period that covers every
@@ -59,7 +59,7 @@ class CandidateRow(BaseModel):
     indicator_key: str
     date: date
     value: float
-    source: Literal["yahoo", "fred_initial"]
+    source: Literal["yahoo", "ecb", "fred_initial"]
     symbol: str
 
     @field_validator("value")
@@ -83,8 +83,9 @@ class Dropped(BaseModel):
 def in_scope_series(indicators: Optional[dict] = None) -> Dict[str, Tuple[str, str]]:
     """Return {indicator_key: (source, symbol)} for the daily US series in scope.
 
-    Mirrors the live writer's routing: fetch_category 'fred' goes to FRED (even when
-    a Yahoo symbol exists as fallback, e.g. US_10Y_YIELD), everything else to Yahoo.
+    Mirrors the live writer's routing: fetch_category 'ecb' goes to the ECB reference
+    rates, 'fred' to FRED (even when a Yahoo symbol exists, e.g. US_10Y_YIELD),
+    everything else with a symbol to Yahoo.
     FRED series are kept only when their frequency is daily.
     """
     indicators = indicators if indicators is not None else OpenBBMarketService.MACRO_INDICATORS
@@ -93,7 +94,9 @@ def in_scope_series(indicators: Optional[dict] = None) -> Dict[str, Tuple[str, s
     for key, cfg in indicators.items():
         if key in EXCLUDED_KEYS or cfg.get("country_code", "US") != "US":
             continue
-        if cfg.get("fetch_category") == "fred":
+        if cfg.get("fetch_category") == "ecb":
+            scope[key] = ("ecb", "ECB:EXR")
+        elif cfg.get("fetch_category") == "fred":
             series = cfg.get("fred_series")
             if series and freq.get(series) == "daily":
                 scope[key] = ("fred_initial", series)
@@ -217,6 +220,19 @@ def fetch_fred(
 
 
 # ---------------------------------------------------------------------------
+# ECB (FX keys with fetch_category 'ecb'; same helper as the live fetch)
+# ---------------------------------------------------------------------------
+
+def fetch_ecb_candidates(key: str, start: date, end: date,
+                         fetch_fn: Callable = fetch_ecb_fx) -> Tuple[List[CandidateRow], List[Dropped]]:
+    """ECB reference rate per ECB date; dates without a rate (TARGET holidays) are absent."""
+    rows = [CandidateRow(indicator_key=key, date=d, value=values[key], source="ecb", symbol="ECB:EXR")
+            for d, values in sorted(fetch_fn(start, end).items())
+            if key in values and d.weekday() < 5 and start <= d <= end]
+    return rows, []
+
+
+# ---------------------------------------------------------------------------
 # CSV I/O
 # ---------------------------------------------------------------------------
 
@@ -258,6 +274,8 @@ def download_candidates(
         try:
             if source == "yahoo":
                 rows, drop = fetch_yahoo(key, symbol, start, end)
+            elif source == "ecb":
+                rows, drop = fetch_ecb_candidates(key, start, end)
             else:
                 rows, drop, revs = fetch_fred(key, symbol, start, end, api_key)
                 result.revisions.extend(revs)
@@ -284,7 +302,6 @@ TREASURY_CSV_URL = (
     "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
     "daily-treasury-rates.csv/{year}/all?type={kind}&field_tdr_date_value={year}&page&_format=csv"
 )
-ECB_EXR_URL = "https://data-api.ecb.europa.eu/service/data/EXR/D.USD+JPY+GBP+CNY.EUR.SP00.A"
 WESTMETALL_URL = "https://www.westmetall.com/en/markdaten.php?action=table&field={field}"
 
 # Reference kinds: "level" = same instrument, relative tolerance; "level_pp" = same
@@ -302,10 +319,10 @@ PUBLIC_REFERENCES: Dict[str, List[Tuple[str, str]]] = {
     "SP500": [("FRED:SP500", "level")],
     "NASDAQ": [("FRED:NASDAQCOM", "level")],
     "VIX": [("FRED:VIXCLS", "level")],
-    "EUR_USD": [("FRED:DEXUSEU", "proxy"), ("ECB:EUR_USD", "proxy")],
-    "USD_JPY": [("FRED:DEXJPUS", "proxy"), ("ECB:USD_JPY", "proxy")],
-    "USD_GBP": [("FRED:DEXUSUK", "proxy"), ("ECB:GBP_USD", "proxy")],
-    "USD_CNY": [("FRED:DEXCHUS", "proxy"), ("ECB:USD_CNY", "proxy")],
+    "EUR_USD": [("FRED:DEXUSEU", "proxy")],
+    "USD_JPY": [("FRED:DEXJPUS", "proxy")],
+    "USD_GBP": [("FRED:DEXUSUK", "proxy")],
+    "USD_CNY": [("FRED:DEXCHUS", "proxy")],
     "BRENT_OIL": [("FRED:DCOILBRENTEU", "proxy")],
     "WTI_OIL": [("FRED:DCOILWTICO", "proxy")],
     "NATURAL_GAS": [("FRED:DHHNGSP", "proxy")],
@@ -341,18 +358,6 @@ def fetch_treasury(start: date, end: date, kind: str):
     df = pd.concat(frames)
     df.index = pd.to_datetime(df.pop("Date"), format="%m/%d/%Y")
     return df.sort_index()
-
-
-def fetch_ecb(start: date, end: date):
-    """ECB reference rates, units of currency per EUR, columns USD/JPY/GBP/CNY."""
-    import io
-    import pandas as pd
-    text = _http_get(ECB_EXR_URL, params={"startPeriod": start.isoformat(),
-                                          "endPeriod": end.isoformat(), "format": "csvdata"}).text
-    df = pd.read_csv(io.StringIO(text))
-    wide = df.pivot(index="TIME_PERIOD", columns="CURRENCY", values="OBS_VALUE")
-    wide.index = pd.to_datetime(wide.index)
-    return wide
 
 
 def fetch_westmetall(field: str):
@@ -408,11 +413,6 @@ def build_references(start: date, end: date, api_key: str):
                 "TREASURY:5Y5Y": fwd}
     attempt({n for n in wanted if n.startswith("TREASURY:")}, treasury)
 
-    def ecb():
-        fx = fetch_ecb(start, end)
-        return {"ECB:EUR_USD": fx["USD"], "ECB:USD_JPY": fx["JPY"] / fx["USD"],
-                "ECB:GBP_USD": fx["USD"] / fx["GBP"], "ECB:USD_CNY": fx["CNY"] / fx["USD"]}
-    attempt({n for n in wanted if n.startswith("ECB:")}, ecb)
 
     def westmetall():
         # Fine silver is quoted in EUR/kg; convert with Westmetall's own ECB EUR/USD
@@ -434,13 +434,17 @@ PASS, FAIL, NA = "PASS", "FAIL", "N/A"
 
 # Exchange holidays inside the supported range (2026). Yahoo futures, indices and
 # DX-Y.NYB follow NYSE; FRED rates follow the SIFMA bond calendar; Yahoo FX (=X)
-# trades every weekday.
+# trades every weekday; ECB rates follow the TARGET2 calendar.
 NYSE_HOLIDAYS_2026 = {date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
                       date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
                       date(2026, 11, 26), date(2026, 12, 25)}
 BOND_HOLIDAYS_2026 = {date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 5, 25),
                       date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7), date(2026, 10, 12),
                       date(2026, 11, 11), date(2026, 11, 26), date(2026, 12, 25)}
+
+# ECB reference rates are not published on TARGET2 holidays.
+TARGET_HOLIDAYS_2026 = {date(2026, 1, 1), date(2026, 4, 3), date(2026, 4, 6), date(2026, 5, 1),
+                        date(2026, 12, 25), date(2026, 12, 26)}
 
 OVERLAP_TOL = 1e-4
 OVERLAP_MIN_SHARE = 0.99
@@ -456,6 +460,8 @@ def calendar_for(source: str, symbol: str, start: date, end: date) -> List[date]
         raise ValueError("holiday calendars are defined for 2026 only")
     if source == "fred_initial":
         holidays = BOND_HOLIDAYS_2026
+    elif source == "ecb":
+        holidays = TARGET_HOLIDAYS_2026
     elif symbol.endswith("=X"):
         holidays = set()
     else:
