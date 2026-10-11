@@ -186,10 +186,11 @@ class TestDatabaseOperations:
         assert service._save_macro_indicator(date.today(), 'SP500', bad, 'Index', 'EQUITY') is False
         assert not mock_cursor.execute.called
 
-    def test_usd_cny_uses_cny_per_usd_symbol(self):
-        """Ontology expects CNY per USD (~6.8); CNYUSD=X is the inverse (~0.146)."""
-        from src.integrations.openbb_service import OpenBBMarketService as S
-        assert S.MACRO_INDICATORS['USD_CNY']['symbol'] == 'CNY=X'
+    def test_usd_cny_is_cny_per_usd(self):
+        """Ontology expects CNY per USD (~6.8), not the inverse (~0.146). Sourced from ECB crosses."""
+        from src.integrations.openbb_service import OpenBBMarketService as S, ecb_cross_rates
+        assert S.MACRO_INDICATORS['USD_CNY']['fetch_category'] == 'ecb'
+        assert 6 < ecb_cross_rates({'USD': 1.16, 'CNY': 7.99})['USD_CNY'] < 8
 
 
 # =============================================================================

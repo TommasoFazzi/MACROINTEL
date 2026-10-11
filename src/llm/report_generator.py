@@ -165,7 +165,7 @@ def _storylines_in_prompt(narrative_ctx: dict) -> list:
 
 
 def _capture_macro_snapshot(openbb_service, target_date: date) -> dict:
-    """Macro rows as read now, before the 23:00 UTC evening fetch overwrites them.
+    """Macro rows as read now, before the next evening fetch and settlement refresh change them.
 
     Looks back up to 5 days like get_macro_context_text(), so the snapshot
     matches the values that went into the prompt.
@@ -2598,8 +2598,9 @@ Respond with JSON only:"""
                 openbb_service = OpenBBMarketService(self.db)
                 today = date_type.today()
 
-                # Ensure macro data is available
-                openbb_service.ensure_daily_macro_data(today)
+                # Read-only: the evening job (fetch_daily_market_data.py) is the only writer of
+                # macro_indicators. Fetching here at 07:00 UTC stored intraday prices under
+                # today's date; the readers below use a 5-day lookback when the evening run failed.
 
                 # Romania vertical skips global LLM macro analysis — RO indicators are
                 # read from DB directly by _format_romania_macro_header() later.

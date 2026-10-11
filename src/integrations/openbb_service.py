@@ -24,10 +24,11 @@ import math
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Literal, Optional, Any
 from decimal import Decimal, InvalidOperation
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 from pathlib import Path
 
 from ..storage.database import DatabaseManager
@@ -48,6 +49,87 @@ else:
     load_dotenv()  # Default behavior
 
 logger = get_logger(__name__)
+
+
+# ============================================================================
+# ECB reference rates (FX keys with fetch_category 'ecb')
+# ============================================================================
+
+ECB_EXR_URL = "https://data-api.ecb.europa.eu/service/data/EXR/D.USD+JPY+GBP+CNY.EUR.SP00.A"
+
+
+def ecb_cross_rates(per_eur: Dict[str, float]) -> Dict[str, float]:
+    """MACRO_INDICATORS FX keys from ECB rates quoted as units of currency per EUR.
+
+    USD_GBP keeps its historical meaning (USD per GBP); USD_CNY is CNY per USD.
+    A key is omitted when one of its inputs is missing.
+    """
+    usd = per_eur.get('USD')
+    out: Dict[str, float] = {}
+    if not usd:
+        return out
+    out['EUR_USD'] = usd
+    if per_eur.get('JPY'):
+        out['USD_JPY'] = per_eur['JPY'] / usd
+    if per_eur.get('GBP'):
+        out['USD_GBP'] = usd / per_eur['GBP']
+    if per_eur.get('CNY'):
+        out['USD_CNY'] = per_eur['CNY'] / usd
+    return out
+
+
+def fetch_ecb_fx(start: date, end: date, timeout: int = 30) -> Dict[date, Dict[str, float]]:
+    """{ECB date: {indicator_key: value}} for [start, end]. Dates without a rate are absent."""
+    import csv
+    import io
+    import requests
+
+    resp = requests.get(ECB_EXR_URL, params={"startPeriod": start.isoformat(),
+                                             "endPeriod": end.isoformat(), "format": "csvdata"},
+                        timeout=timeout)
+    resp.raise_for_status()
+    per_day: Dict[date, Dict[str, float]] = {}
+    for row in csv.DictReader(io.StringIO(resp.text)):
+        try:
+            value = float(row["OBS_VALUE"])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            per_day.setdefault(date.fromisoformat(row["TIME_PERIOD"]), {})[row["CURRENCY"]] = value
+    return {d: ecb_cross_rates(rates) for d, rates in per_day.items()}
+
+
+# ============================================================================
+# Settlement refresh (see OpenBBMarketService.refresh_recent_sessions)
+# ============================================================================
+
+REFRESH_MODES = ('off', 'log', 'write')
+REFRESH_MAX_REL_CHANGE = 0.10   # larger moves are treated as a bad bar and not written
+REFRESH_MIN_REL_CHANGE = 1e-4   # below this the stored value already equals the close
+REFRESH_EXCLUDED_KEYS = {'URANIUM'}
+
+
+class RefreshChange(BaseModel):
+    indicator_key: str
+    date: date
+    old_value: Optional[float]   # None when the row was missing
+    new_value: float
+    action: Literal["insert", "overwrite", "skip_outlier"]
+
+
+def refresh_decision(key: str, d: date, old: Optional[float], close: float) -> Optional[RefreshChange]:
+    """Compare a stored value with the history close (rounded to the column's 4 decimals)."""
+    new = round(close, 4)
+    if old is None:
+        return RefreshChange(indicator_key=key, date=d, old_value=None, new_value=new, action="insert")
+    if old == 0:
+        rel = abs(new)
+    else:
+        rel = abs(new / old - 1)
+    if rel <= REFRESH_MIN_REL_CHANGE:
+        return None
+    action = "skip_outlier" if rel > REFRESH_MAX_REL_CHANGE else "overwrite"
+    return RefreshChange(indicator_key=key, date=d, old_value=old, new_value=new, action=action)
 
 
 def configure_openbb_credentials():
@@ -170,10 +252,12 @@ class OpenBBMarketService:
     #   'commodities' — Futures markets that follow NYSE holiday schedule (CME)
     #   'fred'        — Federal Reserve data series; available every weekday regardless of holidays
     #   'fx'          — Forex markets open 24/5 (Mon-Fri); unaffected by NYSE holidays
+    #   'ecb'         — ECB reference rates (14:15 CET), dated by the ECB; no value on
+    #                   TARGET holidays. Fetched once per run by _save_ecb_fx().
     #   'crypto'      — Always available (24/7)
-    # On 'holiday' days, yfinance already returns the last available close via
-    # ticker.history(period='5d'), so no special handling is needed for data retrieval.
-    # The field is used for logging and future selective-fetch logic.
+    # On NYSE holidays (weekday, market closed) Yahoo keys other than '=X' FX and crypto
+    # are not written: there is no session, and the bar Yahoo serves is not a close.
+    # 'fetch_mode': 'quote' marks a key stored from a live quote at fetch time (no history).
     MACRO_INDICATORS = {
         'US_10Y_YIELD': {
             'fred_series': 'DGS10',
@@ -220,18 +304,16 @@ class OpenBBMarketService:
             'fetch_category': 'commodities',
         },
         'EUR_USD': {
-            'symbol': 'EURUSD=X',
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'EUR/USD Exchange Rate',
-            'fetch_category': 'fx',
+            'description': 'EUR/USD Exchange Rate (ECB reference rate, 14:15 CET)',
+            'fetch_category': 'ecb',
         },
         'USD_JPY': {
-            'symbol': 'JPY=X',
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'USD/JPY Exchange Rate',
-            'fetch_category': 'fx',
+            'description': 'USD/JPY Exchange Rate (ECB cross, 14:15 CET)',
+            'fetch_category': 'ecb',
         },
         'SP500': {
             'symbol': '^GSPC',
@@ -293,18 +375,18 @@ class OpenBBMarketService:
         # ================================================================
         # --- EXCHANGE RATES (yfinance daily — preferred over FRED monthly) ---
         'USD_CNY': {
-            'symbol': 'CNY=X',  # CNY per USD (ontology convention); CNYUSD=X is the inverse
+            # CNY per USD (ontology convention)
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'USD/CNY Exchange Rate (China trade proxy)',
-            'fetch_category': 'fx',
+            'description': 'USD/CNY Exchange Rate (China trade proxy; ECB cross, 14:15 CET)',
+            'fetch_category': 'ecb',
         },
         'USD_GBP': {
-            'symbol': 'GBPUSD=X',
+            # USD per GBP despite the key name (historical convention, unchanged)
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'USD/GBP Exchange Rate',
-            'fetch_category': 'fx',
+            'description': 'USD/GBP Exchange Rate (USD per GBP; ECB cross, 14:15 CET)',
+            'fetch_category': 'ecb',
         },
         # USD_RUB removed: bimodal post-sanctions, data unreliable
         # --- STRATEGIC COMMODITIES ---
@@ -418,8 +500,11 @@ class OpenBBMarketService:
             'symbol': 'USDCNH=X',
             'unit': 'Rate',
             'category': 'FX',
-            'description': 'USD/CNH Exchange Rate (Offshore Yuan — free market rate)',
+            'description': 'USD/CNH Exchange Rate (Offshore Yuan — live quote at fetch time, not a close)',
             'fetch_category': 'fx',
+            # Yahoo serves no history for USDCNH=X, only a live quote. Stored under the
+            # target date on purpose; excluded from the settlement refresh.
+            'fetch_mode': 'quote',
         },
         # --- EUROPEAN ENERGY ---
         'TTF_GAS': {
@@ -565,22 +650,14 @@ class OpenBBMarketService:
             logger.info(f"Macro data already present for {target_date}")
             return True
 
-        store_date = target_date
-
-        # Holiday detection: log when fetching on a US market holiday (weekday, NYSE closed).
-        # yfinance already returns last available close via history(period='5d') on holidays,
-        # so equity/commodity data is collected with acceptable 1-2 day staleness.
-        # FRED and FX indicators are unaffected by NYSE holidays.
+        # NYSE holiday (weekday, market closed): futures, indices, VIX and DXY have no
+        # session, so they are not written. FRED, ECB, '=X' FX and crypto are unaffected.
+        nyse_closed = False
         try:
-            from src.integrations.market_calendar import fetch_mode, last_nyse_trading_day
-            _fetch_mode = fetch_mode(target_date)
-            if _fetch_mode == 'holiday':
-                _last_trading = last_nyse_trading_day(before=target_date)
-                logger.warning(
-                    f"NYSE holiday on {target_date} — FRED/FX/crypto unaffected; "
-                    f"equity/commodity data will reflect last trading day "
-                    f"({_last_trading}) via yfinance history fallback"
-                )
+            from src.integrations.market_calendar import is_nyse_open
+            nyse_closed = not is_nyse_open(target_date)
+            if nyse_closed:
+                logger.warning(f"NYSE holiday on {target_date} — futures/index/VIX/DXY rows not written")
         except ImportError:
             pass  # pandas_market_calendars not installed — skip holiday check
 
@@ -590,10 +667,20 @@ class OpenBBMarketService:
         error_count = 0
         failed_indicators = []
 
+        if self._save_ecb_fx(target_date):
+            success_count += 1
+        else:
+            failed_indicators.append('ECB_FX')
+            error_count += 1
+
         obb = get_obb()
 
         for key, config in self.MACRO_INDICATORS.items():
             value = None
+            if config.get('fetch_category') == 'ecb':
+                continue  # saved by _save_ecb_fx() above
+            if nyse_closed and self._closed_on_nyse_holiday(config):
+                continue
 
             try:
                 # For FRED series (rates, spreads): use OpenBB FRED with fixed date extraction
@@ -625,15 +712,19 @@ class OpenBBMarketService:
                         failed_indicators.append(key)
                         error_count += 1
                 elif 'symbol' in config:
-                    # Market quotes - prefer yfinance direct for fresh data
-                    yf_result = self._fetch_indicator_yfinance(config['symbol'], target_date=target_date)
-                    value, actual_date = (yf_result[0], yf_result[1]) if yf_result else (None, None)
-
-                    # Fallback to OpenBB if yfinance fails
-                    if value is None and obb:
-                        value = self._fetch_indicator_openbb(obb, key, config, target_date)
-                        if value is not None:
-                            actual_date = target_date  # OpenBB respects target_date
+                    if config.get('fetch_mode') == 'quote':
+                        # Declared quote series: live quote at fetch time, stored under the
+                        # target date on purpose (no history exists to date it otherwise).
+                        value = self._fetch_indicator_openbb(obb, key, config, target_date) if obb else None
+                        actual_date = target_date
+                    else:
+                        # Daily bar from Yahoo history, saved under the bar's own date. No
+                        # fallback: another provider's live quote stamped with target_date
+                        # would put an intraday value into the close history.
+                        yf_result = self._fetch_indicator_yfinance(config['symbol'], target_date=target_date)
+                        value, actual_date = (yf_result[0], yf_result[1]) if yf_result else (None, None)
+                        if value is None:
+                            logger.error(f"yfinance {config['symbol']} ({key}): no bar for {target_date}, not saved")
 
                     if value is not None:
                         # Save with actual_date (not target_date), so weekend/holiday data uses correct date
@@ -687,6 +778,159 @@ class OpenBBMarketService:
         else:
             logger.error("Failed to fetch any macro data")
             return False
+
+    # ------------------------------------------------------------------
+    # Holiday rule, ECB FX, settlement refresh
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _closed_on_nyse_holiday(config: Dict[str, Any]) -> bool:
+        """True for Yahoo keys with no session on an NYSE holiday (futures, indices, VIX, DXY)."""
+        return ('symbol' in config and 'fred_series' not in config
+                and not config['symbol'].endswith('=X')
+                and config.get('fetch_category') != 'crypto')
+
+    def _refreshable_keys(self) -> List[str]:
+        """US Yahoo daily keys whose history holds the definitive close (settlement refresh scope)."""
+        return [
+            key for key, cfg in self.MACRO_INDICATORS.items()
+            if 'symbol' in cfg and 'fred_series' not in cfg
+            and cfg.get('country_code', 'US') == 'US'
+            and cfg.get('fetch_category') not in ('ecb', 'crypto')
+            and cfg.get('fetch_mode') != 'quote'
+            and key not in REFRESH_EXCLUDED_KEYS
+        ]
+
+    def _upsert_rows_and_recompute(self, key: str, rows: Dict[date, float]) -> None:
+        """Upsert several dates of one US key and recompute its derived columns from the earliest.
+
+        Recomputing from the earliest written date (not row by row) keeps the windows of
+        every later row right when a date is inserted mid-history.
+        """
+        cfg = self.MACRO_INDICATORS[key]
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                for d, value in sorted(rows.items()):
+                    cur.execute("""
+                        INSERT INTO macro_indicators (date, indicator_key, value, unit, category, country_code)
+                        VALUES (%s, %s, %s, %s, %s, 'US')
+                        ON CONFLICT (date, indicator_key)
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """, (d, key, value, cfg['unit'], cfg['category']))
+                self._recompute_derived_columns(cur, indicator_key=key, country_code='US', since=min(rows))
+
+    def _save_ecb_fx(self, target_date: date, sessions: int = 3) -> bool:
+        """Save the ECB FX keys for the last `sessions` ECB dates up to target_date.
+
+        Re-saving the recent dates fills any date a failed run missed. No row is written
+        for a date the ECB did not publish (TARGET holiday).
+        """
+        try:
+            by_date = fetch_ecb_fx(target_date - timedelta(days=10), target_date)
+        except Exception as e:
+            logger.error(f"[ECB] reference rates fetch failed: {type(e).__name__}: {e}")
+            return False
+        recent = sorted(d for d in by_date if d <= target_date)[-sessions:]
+        if not recent:
+            logger.error(f"[ECB] no reference rates up to {target_date}")
+            return False
+        keys = [k for k, cfg in self.MACRO_INDICATORS.items() if cfg.get('fetch_category') == 'ecb']
+        ok = True
+        for key in keys:
+            rows = {d: round(by_date[d][key], 4) for d in recent if key in by_date[d]}
+            if not rows:
+                ok = False
+                continue
+            try:
+                self._upsert_rows_and_recompute(key, rows)
+                last = max(rows)
+                self._upsert_indicator_metadata(
+                    key=key, frequency='daily', last_updated=last, last_source='ecb',
+                    is_stale=(target_date - last).days > 4, staleness_days=(target_date - last).days,
+                    fetch_attempted=True, fetch_succeeded=True,
+                )
+            except Exception as e:
+                logger.error(f"[ECB] saving {key} failed: {e}")
+                ok = False
+        if ok:
+            logger.info(f"[ECB] FX saved for {', '.join(map(str, recent))}")
+        return ok
+
+    @staticmethod
+    def _yf_daily_closes(symbol: str, start: date, end: date) -> Dict[date, float]:
+        """Finite Yahoo daily Close by bar date for [start, end] (same normalisation as the live fetch)."""
+        import yfinance as yf
+        import pandas as pd
+
+        hist = yf.Ticker(symbol).history(start=start.isoformat(), end=(end + timedelta(days=1)).isoformat())
+        if hist is None or hist.empty:
+            return {}
+        try:
+            hist.index = pd.to_datetime(hist.index).tz_localize(None).normalize()
+        except TypeError:
+            hist.index = pd.to_datetime(hist.index).normalize()
+        out = {}
+        for ts, close in hist['Close'].items():
+            value = float(close)
+            if math.isfinite(value) and start <= ts.date() <= end:
+                out[ts.date()] = value
+        return out
+
+    def _stored_values(self, key: str, dates: List[date]) -> Dict[date, float]:
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT date, value FROM macro_indicators "
+                    "WHERE indicator_key = %s AND country_code = 'US' AND date = ANY(%s)",
+                    (key, dates),
+                )
+                return {d: float(v) for d, v in cur.fetchall()}
+
+    def refresh_recent_sessions(self, target_date: date, lookback: int = 3,
+                                mode: str = 'log') -> List['RefreshChange']:
+        """Re-save the last `lookback` sessions before target_date from Yahoo history.
+
+        The evening run reads futures while the next Globex session is already trading,
+        so its row can hold next-session ticks. A day later Yahoo history holds the frozen
+        settlement; this step makes the stored row equal to it. mode: 'off' | 'log' | 'write'.
+        """
+        if mode not in REFRESH_MODES:
+            raise ValueError(f"refresh mode must be one of {REFRESH_MODES}")
+        if mode == 'off':
+            return []
+        changes: List[RefreshChange] = []
+        for key in self._refreshable_keys():
+            symbol = self.MACRO_INDICATORS[key]['symbol']
+            try:
+                closes = self._yf_daily_closes(symbol, target_date - timedelta(days=10),
+                                               target_date - timedelta(days=1))
+            except Exception as e:
+                logger.error(f"[refresh] {key} ({symbol}) history failed: {type(e).__name__}: {e}")
+                continue
+            sessions = sorted(d for d in closes if d.weekday() < 5)[-lookback:]
+            if not sessions:
+                logger.warning(f"[refresh] {key} ({symbol}): no history before {target_date}")
+                continue
+            stored = self._stored_values(key, sessions)
+            key_changes = [c for c in (refresh_decision(key, d, stored.get(d), closes[d]) for d in sessions) if c]
+            for c in key_changes:
+                if c.action == 'skip_outlier':
+                    logger.warning(f"[refresh] skip_outlier {key} {c.date} {c.old_value}→{c.new_value} (>{REFRESH_MAX_REL_CHANGE:.0%})")
+                else:
+                    verb = 'would ' + c.action if mode == 'log' else c.action
+                    logger.info(f"[refresh] {verb} {key} {c.date} {c.old_value}→{c.new_value}")
+            to_write = {c.date: c.new_value for c in key_changes if c.action != 'skip_outlier'}
+            if mode == 'write' and to_write:
+                try:
+                    self._upsert_rows_and_recompute(key, to_write)
+                except Exception as e:
+                    logger.error(f"[refresh] writing {key} failed: {e}")
+                    continue
+            changes.extend(key_changes)
+        n = sum(1 for c in changes if c.action != 'skip_outlier')
+        logger.info(f"[refresh] mode={mode}: {n} rows {'would change' if mode == 'log' else 'changed'}, "
+                    f"{len(changes) - n} outliers skipped")
+        return changes
 
     def _fetch_indicator_openbb(
         self,

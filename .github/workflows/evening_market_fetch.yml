@@ -71,6 +71,9 @@ jobs:
             # with the definitive session close.
             ARGS="$ARGS --force"
           fi
+          # Settlement refresh of the previous 3 sessions: 'log' only reports what it would
+          # change (verification week); switch to 'write' after review (macro-fetch-settlement-fx-fix).
+          ARGS="$ARGS --refresh-mode log"
           python scripts/fetch_daily_market_data.py $ARGS
 
       - name: Upload logs

@@ -33,7 +33,8 @@ from src.integrations.market_calendar import get_market_close_date
 logger = get_logger(__name__)
 
 
-def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = False) -> bool:
+def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = False,
+                     refresh_mode: str = 'off') -> bool:
     """
     Fetch macro indicators from OpenBB and store in database.
 
@@ -41,6 +42,8 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
         target_date: Date to fetch data for
         dry_run: If True, only log what would be fetched without saving
         force: If True, refresh data even if already exists
+        refresh_mode: settlement refresh of the previous sessions — 'off', 'log' (report only)
+            or 'write'. Runs after the day's fetch, also when the day was already present.
 
     Returns:
         True if successful, False otherwise
@@ -97,6 +100,15 @@ def fetch_macro_data(target_date: date, dry_run: bool = False, force: bool = Fal
         else:
             logger.info("  Would fetch: US_10Y_YIELD, VIX, BRENT_OIL, EUR_USD, GOLD, SP500, SHIPPING_BDI...")
             macro_success = True
+
+        # Settlement refresh: the row of a previous session may hold next-session ticks
+        # (Globex reopens before this job runs); Yahoo history now holds the settlement.
+        if not dry_run and refresh_mode != 'off':
+            logger.info(f"\nSettlement refresh of previous sessions (mode={refresh_mode})...")
+            try:
+                service.refresh_recent_sessions(target_date, mode=refresh_mode)
+            except Exception as e:
+                logger.error(f"Settlement refresh failed: {type(e).__name__}: {e}")
 
         # Fetch Romania indicators (EUR_RON, BNR_RATE, ROBOR_3M, RO_10Y_YIELD, etc.)
         logger.info("\nFetching macro indicators (Romania)...")
@@ -222,6 +234,14 @@ def main():
         help='Force refresh even if data already exists for the date'
     )
 
+    parser.add_argument(
+        '--refresh-mode',
+        choices=['off', 'log', 'write'],
+        default='off',
+        help="Settlement refresh of the previous 3 sessions: 'log' prints what would change, "
+             "'write' overwrites (default: off)"
+    )
+
     args = parser.parse_args()
 
     # Parse target date
@@ -240,7 +260,7 @@ def main():
         stats = backfill_macro_data(args.backfill, args.dry_run)
         return 0 if stats['failed'] == 0 else 1
     else:
-        success = fetch_macro_data(target_date, args.dry_run, args.force)
+        success = fetch_macro_data(target_date, args.dry_run, args.force, args.refresh_mode)
         return 0 if success else 1
 
 

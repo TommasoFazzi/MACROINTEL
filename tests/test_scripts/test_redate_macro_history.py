@@ -36,7 +36,8 @@ def test_scope_routes_fred_daily_and_yahoo_only():
 def test_scope_on_real_indicators():
     scope = rd.in_scope_series()
     assert len(scope) == 26
-    assert scope["USD_GBP"] == ("yahoo", "GBPUSD=X")
+    assert scope["USD_GBP"] == ("ecb", "ECB:EXR")
+    assert scope["USD_CNH"] == ("yahoo", "USDCNH=X")
     assert scope["US_HY_SPREAD"] == ("fred_initial", "BAMLH0A0HYM2")
     for key in ("BITCOIN", "URANIUM", "US_CPI", "NICKEL", "FIN_STRESS_INDEX", "EUR_RON"):
         assert key not in scope
@@ -399,3 +400,22 @@ def test_rollback_restores_snapshot_series():
     assert "DELETE" in stmts[0] and "INSERT INTO macro_indicators SELECT" in stmts[1]
     assert [r["indicator_key"] for r in report] == ["NASDAQ", "SP500"]
     assert report[0]["rows_after"] == 100
+
+
+# ---------------------------------------------------------------------------
+# ECB route
+# ---------------------------------------------------------------------------
+
+def test_ecb_candidates_skip_missing_dates():
+    data = {date(2026, 4, 2): {"EUR_USD": 1.08, "USD_JPY": 150.1},
+            date(2026, 4, 7): {"EUR_USD": 1.09}}  # 04-03 / 04-06 TARGET holidays: absent
+    rows, dropped = rd.fetch_ecb_candidates("USD_JPY", date(2026, 4, 1), date(2026, 4, 8),
+                                            fetch_fn=lambda s, e: data)
+    assert [(r.date, r.value, r.source) for r in rows] == [(date(2026, 4, 2), 150.1, "ecb")]
+    assert dropped == []
+
+
+def test_target_calendar():
+    days = rd.calendar_for("ecb", "ECB:EXR", date(2026, 3, 30), date(2026, 4, 10))
+    assert date(2026, 4, 3) not in days and date(2026, 4, 6) not in days
+    assert len(days) == 8
