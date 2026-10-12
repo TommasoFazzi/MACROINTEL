@@ -152,7 +152,7 @@ python-dotenv==1.2.2
 python-multipart==0.0.27  # openbb-core==1.6.9 requires >=0.0.27,<0.0.28
 pytz==2025.2
 pymupdf4llm==0.0.17
-pymupdf==1.25.3
+pymupdf==1.28.2
 PyYAML==6.0.3
 random-user-agent==1.0.1
 referencing==0.37.0
