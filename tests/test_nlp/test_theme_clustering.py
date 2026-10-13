@@ -351,22 +351,32 @@ def test_count_consecutive_drift_signals_filters_on_drift_signals_not_pipeline_s
 # _is_refit_due (regression tests, 2026-10-08)
 # ---------------------------------------------------------------------------
 
-def test_is_refit_due_filters_on_shadow_partitions_not_drift_signals():
-    """Regression test: the query must filter on `shadow_partitions IS NOT
-    NULL`, not `drift_signals IS NOT NULL`. Since the 2026-08-12 fix,
-    drift_signals is populated on EVERY theme_clustering.py run (daily
-    nearest-centroid AND periodic refit alike), so it can no longer identify
-    "the last periodic refit" — it would always find yesterday's run,
-    whatever kind it was, permanently suppressing the 7-day baseline cadence
-    (observed in prod as 24-30 day gaps between refits instead of ~7).
-    shadow_partitions is written ONLY on the refit_due branch.
-    """
+def test_is_refit_due_selects_rows_with_kmeans_entry():
+    """Regression test: the last refit must be found by JSONB containment on
+    the "kmeans_embedding" entry. drift_signals is written by every
+    theme_clustering run and shadow_partitions by every Louvain run, so
+    filtering on either always matched a row from today and kept refits
+    drift-only (24-30 day gaps in prod instead of ~7)."""
     cursor = _FakeCursor(fetchone_results=[None])
     db = _FakeDB(cursor)
     tc._is_refit_due(db, refit_cadence_days=7)
     query, _params = cursor.queries[0]
-    assert "shadow_partitions is not null" in query.lower()
-    assert "drift_signals" not in query.lower()
+    q = query.lower()
+    assert '@> \'[{"name": "kmeans_embedding"}]\'::jsonb' in q
+    assert "is not null" not in q
+    assert "drift_signals" not in q
+
+
+def test_read_previous_partition_selects_rows_containing_algo():
+    """Louvain writes shadow_partitions daily, so a plain IS NOT NULL filter
+    with LIMIT 5 only ever saw Louvain rows once refits became sparse —
+    ari_vs_previous_refit came back null for both algorithms."""
+    cursor = _FakeCursor(fetchall_results=[[]])
+    db = _FakeDB(cursor)
+    tc._read_previous_partition(db, "hdbscan_shadow")
+    query, params = cursor.queries[0]
+    assert "@> %s::jsonb" in query
+    assert params == ('[{"name": "hdbscan_shadow"}]',)
 
 
 def test_is_refit_due_true_on_first_ever_run():
