@@ -150,3 +150,36 @@ def test_verifier_failure_is_degraded_but_report_saved(monkeypatch):
     assert report["metadata"]["faithfulness"]["status"] == "error"
     assert "401" in report["metadata"]["faithfulness"]["error"]
     assert report["degraded_reasons"] == ["verifier_failed"]
+
+
+# -- split sentences with a combined marker (report 604) ----------------------
+
+JOINT = "IMF's Tenreyro and IEA's Birol both identified the war as the main threat [Article 7, 8]."
+
+
+def test_split_claims_get_the_full_combined_marker():
+    t3 = FakeT3([_claim("Tenreyro identified the war as the main threat", a=[7]),
+                 _claim("Birol identified the war as the main threat", a=[8])])
+    CitationVerifier(client=t3).verify(JOINT, CONTEXT)
+    for block in t3.judge_prompts[0].split("### CLAIM ")[1:]:
+        assert "[Article 7]" in block and "[Article 8]" in block
+
+
+def test_ref_with_its_own_marker_is_kept():
+    t3 = FakeT3([_claim("X announced Y", a=[7])])
+    CitationVerifier(client=t3).verify(JOINT + " X announced Y [Article 7].", CONTEXT)
+    assert "[Article 8]" not in t3.judge_prompts[0]
+
+
+def test_ambiguous_combined_markers_left_alone():
+    t3 = FakeT3([_claim("X announced Y", a=[7])])
+    CitationVerifier(client=t3).verify(JOINT + " Z happened [Article 7, 9].", CONTEXT)
+    assert "[Article 8]" not in t3.judge_prompts[0] and "[Article 9]" not in t3.judge_prompts[0]
+
+
+def test_storyline_markers_restored_too():
+    t3 = FakeT3([_claim("Houthis attacked", s=[1])])
+    CitationVerifier(client=t3).verify("Houthis attacked and the US struck back [Storyline 1, 2].",
+                                       {**CONTEXT, "storylines_in_prompt": CONTEXT["storylines_in_prompt"]
+                                        + [{"rank": 2, "storyline_id": 9, "title": "US strikes", "summary": "S."}]})
+    assert "[Storyline 2]" in t3.judge_prompts[0]

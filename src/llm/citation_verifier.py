@@ -17,8 +17,9 @@ Verdicts are advisory: this module never modifies the report text.
 """
 
 import json
+import re
 from collections import Counter
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, FrozenSet, List, Set, Tuple
 
 from pydantic import ValidationError
 
@@ -29,7 +30,7 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Bump when prompts or scoring change, so metrics stay comparable over time.
-VERIFIER_VERSION = "1.0"
+VERIFIER_VERSION = "1.1"  # 1.1: split sentences keep their combined markers
 
 _MAX_REPORT_CHARS = 30000
 _MAX_CLAIMS = 40
@@ -37,6 +38,7 @@ _JUDGE_BATCH_SIZE = 10
 _MAX_REFS_PER_CLAIM = 3
 _MAX_FLAGGED = 30
 _T3_TIMEOUT_S = 180  # extraction emits up to ~4k tokens; the tier default (45s) is too short
+_MARKER_RE = re.compile(r"\[(Article|Storyline)s?\s+([\d,\s]+)\]")
 
 _VERDICTS = ("SUPPORTED", "PARTIAL", "NOT_SUPPORTED", "CONTRADICTED")
 _FLAG_ORDER = {"CONTRADICTED": 0, "NOT_SUPPORTED": 1, "PARTIAL": 2}
@@ -44,7 +46,7 @@ _FLAG_ORDER = {"CONTRADICTED": 0, "NOT_SUPPORTED": 1, "PARTIAL": 2}
 EXTRACT_SYSTEM = """You extract verifiable factual claims from an intelligence briefing and the citation markers attached to each one.
 Return JSON {"claims":[{"claim":str,"kind":"event"|"numeric"|"inference","article_refs":[int],"storyline_refs":[int]}]}.
 - event: a concrete statement that something happened or was said/announced; numeric: market price/percentage/index level; inference: analyst interpretation or forecast (extract but do not worry about it).
-- article_refs: the numbers N of every "[Article N]" / "[Article N, M]" marker attached to THAT sentence (same sentence or immediately after it). Copy exactly; use [] if the sentence has none. Do NOT borrow markers from other sentences.
+- article_refs: the numbers N of every "[Article N]" / "[Article N, M]" marker attached to THAT sentence (same sentence or immediately after it). Copy exactly; use [] if the sentence has none. Do NOT borrow markers from other sentences. If you split one sentence into several claims, every claim keeps ALL the markers of that sentence (e.g. "A and B both said X [Article 7, 8]" -> both claims get [7, 8]).
 - storyline_refs: the numbers of "[Storyline N]" markers attached to that sentence ([] if none).
 Rules: claim must be self-contained (resolve pronouns, include names), max 35 words. Skip headings and generic background. Extract at most 40 claims, prioritising specific event claims."""
 
@@ -53,6 +55,31 @@ Return JSON {"verdicts":[{"id":int,"verdict":"SUPPORTED"|"PARTIAL"|"NOT_SUPPORTE
 SUPPORTED: every specific of the claim (actors, action, numbers, places, dates) is stated in the cited item(s). PARTIAL: the core is stated but some specifics are missing or stronger than the source.
 NOT_SUPPORTED: the cited item(s) do not contain the claim. CONTRADICTED: they say something incompatible (different number, different actor, opposite).
 Be literal, do not use outside knowledge. quote = shortest deciding phrase (empty if none). reason = one sentence."""
+
+
+def _marker_groups(report_text: str) -> Dict[str, Set[FrozenSet[int]]]:
+    """Number sets of every citation marker in the text, e.g. {"Article": {{7, 8}, {3}}}."""
+    groups: Dict[str, Set[FrozenSet[int]]] = {"Article": set(), "Storyline": set()}
+    for kind, numbers in _MARKER_RE.findall(report_text):
+        group = frozenset(int(n) for n in re.findall(r"\d+", numbers))
+        if group:
+            groups[kind].add(group)
+    return groups
+
+
+def _restore_split_refs(refs: List[int], groups: Set[FrozenSet[int]]) -> List[int]:
+    """Give a split claim back the full combined marker of its sentence.
+
+    The extractor sometimes splits "A and B both said X [Article 7, 8]" into two claims
+    with one number each (report 604: swapped, so both were judged NOT_SUPPORTED).
+    Restored only when unambiguous: the claim's refs never appear as a marker of their
+    own and exactly one combined marker contains them.
+    """
+    wanted = frozenset(refs)
+    if not wanted or wanted in groups:
+        return refs
+    supersets = [g for g in groups if wanted < g]
+    return sorted(supersets[0]) if len(supersets) == 1 else refs
 
 
 def _int_refs(values: Any) -> List[int]:
@@ -128,7 +155,9 @@ class CitationVerifier:
         return json.loads(raw)
 
     def _extract(self, report_text: str) -> List[ExtractedClaim]:
-        data = self._call(EXTRACT_SYSTEM, report_text[:_MAX_REPORT_CHARS], max_tokens=4500)
+        text = report_text[:_MAX_REPORT_CHARS]
+        data = self._call(EXTRACT_SYSTEM, text, max_tokens=4500)
+        groups = _marker_groups(text)
         claims = []
         for item in (data.get("claims") or [])[:_MAX_CLAIMS]:
             if not isinstance(item, dict) or not item.get("claim"):
@@ -137,8 +166,8 @@ class CitationVerifier:
                 claims.append(ExtractedClaim(
                     claim=item["claim"],
                     kind=item.get("kind"),
-                    article_refs=_int_refs(item.get("article_refs")),
-                    storyline_refs=_int_refs(item.get("storyline_refs")),
+                    article_refs=_restore_split_refs(_int_refs(item.get("article_refs")), groups["Article"]),
+                    storyline_refs=_restore_split_refs(_int_refs(item.get("storyline_refs")), groups["Storyline"]),
                 ))
             except ValidationError:
                 logger.debug(f"Skipping malformed claim: {item!r}")
