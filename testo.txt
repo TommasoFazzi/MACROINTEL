@@ -1,0 +1,185 @@
+Le fonti fornite costituiscono un corpus scientifico e metodologico di eccezionale valore, interamente focalizzato sullo sviluppo, l'ottimizzazione e l'applicazione di algoritmi di clustering gerarchico, meta-clustering (ensemble clustering), text mining e ottimizzazione metauristica.
+Di seguito viene presentato un riassunto specifico, dettagliato e rigorosamente scientifico di ciascuna fonte, strutturato secondo lo schema richiesto (riepilogo della fonte, strumenti utilizzati, motivazioni scientifiche e modalità applicative).
+1. Analisi dei Flussi dei Passeggeri dei Trasporti Pubblici (Correa et al.)
+Riepilogo: Studio longitudinale di lungo termine (4 anni, 2016-2019) che analizza la domanda, la connettività e la resilienza di 44 grandi hub di trasporto pubblico a Perth (Australia), sulla base di un immenso dataset di circa 480 milioni di transazioni di smartcard
+.
+Cosa hanno usato (Strumenti): Un approccio di clustering multi-stadio che integra il clustering gerarchico agglomerativo (metodo di Ward)
+, il clustering K-means
+, l'algoritmo di Leiden per la partizione e community detection di grafi pesati e diretti (tramite il pacchetto igraph in R)
+ e un framework di meta-clustering (consensus) basato sull'accumulazione di evidenze (evidence accumulation) tramite Hamming distance e matrici di co-associazione
+.
+Perché lo hanno usato (Motivazioni): Le analisi tradizionali di smartcard si basano su periodi temporali brevi (settimane o mesi) assumendo una stazionarietà che ignora i trend annuali, i cambi infrastrutturali o la stagionalità
+. Gli autori hanno combinato questi diversi algoritmi per mitigare i limiti intrinseci dei singoli modelli di clustering, isolando gli outlier (como gli hub universitari) ed estraendo una visione consensuale e solida (meta-cluster) in grado di catturare contemporaneamente la dimensione spaziale, temporale e funzionale degli hub
+.
+Come lo hanno usato (Modalità):
+Hanno ricavato milioni di "soste" (stays) definendole in base a tre caratteristiche: hub di arrivo, orario di discesa e durata della sosta prima del viaggio successivo, classificandole in 12 tipi di attività (es. lavoro, studio, casa/sonno, trasferimenti)
+.
+Hanno standardizzato le serie temporali trimestrali dei flussi (divise per 5 categorie di biglietto) calcolando la distanza tra hub tramite il prodotto degli scarti quadratici medi di ciascuna variabile
+.
+Hanno applicato il metodo di Ward per raggruppare i profili evolutivi
+, K-means per raggruppare i mix di attività/utenti
+ e l'algoritmo di Leiden sul grafo O-D dei flussi di passeggeri per mappare la connettività di rete
+.
+Hanno infine sintetizzato i quattro clustering parziali rappresentando ogni hub con una tupla delle sue appartenenze e calcolando la Hamming distance per strutturare una matrice di co-associazione
+. Da quest'ultima, tramite clustering gerarchico agglomerativo, hanno estratto 6 meta-cluster stabili di hub, rivelando relazioni invisibili ad algoritmi singoli
+.
+2. Guida Pratica al Clustering Gerarchico per Decisioni Aziendali (MCP Analytics)
+Riepilogo: Una guida tecnica applicativa finalizzata alla segmentazione comportamentale dei clienti (es. analisi RFM ed engagement) e alla strutturazione di workflow automatizzati nei sistemi CRM aziendali
+.
+Cosa hanno usato (Strumenti): Algoritmi di clustering gerarchico agglomerativo (bottom-up) e divisivo (top-down)
+; metriche di distanza come la distanza Euclidea, la distanza di Manhattan e la Gower distance (specifica per dataset con variabili miste, continue e categoriali)
+; quattro metodi di collegamento (linkage): metodo di Ward, complete linkage, average linkage e single linkage
+.
+Perché lo hanno usato (Motivazioni): A differenza di algoritmi "piatti" come il K-means (che obbligano l'analista a indovinare preventivamente un numero fisso k di gruppi e assumono cluster perfettamente sferici)
+, il clustering gerarchico mappa simultaneamente l'intero spazio delle soluzioni sotto forma di dendrogramma
+. Questo consente di identificare la naturale struttura nidificata dei dati (nested segments), migliorando il targeting e l'A/B testing
+.
+Come lo hanno usato (Modalità): Il protocollo prevede la standardizzazione non negoziabile delle variabili continue (media zero e deviazione standard unitaria) per evitare che variabili su scale ampie (come il valore monetario speso) dominino il calcolo della distanza rispetto a variabili su scala ridotta (come la frequenza d'acquisto)
+. Mostrano come individuare il numero ottimale di cluster identificando i salti verticali massimi (vertical gaps) nel dendrogramma
+ e descrivono come impostare regole di automazione multilivello (es. segmentazione macro per il budget, sotto-segmentazione nidificata per la messaggistica specifica) basandosi sulla posizione deterministica del cliente all'interno dei rami del dendrogramma
+.
+3. Studio Teorico e Sperimentale sul Meta-Clustering (Caruana et al. - Cornell University)
+Riepilogo: Ricerca fondamentale che introduce formalmente il concetto di meta-clustering per risolvere l'intrinseca ambiguità (ill-defined nature) del clustering, dimostrando che non esiste un'unica partizione ottimale in assoluto, ma che diverse soluzioni possono essere valide a seconda dell'obiettivo finale dell'utente
+.
+Cosa hanno usato (Strumenti): Algoritmi di generazione di clustering diversificati tramite inizializzazioni casuali multiple di K-means (sfruttando l'instabilità dei suoi minimi locali)
+ e tramite la pesatura casuale delle caratteristiche (random feature weighting) guidata da una distribuzione di potenza di Zipf
+. Hanno utilizzato la Principal Component Analysis (PCA95) per ruotare lo spazio ortogonale prima della pesatura
+ e il Multidimensional Scaling (MDS) per proiettare matrici di sole distanze in spazi vettoriali
+. Al meta-livello, hanno applicato la metrica di dissimilarità Cluster Difference (basata sulla classificazione discorde di coppie di punti, legata all'indice di Rand)
+ e il clustering gerarchico agglomerativo con criterio average linkage
+.
+Perché lo hanno usato (Motivazioni): Poiché gli utenti raramente conoscono i dati a sufficienza da definire una metrica di distanza ideale a priori, cercare un unico clustering ottimale è controproducente
+. Il meta-clustering permette di generare migliaia di soluzioni matematicamente valide, raggruppandole a un livello superiore ("meta") per consentire all'utente di esplorare visivamente poche configurazioni rappresentative e selezionare quella idonea al proprio specifico obiettivo di business o di ricerca
+.
+Come lo hanno usato (Modalità): Hanno implementato un algoritmo che estrae casualmente il parametro di forma α di Zipf (tra 0.0 e 1.5) per generare pesi che enfatizzino da pochissime a molte caratteristiche del dataset
+. Hanno calcolato la matrice delle distanze tra migliaia di partizioni tramite la metrica Cluster Difference
+, raggruppandole in un dendrogramma meta-livello
+. Lo hanno validato su quattro dataset benchmark (Australia, Bergmark, Covertype, Letters) usando etichette esterne ausiliarie come proxy degli obiettivi dell'utente
+. Nel caso studio biologico sui dati di distanza 3D di 639 proteine, il meta-clustering ha individuato automaticamente un cluster omogeneo di 48 proteine, superando del 60% la dimensione massima del cluster che i cristallografi esperti erano riusciti a trovare manualmente dopo un mese di calibrazione di metriche
+.
+4. Rassegna dei Metodi Agglomerativi e delle Metriche di Prossimità (Oti & Olusola)
+Riepilogo: Revisione teorica, matematica e sistematica degli algoritmi di clustering gerarchico agglomerativo e delle metriche di similarità e dissimilarità utilizzate su dati quantitativi
+.
+Cosa hanno usato (Strumenti): Analisi matematica dettagliata di 8 metodi di collegamento (linkage): single linkage (nearest neighbor), complete linkage (farthest neighbor), average linkage (UPGMA), weighted group average (WPGMA), centroid method (UPGMC), median method (WPGMC), Ward's method (minimum variance) e il flexible beta method
+. Hanno recensito le metriche di distanza di Minkowski, Euclidea, Manhattan e Chi-quadro
+, e i coefficienti di correlazione di Pearson (r), Spearman (r 
+s
+​
+ ) e Kendall (τ) trasformati in metriche di dissimilarità riscaldate nell'intervallo 
+.
+Perché lo hanno usato (Motivazioni): Fornire una guida di riferimento accademica che spieghi rigorosamente come la selezione geometrica della distanza e del criterio di fusione determini la morfologia dei cluster, la sensibilità al rumore, la tendenza al concatenamento (chaining) o la capacità di isolare gli outlier
+.
+Come lo hanno usato (Modalità): Gli autori espongono le formulazioni analitiche di aggiornamento delle distanze. Spiegano, ad esempio, che nel metodo del centroide, se i gruppi da fondere hanno dimensioni asimmetriche, il baricentro del nuovo gruppo sarà sbilanciato verso il gruppo più grande, rischiando di non uscirne geometricamente
+. Mostrano come il metodo della mediana elimini questo sbilanciamento rendendo la posizione del nuovo centroide indipendente dalla dimensione dei gruppi originari
+. Descrivono infine l'implementazione del metodo Flexible-Beta di Lance e Williams, spiegando come la variazione del parametro β (es. impostando piccoli valori negativi come −0.25 o −0.5) consenta di controllare in modo estremamente personalizzato l'isolamento degli outlier in cluster singoli
+.
+5. Sistema Ottimizzato per la Topic Detection Semantica (Krishnan & Easwarakumar)
+Riepilogo: Progettazione e validazione di un sistema di topic modeling intelligente (RTDS - Research Topic Detection System) altamente scalabile per l'estrazione di keyword influenti e temi caldi da enormi database scientifici (es. arXiv), assistendo i ricercatori alle prime armi nell'interrogazione bibliografica
+.
+Cosa hanno usato (Strumenti): Modello linguistico Hybrid BERT (con embeddings contestualizzati)
+, la struttura dati ad alta dimensionalità Telescopic Vector Tree (TV-Tree) per l'indicizzazione efficiente dei vettori di testo
+, l'algoritmo metauristico Emperor Penguin Optimization (EPO)
+ accoppiato con il Nondominated Sorting Genetic Algorithm-II (NSGA-II) per la feature selection multi-obiettivo
+, e metriche di coerenza testuale (Coherence C 
+v
+​
+ , Topic Diversity, Purity, NMI)
+.
+Perché lo hanno usato (Motivazioni): I modelli classici come LDA (Latent Dirichlet Allocation) o NMF necessitano di calibrazioni manuali laboriose e faticano a gestire dati testuali ad alta dimensionalità senza perdere le relazioni semantiche di lungo termine
+. L'integrazione di Hybrid BERT con il TV-Tree e l'ottimizzazione metauristica punta a massimizzare la precisione semantica delle parole chiave estratte, garantendo al contempo una complessità computazionale quasi-lineare e una forte riduzione dei tempi di ricerca nella radice e nei nodi interni dell'albero
+.
+Come lo hanno usato (Modalità):
+Hanno ridotto la dimensione degli articoli di arXiv applicando stop-words, stemming e filtrandoli tramite una tassonomia di parole chiave specifiche per l'Informatica (CS)
+.
+Hanno utilizzato l'algoritmo EPO (che modella matematicamente il comportamento dei pinguini imperatore per conservare calore in inverno tramite "huddle" poligonali e profili di temperatura) per l'esplorazione globale delle feature
+.
+Hanno applicato l'operatore di selezione e i crossover/mutazione di NSGA-II per raffinare le feature testuali estratte, ottimizzando tre obiettivi: rilevanza, non-ridondanza e dimensionalità
+.
+Hanno generato gli embeddings contestualizzati tramite Hybrid BERT e li hanno inseriti nel TV-Tree, definendo per ciascun nodo foglia un centro (vettore dell'articolo), un raggio (distanza massima attiva) e un set di dimensioni attive (ActiveDims)
+.
+Valutando le dimensioni attive del nodo radice e dei nodi interni di primo livello (fissando il coefficiente moltiplicativo della deviazione standard a 10σ per bilanciare specificità e generalità), il sistema ha estratto i trend principali con un'accuratezza media del 99.66%, riducendo la complessità di visita a soli 4 nodi per identificare i 30 argomenti più influenti
+.
+6 & 7. Record di Accesso Web a ResearchGate (Temporaneamente Non Disponibili)
+Riepilogo: Registrazione di errori di negazione dell'accesso di rete (HTTP Error 1020 - Access Denied) da parte dei server di ResearchGate verso il bot di indicizzazione
+.
+Analisi Metodologica: Non vi è alcuna metodologia scientifica applicata in questi due record, trattandosi esclusivamente di metadati di errore di rete temporanei
+. Tuttavia, l'analisi dei dati mancanti è stata completamente risolta grazie al successivo caricamento dei documenti integrali descritti ai punti 3 e 4, che contenevano i testi completi oggetto dei link bloccati.
+8. Text Mining e Clustering Gerarchico in Stata per Health Economics (Carlo Drago)
+Riepilogo: Presentazione di un toolkit integrato e scalabile di text mining e unsupervised clustering gerarchico nell'ambiente Stata, finalizzato all'analisi in tempo reale di notizie economiche e alla mappatura sistematica della letteratura medica
+.
+Cosa hanno usato (Strumenti): Integrazione bidirezionale Stata-Python
+, vettorizzazione TF-IDF (Term Frequency-Inverse Document Frequency)
+, metriche di distanza coseno
+ e algoritmi di clustering gerarchico ottimizzati tramite silhouette score
+.
+Perché lo hanno usato (Motivazioni): Rispondere alla pressante richiesta, da parte dei decisori pubblici e degli economisti sanitari, di strumenti in grado di elaborare rapidamente moli crescenti di testi non strutturati (comunicazioni delle banche centrali, titoli di giornale, paper accademici) per supportare decisioni basate su prove scientifiche (evidence-based policy) e l'Health Technology Assessment (HTA)
+.
+Come lo hanno usato (Modalità): Il workflow è suddiviso in due filoni applicativi. Nel primo, gli autori sfruttano le capacità di chiamata di Python da dentro Stata per calcolare la matrice TF-IDF dei testi economici e applicare la distanza coseno, segmentando i documenti in cluster ottimizzati per estrarre sentiment e temi macroeconomici latenti
+. Nel secondo, applicano una pipeline interamente nativa in Stata per normalizzare e clusterizzare un corpus curato di titoli di pubblicazioni scientifiche sulla telemedicina applicata al diabete, raggruppandoli automaticamente in aree tematiche coerenti per facilitare la stesura di revisioni sistematiche
+.
+9. Flat Ensemble tramite Multiple Consensus Clustering (Zhang & Li)
+Riepilogo: Sviluppo del framework matematico MCC (Multiple Consensus Clustering), un algoritmo innovativo che unisce il consensus clustering (ensemble di partizioni) con il meta-clustering per estrarre prospettive multiple e coerenti da dataset multidimensionali ad alta dimensionalità
+.
+Cosa hanno usato (Strumenti): Matrici di connettività binaria per la rappresentazione delle partizioni di base
+, calcolo della similarità basato sulla frazione di voci identiche nelle matrici di adiacenza
+, analisi delle proprietà spettrali degli autovalori della matrice di similarità per stimare il numero ottimale k di gruppi
+, algoritmi di consensus di base (bisezione basata su PCA, CSPA, HGPA, WClustering)
+ e validazione sperimentale su 11 dataset UCI e testuali
+.
+Perché lo hanno usato (Motivazioni): Il consensus clustering tradizionale cerca di fondere tutti i clustering di base in un'unica partizione di compromesso
+. Tuttavia, in dataset biologici o testuali complessi, i clustering di partenza possono essere fortemente divergenti o correlati a sotto-gruppi
+. Forzare un unico consenso tramite media equivale a una votazione a forza bruta che cancella le "viste" alternative e coerenti dei dati
+. L'MCC risolve questo problema strutturando consensi separati e di alta qualità per ciascun sotto-gruppo di partizioni affini
+.
+Come lo hanno usato (Modalità): Hanno generato 30 clustering di base eseguendo l'algoritmo K-means 30 volte
+. Hanno calcolato la similarità tra tutte le partizioni in base alle concordanze delle loro matrici di connettività
+. Hanno ordinato la matrice di similarità e analizzato lo spettro degli autovalori: la presenza di k autovalori significativamente grandi (di ordine O(n) rispetto a quelli di ordine O(n 
+1/2
+ )) ha rivelato l'esistenza di k gruppi naturali di partizioni
+. Hanno quindi raggruppato i 30 clustering di base in k meta-cluster tramite K-means spettrale
+ e hanno applicato gli algoritmi di consensus (es. CSPA o bisezione PCA) in modo indipendente all'interno di ciascun gruppo, estraendo viste di consenso multiple (es. C1, C2, C3 nel dataset Glass) che mostrano un'accuratezza (HighMCC) nettamente superiore rispetto al consensus piatto sull'intero set
+.
+10. Ensemble di Cluster basato su Collegamenti Indiretti (Shao & Ding)
+Riepilogo: Proposta del modello L-MCLA (Link-Based Meta-Clustering Algorithm), un algoritmo di ensemble che migliora la robustezza del consenso introducendo l'analisi dei collegamenti indiretti tra i cluster parziali
+.
+Cosa hanno usato (Strumenti): Indice di Jaccard per la similarità diretta
+, concetto di connessione tripla pesata (weighted connected-triple - WCT) per mapparne le relazioni indirette
+, fattore di decadimento costante (D 
+C
+​
+ =0.9)
+, algoritmo di partizionamento di grafi spettrali Normalized Cut (Ncut)
+ e metodo di assegnazione degli oggetti tramite voto pesato (voting score)
+.
+Perché lo hanno usato (Motivazioni): La maggior parte degli algoritmi di ensemble classici (incluso il celebre MCLA di Strehl e Ghosh) calcola la similarità tra cluster basandosi sulla condivisione diretta di elementi (intersezione tramite Jaccard)
+. Se due cluster non condividono direttamente alcun oggetto, la loro similarità è impostata a zero, ignorando il fatto che essi potrebbero essere fortemente correlati in modo indiretto attraverso la somiglianza comune con un terzo cluster intermediario
+. Ignorare queste relazioni nascoste penalizza la stabilità e la precisione del clustering di consenso finale
+.
+Come lo hanno usato (Modalità):
+Hanno generato 50 clustering di base tramite K-means con parametri di clusterizzazione casuali
+.
+Hanno costruito la matrice di similarità diretta Z tra tutti i cluster delle partizioni usando il coefficiente di Jaccard
+.
+Hanno calcolato la somiglianza indiretta tramite il WCT: se il cluster C 
+i
+​
+  e il cluster C 
+j
+​
+  sono entrambi simili a un cluster intermedio C 
+k
+​
+ , il loro legame indiretto pesato è definito dal valore minimo dei loro Jaccard con C 
+k
+​
+ 
+. Hanno sommato ed effettuato la media di tutti i WCT su ogni possibile cluster intermediario, applicando il fattore di decadimento (D 
+C
+​
+ =0.9) per generare la matrice di similarità raffinata S
+.
+Hanno trattato S as la matrice di adiacenza di un grafo e lo hanno partizionato in K meta-cluster usando l'algoritmo spettrale Ncut
+.
+Hanno assegnato ogni singolo oggetto al meta-cluster che presentava il massimo valore di voto ponderato (voting score)
+. Testato su 9 dataset complessi di UCI, l'L-MCLA ha registrato indici di precisione (ARI e NMI) sistematicamente superiori rispetto ai metodi tradizionali come MCLA, CSPA, HGPA ed EAC
+.
