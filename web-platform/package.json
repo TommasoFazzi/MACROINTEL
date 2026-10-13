@@ -32,7 +32,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.35.5",
-    "sigma": "^3.0.3",
+    "sigma": "^4.0.0",
     "swr": "^2.5.1",
     "tailwind-merge": "^3.7.0"
   },
