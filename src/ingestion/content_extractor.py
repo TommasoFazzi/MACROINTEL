@@ -67,7 +67,14 @@ DOMAIN_MAX_CONCURRENT = 2  # max concurrent requests per domain (Fix 3)
 # that aborts the whole process (uncatchable by try/except, kills the pipeline).
 # Default lowered to 4 (from 10) to shrink that race window; override via env if needed.
 import os as _os
+import threading as _threading
 DEFAULT_MAX_CONCURRENT = int(_os.getenv("INGESTION_MAX_CONCURRENT", "4"))
+
+# Lowering concurrency only made the libxml2 abort rarer: it hit again on 2026-10-13
+# ("free(): invalid pointer"). Every lxml/libxml2 parse now runs under this lock, so
+# downloads stay concurrent but parsing is serial (milliseconds per page). Scrapling
+# builds its lxml tree inside .get(), so its fetch holds the lock too (few domains).
+LXML_PARSE_LOCK = _threading.Lock()
 
 # Pool di User-Agent realistici per evitare blocchi
 USER_AGENTS = [
@@ -202,9 +209,11 @@ class ContentExtractor:
         """
         try:
             if tier >= 2 and SCRAPLING_STEALTH_AVAILABLE:
-                page = StealthyFetcher.get(url)
+                with LXML_PARSE_LOCK:
+                    page = StealthyFetcher.get(url)
             elif SCRAPLING_FETCHER_AVAILABLE:
-                page = ScraplingFetcher.get(url)
+                with LXML_PARSE_LOCK:
+                    page = ScraplingFetcher.get(url)
             else:
                 logger.debug("Scrapling not available")
                 return None
@@ -245,15 +254,16 @@ class ContentExtractor:
                 logger.debug(f"Trafilatura: no content downloaded for {url}")
                 return None
 
-            # Extract with metadata
-            content = trafilatura.extract(
-                downloaded,
-                include_comments=False,
-                include_tables=True,
-                no_fallback=False,
-                output_format='json',
-                with_metadata=True
-            )
+            # Extract with metadata (libxml2: serialised, see LXML_PARSE_LOCK)
+            with LXML_PARSE_LOCK:
+                content = trafilatura.extract(
+                    downloaded,
+                    include_comments=False,
+                    include_tables=True,
+                    no_fallback=False,
+                    output_format='json',
+                    with_metadata=True
+                )
 
             if content:
                 import json
@@ -288,7 +298,8 @@ class ContentExtractor:
         try:
             article = NewspaperArticle(url, request_timeout=self.timeout)
             article.download()
-            article.parse()
+            with LXML_PARSE_LOCK:
+                article.parse()
 
             if article.text:
                 return {

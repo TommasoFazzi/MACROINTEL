@@ -26,7 +26,8 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - User-Agent rotation on every request to avoid blocks
 
 - `content_extractor.py` - Full-text extraction from URLs
-  - `ContentExtractor` class - Multi-method extraction with `max_concurrent=10` global semaphore
+  - `ContentExtractor` class - Multi-method extraction with a global semaphore (`INGESTION_MAX_CONCURRENT`, default 4)
+  - **`LXML_PARSE_LOCK` (2026-10-13)**: libxml2 is not thread-safe under concurrent parsing and can abort the whole process (`double free or corruption`, `free(): invalid pointer` — uncatchable). Lowering concurrency 10→4 (April) only made it rarer; it hit again on 2026-10-13. Every lxml parse (`trafilatura.extract`, `newspaper.Article.parse`, Scrapling `.get`, which builds its lxml tree while fetching) now runs under one `threading.Lock`: downloads stay concurrent, parsing is serial. Any new lxml/BeautifulSoup(`lxml`) parse called from the extraction threads must take this lock. `daily_pipeline.py` also retries ingestion once if it dies from a signal.
   - **Per-domain concurrency control** (Fix 3, 2026-04-09): `_domain_semaphores` dict limits max 2 concurrent requests per domain. Reduces anti-bot triggering (e.g., Chatham House rate limiting). Async method `_get_domain_semaphore(url)` lazily creates semaphores.
   - **Per-article timeout** (Fix 1, 2026-04-09): `PER_ARTICLE_TIMEOUT = 30s`. Each extraction wrapped in `asyncio.wait_for(..., timeout)` to escape indefinite hangs on Cloudflare challenges or unresponsive servers. If timeout fires → `asyncio.TimeoutError` caught, article marked failed, pipeline continues.
   - `extract_with_trafilatura(url)` - Primary method (fast, news-optimized). Note: `trafilatura.fetch_url()` called without explicit timeout; per-article timeout wrapper provides safety.
