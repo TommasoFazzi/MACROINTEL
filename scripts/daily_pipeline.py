@@ -54,6 +54,15 @@ EXIT_DEGRADED = 3
 # Data Classes
 # =============================================================================
 
+def is_native_crash(exit_code: int) -> bool:
+    """True when the step was killed by a signal (SIGABRT, SIGSEGV...) rather than exiting.
+
+    subprocess reports -N when the child itself dies from signal N; with shell=True a
+    shell that does not exec the command reports 128+N instead. Timeouts use -1.
+    """
+    return exit_code < -1 or 129 <= exit_code <= 159
+
+
 @dataclass
 class StepResult:
     """Risultato di un singolo step della pipeline."""
@@ -75,6 +84,9 @@ class PipelineStep:
     description: str
     timeout_seconds: int = 600
     continue_on_failure: bool = False
+    # Extra attempts when the process dies from a native crash (killed by a signal),
+    # which no try/except can catch. Only for idempotent steps.
+    retries_on_crash: int = 0
 
 
 @dataclass
@@ -123,7 +135,10 @@ DEFAULT_STEPS = [
         command="python -m src.ingestion.pipeline",
         description="Fetch e parsing degli RSS feeds",
         timeout_seconds=900,  # 15 min
-        continue_on_failure=False
+        continue_on_failure=False,
+        # libxml2 can abort the process under concurrent parsing (2026-10-13:
+        # "free(): invalid pointer"). Ingestion is idempotent (dedup), so retry once.
+        retries_on_crash=1,
     ),
     # market_data step removed: market data is now fetched by the evening workflow
     # (.github/workflows/evening_market_fetch.yml) at 23:00 UTC Mon-Fri — after NYSE close
@@ -431,7 +446,7 @@ class DailyPipeline:
                     duration_seconds=0.0
                 )
             else:
-                result = self._execute_step(step)
+                result = self._run_with_crash_retry(step, step_num)
 
             step_results.append(result)
 
@@ -604,6 +619,20 @@ class DailyPipeline:
                 return []
 
         return self.steps
+
+    def _run_with_crash_retry(self, step: PipelineStep, step_num: int) -> StepResult:
+        """Execute a step, re-running it up to step.retries_on_crash times after a native crash."""
+        result = self._execute_step(step)
+        for attempt in range(step.retries_on_crash):
+            if result.success or not is_native_crash(result.exit_code):
+                break
+            self.logger.error(
+                f"[STEP {step_num}] {step.name} crashed (exit {result.exit_code}); "
+                f"retry {attempt + 1}/{step.retries_on_crash}. Tail of stderr:\n"
+                + "\n".join((result.stderr or "").splitlines()[-5:])
+            )
+            result = self._execute_step(step)
+        return result
 
     def _execute_step(self, step: PipelineStep) -> StepResult:
         """Esegue un singolo step."""
