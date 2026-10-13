@@ -31,6 +31,7 @@ Spec reference: openspec/changes/narrative-clustering-embedding-based/
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import uuid
@@ -569,15 +570,17 @@ def write_kmeans_shadow(db: DatabaseManager, partition: dict) -> None:
 # ---------------------------------------------------------------------------
 # Re-fit-over-re-fit stability + shadow-vs-live agreement (ARI/NMI, tasks 3-4)
 #
-# IMPORTANT: shadow_partitions is only written on the refit_due branch of
-# run_theme_clustering() — the daily nearest-centroid path performs no
-# re-clustering and writes no shadow_partitions entry at all (see design.md
-# Decision 1). Any query here must filter on `shadow_partitions IS NOT NULL`,
-# never on `pipeline_step` — that column is hardcoded to "community_detection"
-# for every caller of _persist_run_metrics (Louvain/Leiden included), so it
-# cannot distinguish theme_clustering's own rows from theirs (design.md
-# Decision 6a).
+# IMPORTANT: neither `pipeline_step` nor `shadow_partitions IS NOT NULL`
+# identifies theme_clustering's own refit rows. pipeline_step is hardcoded to
+# "community_detection" for every caller of _persist_run_metrics, and
+# compute_communities.py (Louvain) ALSO writes shadow_partitions on every daily
+# run (its 4-way louvain/leiden comparison). Only theme_clustering's refit_due
+# branch writes an entry named "kmeans_embedding" / "hdbscan_shadow", so refit
+# rows are selected by JSONB containment on that entry name.
 # ---------------------------------------------------------------------------
+
+_KMEANS_REFIT_ROW = """shadow_partitions @> '[{"name": "kmeans_embedding"}]'::jsonb"""
+
 
 def _read_previous_partition(db: DatabaseManager, algo_name: str) -> dict | None:
     """Return the most recent prior periodic re-fit's partition for algo_name
@@ -592,11 +595,10 @@ def _read_previous_partition(db: DatabaseManager, algo_name: str) -> dict | None
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT shadow_partitions FROM narrative_run_metrics
-                WHERE shadow_partitions IS NOT NULL
-                ORDER BY ts DESC LIMIT 5
-                """
+                "SELECT shadow_partitions FROM narrative_run_metrics "
+                "WHERE shadow_partitions @> %s::jsonb "
+                "ORDER BY ts DESC LIMIT 5",
+                (json.dumps([{"name": algo_name}]),),
             )
             rows = cur.fetchall()
 
@@ -834,26 +836,17 @@ def _is_refit_due(db: DatabaseManager, refit_cadence_days: int) -> bool:
     """True when no periodic re-fit has run within refit_cadence_days, or none
     has ever run (first-run bootstrap always re-fits).
 
-    Filters on `shadow_partitions IS NOT NULL`, NOT on `drift_signals IS NOT
-    NULL` — drift_signals is now written on every theme_clustering.py run
-    (daily nearest-centroid AND periodic refit alike, set unconditionally
-    before this function is even called), so it can no longer distinguish
-    "the last refit" from "yesterday's run of any kind". shadow_partitions
-    is written ONLY on the refit_due branch (design.md Decision 1), so it's
-    the correct discriminator — same pattern as _read_previous_partition.
-    Fixed 2026-10-08: before this fix (since the 2026-08-12 drift_signals
-    persistence fix), this always found "yesterday", making refit_due
-    effectively drift-only — the 7-day baseline cadence never fired on its
-    own (observed as ~24-30 day gaps between refits instead of ~7).
+    The last refit is the latest row carrying a "kmeans_embedding" entry (see
+    the comment above _KMEANS_REFIT_ROW). drift_signals and plain
+    `shadow_partitions IS NOT NULL` both match rows written every day, by the
+    daily path and by Louvain respectively, which kept this permanently False
+    and made refits drift-only (24-30 day gaps instead of ~7).
     """
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT ts FROM narrative_run_metrics
-                WHERE shadow_partitions IS NOT NULL
-                ORDER BY ts DESC LIMIT 1
-                """
+                f"SELECT ts FROM narrative_run_metrics WHERE {_KMEANS_REFIT_ROW} "
+                "ORDER BY ts DESC LIMIT 1"
             )
             row = cur.fetchone()
     if row is None:
