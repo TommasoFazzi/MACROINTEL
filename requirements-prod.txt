@@ -10,7 +10,7 @@ annotated-doc==0.0.5
 annotated-types==0.7.0
 anyio==4.14.2
 appdirs==1.4.4
-async-lru==2.0.5
+async-lru==2.3.0
 attrs==25.4.0
 babel==2.17.0
 beautifulsoup4==4.14.3
