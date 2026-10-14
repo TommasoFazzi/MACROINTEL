@@ -22,6 +22,9 @@ updates:
         update-types: ["version-update:semver-major"]
       # No ARM64 wheel guarantee — bump manually after verification
       - dependency-name: "torch"
+      # 0.4+ decodes vector columns as pgvector.Vector, not numpy arrays: broke report
+      # filtering and narrative embeddings on 2026-10-14 (PR #322). Bump only with code changes.
+      - dependency-name: "pgvector"
 
   - package-ecosystem: "npm"
     directory: "/web-platform"
