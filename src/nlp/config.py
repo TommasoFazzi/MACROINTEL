@@ -125,7 +125,7 @@ class HDBSCANShadowConfig(_StrictBase):
 
 
 class ThemeClusteringConfig(_StrictBase):
-    k_current: int = 18
+    k_current: int = 12
     k_sweep_range: List[int] = Field(default_factory=lambda: [10, 30])
     warm_start: bool = True
     outlier_threshold: float = 0.15
