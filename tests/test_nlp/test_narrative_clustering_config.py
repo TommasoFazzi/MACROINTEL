@@ -32,7 +32,7 @@ def _reset_config_cache():
 
 def test_theme_clustering_defaults():
     cfg = NarrativeClusteringConfig()
-    assert cfg.theme_clustering.k_current == 18
+    assert cfg.theme_clustering.k_current == 12
     assert cfg.theme_clustering.k_sweep_range == [10, 30]
     assert cfg.theme_clustering.warm_start is True
     assert cfg.theme_clustering.outlier_threshold == 0.15
@@ -109,5 +109,5 @@ def test_full_project_config_loads_with_theme_clustering():
     """The actual config/narrative_clustering.yaml must parse with the new section."""
     cfg = load_clustering_config(force_reload=True)
     assert isinstance(cfg.theme_clustering, ThemeClusteringConfig)
-    assert cfg.theme_clustering.k_current == 18
+    assert cfg.theme_clustering.k_current == 12
     assert cfg.community.algorithm == "louvain"
