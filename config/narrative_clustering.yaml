@@ -88,7 +88,7 @@ community:
     enabled: true                   # set false for instant reversibility (Louvain-only)
 
 theme_clustering:                   # narrative-clustering-embedding-based change
-  k_current: 18                     # validated on prod: silhouette peak at k=18-19 (S2 diagnostics)
+  k_current: 12                     # offline validation study 2026-10-15 (clustering-offline-validation-study): labelled macro-F1 k12 − k18 = +0.070 [+0.013, +0.131]; was 18 (silhouette peak, S2 diagnostics)
   k_sweep_range: [10, 30]           # explored only on drift-triggered retune, never in the daily path
   warm_start: true                  # periodic re-fit inits k-means from previous active centroids
   outlier_threshold: 0.15           # cos_sim(nearest centroid) below this -> community_id NULL

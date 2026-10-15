@@ -199,6 +199,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     bullet_generator["bullet_generator.py"]
+    clustering_validation["clustering_validation.py"]
     config["config.py"]
     narrative_processor["narrative_processor.py"]
     processing["processing.py"]
@@ -212,6 +213,7 @@ flowchart TD
 
     bullet_generator --> llm
     bullet_generator --> utils
+    clustering_validation --> utils
     config --> utils
     narrative_processor --> llm
     narrative_processor --> storage
@@ -219,6 +221,9 @@ flowchart TD
     processing --> utils
     relevance_filter --> llm
     relevance_filter --> utils
+    clustering_validation --> EXT_numpy
+    clustering_validation --> EXT_pydantic
+    clustering_validation --> EXT_sklearn
     config --> EXT_pydantic
     narrative_processor --> EXT_numpy
     narrative_processor --> EXT_psycopg2
