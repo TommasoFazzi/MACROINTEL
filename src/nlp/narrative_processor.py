@@ -22,19 +22,16 @@ import yaml
 from psycopg2.extras import Json, execute_values
 
 try:
-    from sklearn.cluster import HDBSCAN
-    HDBSCAN_AVAILABLE = True
-except ImportError:
-    HDBSCAN_AVAILABLE = False
-
-try:
     from ..llm.llm_factory import GeminiClient
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
 
+from . import storyline_decisions as sd
 from ..storage.database import DatabaseManager
 from ..utils.logger import get_logger
+
+HDBSCAN_AVAILABLE = sd.HDBSCAN_AVAILABLE
 
 logger = get_logger(__name__)
 
@@ -78,40 +75,6 @@ def _load_entity_blocklist(path: Optional[Path] = None) -> Set[str]:
 
 _ENTITY_BLOCKLIST: Set[str] = _load_entity_blocklist()
 
-# ---------------------------------------------------------------------------
-# Post-clustering relevance validation
-# Storylines whose title+summary match OFF-TOPIC patterns are archived.
-# Patterns that MUST appear (at least one) to be considered on-scope.
-# ---------------------------------------------------------------------------
-_SCOPE_KEYWORDS: re.Pattern = re.compile(
-    r'(?:geopoliti|politi|diplom|sanzi|embargo|govern|parlamento|elezioni|voto'
-    r'|\bNATO\b|\bONU\b|\bUE\b|\bEU\b|\bG7\b|\bG20\b'
-    r'|difesa|militar|esercit|guerra|conflict|armat|missile|nucle|drone'
-    r'|cyber|hack|malware|ransomware|phishing|zero.day|\bAPT\b|\bCISA\b|\bNSA\b'
-    r'|intelligen|spionag|sorveglianz|\bSIGINT\b|\bHUMINT\b|\bOSINT\b'
-    r'|spazi[ao]|orbit|satellit|launch|\bNASA\b|\bESA\b|SpaceX'
-    r'|energi[ae]|petrol|\bgas\b|\bOPEC\b|oleodott|gasdott|rinnovabil|nuclear'
-    r'|econom|finanz|\bPIL\b|\bGDP\b|inflaz|banca.central|\bFMI\b|\bIMF\b|\bBCE\b|\bFED\b|Treasury|debito.pubblic'
-    r'|supply.chain|semiconduttor|\bchip\b|Taiwan|\bTSMC\b|mineral[ie].critic|terre.rare'
-    r'|terroris|jihad|estremis|radicalizz'
-    r'|migra|rifugiat|frontier|Frontex'
-    r'|\bCina\b|\bChina\b|\bRussia\b|\bIran\b|Corea.Nord|North.Korea|Ucraina|Ukraine|\bIsrael\b|\bGaza\b'
-    r'|Pentagon|\bCIA\b|\bMI6\b|Mossad|\bFSB\b|\bGRU\b|\bDGSE\b|\bAISE\b|Creml)',
-    re.IGNORECASE
-)
-
-_OFF_TOPIC_PATTERNS: List[re.Pattern] = [
-    re.compile(p, re.IGNORECASE) for p in [
-        r'\b(?:NBA|NFL|NHL|MLB|MLS|UFC|ATP|WTA|FIFA|UEFA|ICC|cricket|IPL|Serie A|Premier League|Champions League|Bundesliga|Ligue 1|La Liga)\b',
-        r'\b(?:Grammy|Oscar|Emmy|Golden Globe|BAFTA|Netflix|Spotify|box.office|blockbuster|Marvel|K-pop|BTS|Taylor Swift)\b',
-        r'\b(?:celebrity|gossip|fashion|Kardashian|reality TV|Love Island|Met Gala|red carpet)\b',
-        r'\b(?:Real Madrid|Barcelona|Juventus|Liverpool|Arsenal|Chelsea|Ronaldo|Messi|Guardiola)\b',
-        r'\b(?:recipe|ricetta|cooking|chef|restaurant|ristorante|food blog)\b',
-        r'\b(?:tourist|turismo|travel guide|hotel review|vacation|vacanz)\b',
-    ]
-]
-
-
 def _strip_llm_markdown(text: str) -> str:
     """Strip markdown formatting that LLMs emit despite plain-text instructions."""
     text = re.sub(r'^\s*#{1,6}\s+', '', text, flags=re.MULTILINE)   # ## headings
@@ -119,6 +82,58 @@ def _strip_llm_markdown(text: str) -> str:
     text = re.sub(r'`([^`\n]+)`', r'\1', text)                       # `inline code`
     text = re.sub(r'^\s*>\s*', '', text, flags=re.MULTILINE)         # > blockquotes
     return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle SQL. Decay and orphan expiry stay in SQL (storyline-formation-causal-
+# review design.md D2); the offline replay re-implements these predicates in
+# Python and a test pins them to these constants.
+# ---------------------------------------------------------------------------
+DECAY_RULE_1_SQL = """
+    UPDATE storylines
+    SET momentum_score = momentum_score * %s
+    WHERE narrative_status IN ('emerging', 'active')
+    AND last_update < NOW() - INTERVAL '7 days'
+    RETURNING id
+"""
+DECAY_RULE_2_SQL = """
+    UPDATE storylines
+    SET narrative_status = 'stabilized'
+    WHERE narrative_status = 'active'
+    AND momentum_score < 0.3
+    RETURNING id
+"""
+DECAY_RULE_3_SQL = """
+    UPDATE storylines
+    SET narrative_status = 'archived'
+    WHERE narrative_status = 'stabilized'
+    AND last_update < NOW() - INTERVAL '30 days'
+    RETURNING id
+"""
+DECAY_RULE_4_SQL = """
+    UPDATE storylines
+    SET narrative_status = 'archived'
+    WHERE narrative_status = 'emerging'
+    AND article_count < 3
+    AND created_at < NOW() - INTERVAL '5 days'
+    RETURNING id
+"""
+# Deliberately has NO article_count predicate — that predicate is exactly what
+# made 'emerging' a dead-end, and copying it here would reproduce the bug.
+# migrations/016_graph_cleanup.sql step 1 made that mistake: it mirrored rule_4's
+# `article_count < 3` and so never touched the rows that were actually stuck.
+DECAY_RULE_5_SQL = """
+    UPDATE storylines
+    SET narrative_status = 'archived'
+    WHERE narrative_status = 'emerging'
+    AND last_update < NOW() - MAKE_INTERVAL(days => %s)
+    RETURNING id
+"""
+ORPHAN_EXPIRY_SQL = """
+    DELETE FROM orphan_events
+    WHERE created_at < NOW() - INTERVAL '14 days'
+    RETURNING id
+"""
 
 
 class NarrativeProcessor:
@@ -278,15 +293,10 @@ class NarrativeProcessor:
         if dry_run:
             # In dry-run, estimate new storylines from HDBSCAN without writing
             if len(orphaned_events) >= self.HDBSCAN_MIN_CLUSTER_SIZE:
-                embeddings = np.array([e['embedding'] for e in orphaned_events])
-                norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-                embeddings_norm = embeddings / np.maximum(norms, 1e-10)
-                hdb = HDBSCAN(
-                    min_cluster_size=self.HDBSCAN_MIN_CLUSTER_SIZE,
-                    min_samples=self.HDBSCAN_MIN_SAMPLES,
-                    metric='euclidean'
+                labels = sd.residual_labels(
+                    np.array([e['embedding'] for e in orphaned_events]),
+                    self.HDBSCAN_MIN_CLUSTER_SIZE, self.HDBSCAN_MIN_SAMPLES,
                 )
-                labels = hdb.fit_predict(embeddings_norm)
                 n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
                 stats['new_storylines'] = n_clusters
             logger.info(f"[DRY RUN] Would create ~{stats['new_storylines']} new storylines")
@@ -395,7 +405,8 @@ class NarrativeProcessor:
 
     def _create_micro_clusters(self, articles: List[Dict]) -> List[Dict]:
         """
-        Group near-duplicate articles (cosine sim > 0.90) into unique events.
+        Group near-duplicate articles (cosine sim >= MICRO_CLUSTER_THRESHOLD) into
+        unique events. See `storyline_decisions.create_micro_clusters`.
 
         Returns list of event dicts:
         - embedding: normalized centroid of the cluster
@@ -404,93 +415,7 @@ class NarrativeProcessor:
         - representative_title: title of article with most entities
         - category: most common category
         """
-        if not articles:
-            return []
-
-        n = len(articles)
-        if n == 1:
-            return [self._article_to_event(articles[0])]
-
-        # Build cosine similarity matrix
-        embeddings = np.array([a['embedding'] for a in articles])
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        embeddings_norm = embeddings / np.maximum(norms, 1e-10)
-        sim_matrix = embeddings_norm @ embeddings_norm.T
-
-        # Greedy clustering: assign each article to a cluster
-        assigned = [False] * n
-        clusters = []
-
-        for i in range(n):
-            if assigned[i]:
-                continue
-
-            # Start new cluster with article i
-            cluster_indices = [i]
-            assigned[i] = True
-
-            for j in range(i + 1, n):
-                if assigned[j]:
-                    continue
-                if sim_matrix[i, j] >= self.MICRO_CLUSTER_THRESHOLD:
-                    cluster_indices.append(j)
-                    assigned[j] = True
-
-            clusters.append(cluster_indices)
-
-        # Convert clusters to events
-        events = []
-        for indices in clusters:
-            cluster_articles = [articles[i] for i in indices]
-            events.append(self._articles_to_event(cluster_articles))
-
-        return events
-
-    def _article_to_event(self, article: Dict) -> Dict:
-        """Convert a single article to an event dict."""
-        entities = self._extract_entity_list(article.get('entities', {}))
-        return {
-            'embedding': np.array(article['embedding']),
-            'entities': entities,
-            'article_ids': [article['id']],
-            'representative_title': article['title'],
-            'category': article.get('category'),
-        }
-
-    def _articles_to_event(self, articles: List[Dict]) -> Dict:
-        """Merge multiple articles into a single event."""
-        # Centroid embedding (normalized)
-        embeddings = np.array([a['embedding'] for a in articles])
-        centroid = embeddings.mean(axis=0)
-        norm = np.linalg.norm(centroid)
-        if norm > 0:
-            centroid = centroid / norm
-
-        # Union of entities
-        all_entities = []
-        entity_counts = Counter()
-        for a in articles:
-            ents = self._extract_entity_list(a.get('entities', {}))
-            all_entities.extend(ents)
-            entity_counts.update(ents)
-
-        # Representative title: article with most entities
-        best_article = max(
-            articles,
-            key=lambda a: len(self._extract_entity_list(a.get('entities', {})))
-        )
-
-        # Most common category
-        categories = [a.get('category') for a in articles if a.get('category')]
-        category = Counter(categories).most_common(1)[0][0] if categories else None
-
-        return {
-            'embedding': centroid,
-            'entities': list(entity_counts.keys()),
-            'article_ids': [a['id'] for a in articles],
-            'representative_title': best_article['title'],
-            'category': category,
-        }
+        return sd.create_micro_clusters(articles, self.MICRO_CLUSTER_THRESHOLD, self._extract_entity_list)
 
     # =========================================================================
     # STAGE 2: ADAPTIVE MATCHING
@@ -540,69 +465,36 @@ class NarrativeProcessor:
         """
         Find the best matching storyline for an event using hybrid scoring:
         score = cosine_sim - time_decay_penalty + entity_boost
+        (`storyline_decisions.score_candidates` / `select_match`).
 
         Returns the best match dict or None if below threshold.
         """
         if not active_storylines:
             return None
 
-        event_embedding = event['embedding']
-        event_entities = set(e.lower() for e in event['entities'])
-        now = datetime.now()
+        params = sd.MatchParams(
+            threshold=self.MATCH_THRESHOLD,
+            time_decay_factor=self.TIME_DECAY_FACTOR,
+            entity_boost=self.ENTITY_BOOST,
+            entity_jaccard_threshold=self.ENTITY_JACCARD_THRESHOLD,
+        )
+        scores = sd.score_candidates(event, active_storylines, datetime.now(), params)
+        best = sd.select_match(scores, self.MATCH_THRESHOLD)
+        if best is None:
+            return None
 
-        best_match = None
-        best_score = -1.0
-
-        for storyline in active_storylines:
-            if storyline['current_embedding'] is None:
-                continue
-
-            # Cosine similarity
-            s_emb = storyline['current_embedding']
-            dot = np.dot(event_embedding, s_emb)
-            norm_product = np.linalg.norm(event_embedding) * np.linalg.norm(s_emb)
-            if norm_product == 0:
-                continue
-            cosine_sim = dot / norm_product
-
-            # Time decay penalty
-            days_inactive = 0
-            if storyline['last_update']:
-                delta = now - storyline['last_update']
-                days_inactive = max(0, delta.total_seconds() / 86400)
-            time_penalty = self.TIME_DECAY_FACTOR * days_inactive
-
-            # Entity Jaccard boost
-            s_entities = storyline['key_entities']
-            entity_boost = 0.0
-            if event_entities and s_entities:
-                intersection = len(event_entities & s_entities)
-                union = len(event_entities | s_entities)
-                jaccard = intersection / union if union > 0 else 0
-                if jaccard >= self.ENTITY_JACCARD_THRESHOLD:
-                    entity_boost = self.ENTITY_BOOST
-
-            # Hybrid score
-            score = cosine_sim - time_penalty + entity_boost
-
-            if score > best_score and score >= self.MATCH_THRESHOLD:
-                best_score = score
-                best_match = {
-                    'storyline_id': storyline['storyline_id'],
-                    'title': storyline['title'],
-                    'score': score,
-                    'cosine_sim': cosine_sim,
-                    'time_penalty': time_penalty,
-                    'entity_boost': entity_boost,
-                }
-
-        if best_match:
-            logger.debug(
-                f"Event '{event['representative_title'][:50]}' → "
-                f"storyline '{best_match['title'][:40]}' (score={best_match['score']:.3f})"
-            )
-
-        return best_match
+        logger.debug(
+            f"Event '{event['representative_title'][:50]}' → "
+            f"storyline '{best.title[:40]}' (score={best.score:.3f})"
+        )
+        return {
+            'storyline_id': best.storyline_id,
+            'title': best.title,
+            'score': best.score,
+            'cosine_sim': best.cosine_sim,
+            'time_penalty': best.time_penalty,
+            'entity_boost': best.entity_boost,
+        }
 
     def _assign_event_to_storyline(self, event: Dict, storyline_id: int) -> None:
         """
@@ -636,36 +528,21 @@ class NarrativeProcessor:
                 current_status = row[3]
 
                 # 3. Vector drift
-                new_emb = event['embedding']
-                drifted = self.DRIFT_WEIGHT_OLD * current_emb + self.DRIFT_WEIGHT_NEW * new_emb
-                norm = np.linalg.norm(drifted)
-                if norm > 0:
-                    drifted = drifted / norm
+                drifted = sd.drift_embedding(
+                    current_emb, event['embedding'], self.DRIFT_WEIGHT_OLD, self.DRIFT_WEIGHT_NEW,
+                )
 
                 # 4. Merge entities (cap at 20, sanitized)
                 new_event_entities = [
                     self._clean_entity(e) for e in event['entities']
                     if not self._is_garbage_entity(self._clean_entity(e))
                 ]
-                all_entities = list(current_entities | set(new_event_entities))
-                # Deduplicate case-insensitive, keep first occurrence
-                seen_lower = set()
-                merged_entities = []
-                for e in all_entities:
-                    key = e.lower()
-                    if key not in seen_lower:
-                        seen_lower.add(key)
-                        merged_entities.append(e)
-                merged_entities = merged_entities[:20]
+                merged_entities = sd.merge_entities(current_entities, new_event_entities)
 
-                # 5. Update counts and status
+                # 5. Update counts and status; emerging → active at 3 articles
                 new_count = current_count + len(event['article_ids'])
-                momentum_bump = min(1.0, 0.1 * len(event['article_ids']))
-
-                # Promote emerging → active when article_count >= 3
-                new_status = current_status
-                if current_status == 'emerging' and new_count >= 3:
-                    new_status = 'active'
+                momentum_bump = sd.momentum_bump(len(event['article_ids']))
+                new_status = sd.promote_status(current_status, new_count)
 
                 cur.execute("""
                     UPDATE storylines SET
@@ -714,18 +591,10 @@ class NarrativeProcessor:
             result['buffered_count'] = len(orphaned_events)
             return result
 
-        # Build normalized embedding matrix (euclidean on unit vectors ≈ cosine)
-        embeddings = np.array([e['embedding'] for e in orphaned_events])
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        embeddings_norm = embeddings / np.maximum(norms, 1e-10)
-
-        # Run HDBSCAN
-        hdb = HDBSCAN(
-            min_cluster_size=self.HDBSCAN_MIN_CLUSTER_SIZE,
-            min_samples=self.HDBSCAN_MIN_SAMPLES,
-            metric='euclidean',
+        labels = sd.residual_labels(
+            np.array([e['embedding'] for e in orphaned_events]),
+            self.HDBSCAN_MIN_CLUSTER_SIZE, self.HDBSCAN_MIN_SAMPLES,
         )
-        labels = hdb.fit_predict(embeddings_norm)
 
         # Group events by cluster label
         cluster_map = defaultdict(list)
@@ -909,11 +778,7 @@ class NarrativeProcessor:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     # 1. Expire old orphans (14 days)
-                    cur.execute("""
-                        DELETE FROM orphan_events
-                        WHERE created_at < NOW() - INTERVAL '14 days'
-                        RETURNING id
-                    """)
+                    cur.execute(ORPHAN_EXPIRY_SQL)
                     result['expired'] = cur.rowcount
                     if result['expired']:
                         logger.info(f"Orphan pool: expired {result['expired']} stale orphans (>14 days)")
@@ -1287,25 +1152,13 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
 
                 archive_ids = []
                 for sid, title, summary in rows:
-                    text = f"{title or ''} {summary or ''}"
-
-                    # Check if text contains any scope keyword
-                    has_scope = bool(_SCOPE_KEYWORDS.search(text))
-
-                    # Check if text matches off-topic patterns
-                    is_off_topic = any(p.search(text) for p in _OFF_TOPIC_PATTERNS)
-
-                    if not has_scope and is_off_topic:
+                    if sd.is_off_topic(title, summary):
                         # Clearly off-topic: no scope keywords AND matches off-topic pattern
                         archive_ids.append(sid)
                         logger.info(
                             f"Post-clustering validation: archiving off-topic storyline "
                             f"#{sid}: '{(title or '')[:60]}'"
                         )
-                    elif not has_scope and not summary:
-                        # No summary yet and no scope keywords in title — skip for now,
-                        # will be validated again after LLM generates summary
-                        stats['validated'] += 1
                     else:
                         stats['validated'] += 1
 
@@ -1496,62 +1349,26 @@ ENTITIES: [5-10 key proper nouns — People, Organizations, Locations — comma-
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                # Rule 1: Decay momentum for stale active storylines
-                cur.execute("""
-                    UPDATE storylines
-                    SET momentum_score = momentum_score * %s
-                    WHERE narrative_status IN ('emerging', 'active')
-                    AND last_update < NOW() - INTERVAL '7 days'
-                    RETURNING id
-                """, (self.MOMENTUM_DECAY_FACTOR,))
+                cur.execute(DECAY_RULE_1_SQL, (self.MOMENTUM_DECAY_FACTOR,))
                 stats['rule_1'] = cur.rowcount
 
                 # Rule 2: Active with low momentum → stabilized
-                cur.execute("""
-                    UPDATE storylines
-                    SET narrative_status = 'stabilized'
-                    WHERE narrative_status = 'active'
-                    AND momentum_score < 0.3
-                    RETURNING id
-                """)
+                cur.execute(DECAY_RULE_2_SQL)
                 stats['rule_2'] = cur.rowcount
 
                 # Rule 3: Stabilized for 30 days → archived
-                cur.execute("""
-                    UPDATE storylines
-                    SET narrative_status = 'archived'
-                    WHERE narrative_status = 'stabilized'
-                    AND last_update < NOW() - INTERVAL '30 days'
-                    RETURNING id
-                """)
+                cur.execute(DECAY_RULE_3_SQL)
                 stats['rule_3'] = cur.rowcount
 
                 # Rule 4: Emerging for 5 days without reaching 3 articles → archived
-                cur.execute("""
-                    UPDATE storylines
-                    SET narrative_status = 'archived'
-                    WHERE narrative_status = 'emerging'
-                    AND article_count < 3
-                    AND created_at < NOW() - INTERVAL '5 days'
-                    RETURNING id
-                """)
+                cur.execute(DECAY_RULE_4_SQL)
                 stats['rule_4'] = cur.rowcount
 
-                # Rule 5: Emerging with no activity for EMERGING_TTL_DAYS → archived.
-                # Deliberately has NO article_count predicate — that predicate is
-                # exactly what made 'emerging' a dead-end, and copying it here would
-                # reproduce the bug. migrations/016_graph_cleanup.sql step 1 made that
-                # mistake: it mirrored rule_4's `article_count < 3` and so never
-                # touched the rows that were actually stuck.
-                # Runs after rule_4 so small stale rows are still counted by rule_4
-                # and this counter measures only what previously escaped entirely.
-                cur.execute("""
-                    UPDATE storylines
-                    SET narrative_status = 'archived'
-                    WHERE narrative_status = 'emerging'
-                    AND last_update < NOW() - MAKE_INTERVAL(days => %s)
-                    RETURNING id
-                """, (self.EMERGING_TTL_DAYS,))
+                # Rule 5: Emerging with no activity for EMERGING_TTL_DAYS → archived,
+                # with no article_count predicate (see DECAY_RULE_5_SQL). Runs after
+                # rule_4 so small stale rows are still counted by rule_4 and this
+                # counter measures only what previously escaped entirely.
+                cur.execute(DECAY_RULE_5_SQL, (self.EMERGING_TTL_DAYS,))
                 stats['rule_5'] = cur.rowcount
 
                 # reverse_promo placeholder — implemented in Phase 2F (task 2.13)
