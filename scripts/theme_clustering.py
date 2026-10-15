@@ -165,6 +165,7 @@ def _run_kmeans_embedding_and_score(
         "kmeans_embedding", partition, len(emb_ids), 0.0, silhouette, coherence_med, runtime_ms,
     )
     score["calinski_harabasz"] = calinski_harabasz
+    score["inertia"] = float(km.inertia_)
     score["centroids"] = km.cluster_centers_
     score["k"] = k
     score["n_excluded_no_embedding"] = len(storyline_ids) - len(emb_ids)
@@ -406,6 +407,41 @@ def _apply_lineage(
 # HDBSCAN permanent challenger shadow (tasks 5.1-5.3)
 # ---------------------------------------------------------------------------
 
+def _umap_reduce(X_full: "np.ndarray", umap_cfg) -> tuple:
+    """Optional UMAP pre-reduction for HDBSCAN (design.md § Decision 5 of
+    clustering-shadow-metrics-umap).
+
+    Returns (X, umap_used). umap_used is True only when UMAP actually ran:
+    a missing/disabled config, an unavailable umap-learn or a failed fit all
+    return the full-dimensionality matrix unchanged with umap_used=False.
+
+    Shared with the offline validation study (clustering-offline-validation-
+    study D2), which reuses one reduction across several min_cluster_size values.
+    """
+    if not (umap_cfg is not None and getattr(umap_cfg, "enabled", False)):
+        return X_full, False
+    if not UMAP_AVAILABLE:
+        logger.warning("umap-learn unavailable — falling back to full-dimensionality HDBSCAN")
+        return X_full, False
+    try:
+        reducer = umap.UMAP(
+            n_components=umap_cfg.n_components,
+            n_neighbors=umap_cfg.n_neighbors,
+            min_dist=umap_cfg.min_dist,
+            random_state=umap_cfg.random_state,
+        )
+        return reducer.fit_transform(X_full), True
+    except Exception as e:
+        logger.warning("UMAP reduction failed (%s) — falling back to full-dimensionality HDBSCAN", e)
+        return X_full, False
+
+
+def _hdbscan_labels(X: "np.ndarray", min_cluster_size: int, min_samples: int) -> "np.ndarray":
+    """HDBSCAN labels (-1 = noise) on X, euclidean metric (unit vectors or UMAP output)."""
+    hdb = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean")
+    return hdb.fit_predict(X)
+
+
 def _run_hdbscan_shadow_and_score(
     db: DatabaseManager,
     storyline_ids: list,
@@ -453,30 +489,9 @@ def _run_hdbscan_shadow_and_score(
 
     X_full = np.stack([current_by_id[sid] for sid in emb_ids])
 
-    umap_requested = bool(umap_cfg is not None and getattr(umap_cfg, "enabled", False))
-    X = X_full
-    quality_metric = "cosine"
-    umap_enabled = False  # reflects whether UMAP actually ran, not just whether it was requested
-    if umap_requested:
-        if not UMAP_AVAILABLE:
-            logger.warning("umap-learn unavailable — falling back to full-dimensionality HDBSCAN")
-        else:
-            try:
-                reducer = umap.UMAP(
-                    n_components=umap_cfg.n_components,
-                    n_neighbors=umap_cfg.n_neighbors,
-                    min_dist=umap_cfg.min_dist,
-                    random_state=umap_cfg.random_state,
-                )
-                X = reducer.fit_transform(X_full)
-                quality_metric = "euclidean"
-                umap_enabled = True
-            except Exception as e:
-                logger.warning("UMAP reduction failed (%s) — falling back to full-dimensionality HDBSCAN", e)
-                X = X_full
-
-    hdb = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean")
-    labels = hdb.fit_predict(X)
+    X, umap_enabled = _umap_reduce(X_full, umap_cfg)
+    quality_metric = "euclidean" if umap_enabled else "cosine"
+    labels = _hdbscan_labels(X, min_cluster_size, min_samples)
 
     # HDBSCAN noise label (-1) maps to "no community" — excluded from the partition,
     # same semantics as the outlier bucket in the k-means daily path.

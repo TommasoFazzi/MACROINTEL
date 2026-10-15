@@ -517,6 +517,15 @@ def test_kmeans_score_includes_calinski_harabasz(monkeypatch):
     assert score["calinski_harabasz"] > 0
 
 
+def test_kmeans_score_includes_inertia(monkeypatch):
+    current_by_id = _synthetic_embeddings()
+    monkeypatch.setattr(tc, "_fetch_storyline_embeddings", lambda db, ids: (current_by_id, {}))
+    ids = list(current_by_id.keys())
+    _, score = tc._run_kmeans_embedding_and_score(db=None, storyline_ids=ids, k=3)
+    assert isinstance(score["inertia"], float)
+    assert np.isfinite(score["inertia"]) and score["inertia"] >= 0
+
+
 @pytest.mark.skipif(not tc.HDBSCAN_AVAILABLE, reason="sklearn HDBSCAN not available")
 def test_hdbscan_score_includes_calinski_harabasz(monkeypatch):
     current_by_id = _synthetic_embeddings(n_per_cluster=10, n_clusters=3, dim=8)
