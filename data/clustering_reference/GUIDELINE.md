@@ -56,6 +56,26 @@ whole region or a whole sector.
 4. **`different`.** "Romania's central bank holds rate at 6.50%" / "ECB signals pause in rate cuts". Both are monetary
    policy, but one is Romania's domestic economy and the other the euro area; they sit under different themes.
 
+## Criteria applied in the 2026-10-15 labelling (record, not a change to the rules above)
+
+Recorded so a later labelling round can reproduce the same judgement. The resulting taxonomy is finer than the worked
+examples, which favours configurations with more themes; that is the product owner's definition.
+
+- **Energy markets are their own theme.** Oil prices, strategic reserves, diesel and energy routes are kept apart from
+  the Iran–US and Gulf conflict. Following rule 7: a summary mainly about prices, stocks and routes goes to markets; one
+  mainly about attacks and diplomacy goes to the conflict ("tankers attacked at Hormuz" vs "oil market fears over
+  Hormuz" = `different`).
+- **Yemen and the Houthis** belong to the Iran–Gulf theme.
+- **Sanctions.** Sanctions specific to Russia, and frozen Russian assets used to fund Kyiv, belong to the Russia–Ukraine
+  war. US sanctions policy spanning several countries (Cuba, Iran, Belarus, the shadow fleet) is a separate theme.
+- **Russia and Europe.** The Russian threat to Europe (hybrid attacks, drones over Lithuania and Moldova, NATO
+  deployments) is kept apart from the war in Ukraine. Low confidence: the two are tightly intertwined.
+- **Romania** splits into three themes: energy, domestic politics, economy and markets ("same country, different
+  situation").
+- **Mixed storylines go by their main subject.** A storyline on the Iran war that is two-thirds about US military
+  readiness and cyber strategy belongs to US defence.
+- Result reported by the labeller: 102 `same`, 184 `different`, 4 `unsure`.
+
 ## Practicalities
 
 - File: `labels_<date>.csv`. Fill the `label` column only; do not edit, sort or delete rows.
