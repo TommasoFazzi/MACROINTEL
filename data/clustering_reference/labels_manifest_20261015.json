@@ -1,0 +1,14 @@
+{
+  "snapshot_dir": "artifacts/clustering_snapshot_20261015",
+  "snapshot_manifest_sha256": "9bcd89080820f546045082e6603a7126b27713946f7174e46df8aff38184fd6f",
+  "snapshot_npz_sha256": "2869cacf870d228b60a95b0e92976abbb130b3334aad9045f3e9953dbd32bf6a",
+  "sampler_seed": 1014,
+  "order_seed": 1015,
+  "stratum_sizes": {
+    "S-C": 150,
+    "S-N": 10,
+    "S-A": 50,
+    "S-B": 50
+  },
+  "n_rows": 290
+}

@@ -339,3 +339,99 @@ def test_relative_bar_uses_floor_when_all_unstable():
     d = cv.decide([a, b])
     assert not a.eligible and not b.eligible
     assert d.verdict == "inconclusive"
+
+
+# ---------------------------------------------------------------------------
+# Pair sampling (5.2)
+# ---------------------------------------------------------------------------
+
+def _sampling_fixture(n=400, seed=0):
+    rng = np.random.default_rng(seed)
+    ids = list(range(n))
+    kmeans = {i: i % 8 for i in ids}
+    hdbscan = {i: (cv.NOISE if i % 10 == 0 else (i // 3) % 12) for i in ids}
+    vocab = [f"e{j}" for j in range(30)]
+    entities = {i: list(rng.choice(vocab, size=4, replace=False)) for i in ids}
+    vectors = {i: rng.normal(size=16) for i in ids}
+    return kmeans, hdbscan, entities, vectors
+
+
+def test_sample_pairs_strata_sizes_properties_and_no_overlap():
+    km, hd, ents, vecs = _sampling_fixture()
+    pairs = cv.sample_pairs(km, hd, ents, vecs, seed=1)
+    by = {}
+    for p in pairs:
+        by.setdefault(p["stratum"], []).append(p)
+    assert {s: len(v) for s, v in by.items()} == cv.STRATUM_SIZES
+    keys = [cv._canon(p["a"], p["b"]) for p in pairs]
+    assert len(keys) == len(set(keys))
+    for p in by["S-C"]:
+        a, b = p["a"], p["b"]
+        assert hd[a] != cv.NOISE and hd[b] != cv.NOISE
+        if p["direction"] == "kmeans_same":
+            assert km[a] == km[b] and hd[a] != hd[b]
+        else:
+            assert hd[a] == hd[b] and km[a] != km[b]
+    assert sum(p["direction"] == "kmeans_same" for p in by["S-C"]) == 75
+    for p in by["S-N"]:
+        assert km[p["a"]] == km[p["b"]]
+        assert (hd[p["a"]] == cv.NOISE) != (hd[p["b"]] == cv.NOISE)
+    for p in by["S-A"]:
+        assert len({e.lower() for e in ents[p["a"]]} & {e.lower() for e in ents[p["b"]]}) >= 2
+
+
+def test_sample_pairs_is_deterministic_for_a_seed():
+    args = _sampling_fixture()
+    assert cv.sample_pairs(*args, seed=3) == cv.sample_pairs(*args, seed=3)
+
+
+def test_labelling_order_repeats_layout():
+    km, hd, ents, vecs = _sampling_fixture()
+    rows = cv.labelling_order(cv.sample_pairs(km, hd, ents, vecs, seed=1), seed=2)
+    assert len(rows) == 290
+    assert [r["row_id"] for r in rows] == list(range(290))
+    repeats = [r for r in rows if r["repeat_of"] is not None]
+    assert len(repeats) == cv.N_REPEATS
+    for r in repeats:
+        first = rows[r["repeat_of"]]
+        assert r["row_id"] >= 145
+        assert r["row_id"] - first["row_id"] >= cv.MIN_REPEAT_GAP
+        assert (r["a"], r["b"]) == (first["a"], first["b"])
+        assert r["swap"] != first["swap"]
+
+
+def test_load_labelled_pairs_drops_unsure_and_collects_repeats():
+    key = [
+        {"row_id": 0, "a": 1, "b": 2, "stratum": "S-A", "repeat_of": None},
+        {"row_id": 1, "a": 3, "b": 4, "stratum": "S-B", "repeat_of": None},
+        {"row_id": 2, "a": 5, "b": 6, "stratum": "S-C", "repeat_of": None},
+        {"row_id": 3, "a": 1, "b": 2, "stratum": "S-A", "repeat_of": 0},
+    ]
+    labels = {0: "same", 1: "unsure", 2: "different", 3: "different"}
+    pairs, first, second = cv.load_labelled_pairs(key, labels)
+    assert pairs.a == [1, 5] and pairs.gold.tolist() == [True, False]
+    assert first == ["same"] and second == ["different"]
+    with pytest.raises(ValueError):
+        cv.load_labelled_pairs(key, {**labels, 2: "maybe"})
+
+
+def test_original_relative_rule_can_leave_nothing_eligible_amended_rule_does_not():
+    # Real-snapshot shape (2026-10-15): best seed ARI and best data ARI belong to
+    # different HDBSCAN configurations, and no configuration is within the margin
+    # of both, so the original rule empties the set.
+    a = _hd(0.70, mcs=10, data=0.739, seed=0.928, noise=0.10)
+    b = _hd(0.70, mcs=15, data=0.791, seed=0.860, noise=0.07)
+    cv.apply_eligibility([a, b], relative_margin=True)
+    assert not a.eligible and not b.eligible
+    cv.apply_eligibility([a, b])
+    assert a.eligible and b.eligible
+
+
+def test_decide_original_rule_on_copies_does_not_touch_amended_result():
+    import copy
+    cands = [_km(0.60), _hd(0.72, mcs=10, data=0.739, seed=0.928), _hd(0.70, mcs=15, data=0.791, seed=0.86)]
+    original = cv.decide([copy.copy(c) for c in cands], relative_margin=True)
+    amended = cv.decide(cands)
+    assert "hdbscan_umap" not in original.selected
+    assert amended.selected["hdbscan_umap"].params == {"min_cluster_size": 10}
+    assert all(c.eligible for c in cands)
