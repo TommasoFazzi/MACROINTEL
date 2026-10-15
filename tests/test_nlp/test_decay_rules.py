@@ -213,10 +213,14 @@ def test_promotion_to_active_refreshes_last_update():
     stale rule."""
     import inspect
 
+    from src.nlp.storyline_decisions import promote_status
+
     src = inspect.getsource(NarrativeProcessor._assign_event_to_storyline)
     assert "narrative_status = %s" in src
     assert "last_update = NOW()" in src
-    assert "new_status = 'active'" in src
+    # The promotion decision moved to storyline_decisions (storyline-formation-causal-review D2).
+    assert "new_status = sd.promote_status(" in src
+    assert promote_status('emerging', 3) == 'active'
 
 
 # ---------------------------------------------------------------------------
