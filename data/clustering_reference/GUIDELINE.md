@@ -34,6 +34,16 @@ whole region or a whole sector.
 5. **Do not guess the algorithm.** The file shows no cluster ids and no algorithm names on purpose. Answer only from the
    two titles and summaries.
 6. **Some rows appear twice**, with left and right swapped. Answer them independently; do not scroll back to look.
+7. **Bridging storylines: judge by the main subject.** In the graph every storyline gets exactly one colour, even when it
+   touches two themes (Houthi attacks on Red Sea shipping touch both the Yemen–Iran conflict and global trade). For each
+   storyline, ask what its summary is mainly about: military escalation, or freight rates and insurance? A passing
+   mention does not count. Answer `same` if the two main subjects belong to one theme, `different` otherwise.
+8. **Do not enforce transitivity.** If A goes with B and B with C, A and C may still be `different`: themes have fuzzy
+   borders, and a chain of pairs can drift from one theme to another. Judge every row on its own, without checking it
+   against earlier rows. Inconsistent-looking chains are information about where the borders are, not mistakes.
+9. **`unsure` is for genuine 50/50 cases**: both storylines are equally about two themes, so the main subject cannot be
+   decided. If more than about 1 row in 10 ends up `unsure`, stop and say so: the guideline needs another example rather
+   than more `unsure` answers.
 
 ## Worked examples (illustrative, not from the snapshot)
 
