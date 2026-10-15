@@ -21,6 +21,7 @@ design.md § D2-D10 and specs/clustering-validation-study/spec.md.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import hashlib
 import json
@@ -364,6 +365,7 @@ def cmd_run(args) -> int:
     )
 
     notes, kappa, agreement, deltas, selected, verdict = [], None, None, [], {}, "inconclusive"
+    verdict_original, selected_original = None, {}
     nan_boot = np.full(1, np.nan)
     cands = []
     if args.labels and args.key:
@@ -389,6 +391,10 @@ def cmd_run(args) -> int:
         for algo in ("kmeans", "hdbscan_umap"):
             cv.apply_eligibility([x for x in cands if x.algorithm == algo])
     else:
+        # Original rule first, on copies, as a sensitivity check (design.md D7 deviation)
+        original = cv.decide([copy.copy(x) for x in cands], relative_margin=True)
+        verdict_original = original.verdict
+        selected_original = {algo: cand.params for algo, cand in original.selected.items()}
         decision = cv.decide(cands)
         verdict, deltas = decision.verdict, decision.deltas
         selected = {algo: cand.params for algo, cand in decision.selected.items()}
@@ -413,6 +419,8 @@ def cmd_run(args) -> int:
         reference_fit_check=ref_check,
         palette_overflow={c.key: palette_overflow(c.full, len(snap.ids)) for c in configs},
         notes=notes,
+        verdict_original_rule=verdict_original,
+        selected_original_rule=selected_original,
     )
     (out / "report.json").write_text(report.model_dump_json(indent=2))
 

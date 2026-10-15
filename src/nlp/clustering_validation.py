@@ -38,6 +38,9 @@ NOISE = -1
 
 # ---------------------------------------------------------------------------
 # D7 constants — frozen 2026-10-14 (tasks.md 0.3). Written verbatim into the report.
+# Amended 2026-10-15 before any label existed (design.md D7 "Protocol deviation"):
+# eligibility uses ARI_FLOOR only; STABILITY_MARGIN survives for the original
+# rule, which the report still computes as a sensitivity check.
 # ---------------------------------------------------------------------------
 
 STABILITY_MARGIN = 0.05
@@ -141,6 +144,8 @@ class StudyReport(BaseModel):
     reference_fit_check: dict[str, float]
     palette_overflow: dict[str, float]
     notes: list[str] = []                 # e.g. labels missing, reliability gate failed
+    verdict_original_rule: Optional[Literal["kmeans", "hdbscan_umap", "inconclusive"]] = None
+    selected_original_rule: dict[str, dict[str, int]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -619,9 +624,14 @@ def _delta(a: Candidate, b: Candidate, purpose) -> PairedDelta:
     return PairedDelta(a=a.key, b=b.key, delta_macro_f1=float(point), ci95=interval, purpose=purpose)
 
 
-def apply_eligibility(cands: list[Candidate]) -> None:
-    """Noise gate first (HDBSCAN), then stability bars relative to the best
-    configuration among those that passed it, with ARI_FLOOR as a minimum."""
+def apply_eligibility(cands: list[Candidate], relative_margin: bool = False) -> None:
+    """Noise gate first (HDBSCAN), then stability bars on seed and data ARI.
+
+    Default (amended rule): both bars are ARI_FLOOR. With relative_margin=True
+    (original rule, sensitivity only) each bar is max(ARI_FLOOR, best among the
+    noise-passing configurations - STABILITY_MARGIN). The original rule can
+    leave no configuration eligible when the best seed and the best data ARI
+    belong to different configurations, which is why it was amended."""
     passing = []
     for c in cands:
         c.reasons = []
@@ -635,7 +645,9 @@ def apply_eligibility(cands: list[Candidate]) -> None:
 
     def bar(attr: str) -> float:
         vals = [getattr(c, attr) for c in passing if getattr(c, attr) is not None]
-        return max(ARI_FLOOR, max(vals) - STABILITY_MARGIN) if vals else ARI_FLOOR
+        if not relative_margin or not vals:
+            return ARI_FLOOR
+        return max(ARI_FLOOR, max(vals) - STABILITY_MARGIN)
 
     data_bar, seed_bar = bar("data_ari"), bar("seed_ari")
     for c in passing:
@@ -671,12 +683,13 @@ def _switch_justified(h: Candidate, k: Candidate, deltas: list[PairedDelta]) -> 
     return d.ci95[0] > 0.0 and d.delta_macro_f1 >= MIN_DELTA_F1
 
 
-def decide(candidates: list[Candidate]) -> Decision:
-    """Apply D7 mechanically: eligibility, ties, selection and the verdict table."""
+def decide(candidates: list[Candidate], relative_margin: bool = False) -> Decision:
+    """Apply D7 mechanically: eligibility, ties, selection and the verdict table.
+    Mutates the candidates' eligibility; pass copies to compare rules."""
     deltas: list[PairedDelta] = []
     by_algo = {a: [c for c in candidates if c.algorithm == a] for a in ("kmeans", "hdbscan_umap")}
     for cands in by_algo.values():
-        apply_eligibility(cands)
+        apply_eligibility(cands, relative_margin=relative_margin)
 
     selected, tie_sets = {}, {}
     for algo, cands in by_algo.items():

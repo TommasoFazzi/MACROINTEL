@@ -97,15 +97,7 @@ def fig_sweep(path: Path, configs, results) -> None:
             p10s = [getattr(r, attr).p10_ari for r in rs]
             ax.plot(xs, means, marker="o", label=f"{label} (mean)")
             ax.plot(xs, p10s, linestyle=":", marker=".", label=f"{label} (p10)")
-        ax.axhline(cv.ARI_FLOOR, color="red", linewidth=0.8, label="ARI_FLOOR")
-        # Same bar as the D7 rule: best data ARI among configs that pass the noise gate
-        passing = [r for r in rs if algo == "kmeans" or (
-            (r.noise_ratio or 1) <= cv.MAX_NOISE_RATIO
-            and (r.data_stability.noise_ratio_p90 or 1) <= cv.MAX_NOISE_RATIO)]
-        if passing:
-            best_data = max((r.data_stability.mean_ari or 0) for r in passing)
-            ax.axhline(max(cv.ARI_FLOOR, best_data - cv.STABILITY_MARGIN), color="orange",
-                       linewidth=0.8, linestyle="--", label="data bar (D7)")
+        ax.axhline(cv.ARI_FLOOR, color="red", linewidth=0.8, label="ARI_FLOOR (D7 bar, seed and data)")
         for x, r in zip(xs, rs):
             if not r.eligible:
                 ax.annotate("✗", (x, r.data_stability.mean_ari or 0), color="red", ha="center")

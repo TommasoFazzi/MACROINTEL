@@ -413,3 +413,25 @@ def test_load_labelled_pairs_drops_unsure_and_collects_repeats():
     assert first == ["same"] and second == ["different"]
     with pytest.raises(ValueError):
         cv.load_labelled_pairs(key, {**labels, 2: "maybe"})
+
+
+def test_original_relative_rule_can_leave_nothing_eligible_amended_rule_does_not():
+    # Real-snapshot shape (2026-10-15): best seed ARI and best data ARI belong to
+    # different HDBSCAN configurations, and no configuration is within the margin
+    # of both, so the original rule empties the set.
+    a = _hd(0.70, mcs=10, data=0.739, seed=0.928, noise=0.10)
+    b = _hd(0.70, mcs=15, data=0.791, seed=0.860, noise=0.07)
+    cv.apply_eligibility([a, b], relative_margin=True)
+    assert not a.eligible and not b.eligible
+    cv.apply_eligibility([a, b])
+    assert a.eligible and b.eligible
+
+
+def test_decide_original_rule_on_copies_does_not_touch_amended_result():
+    import copy
+    cands = [_km(0.60), _hd(0.72, mcs=10, data=0.739, seed=0.928), _hd(0.70, mcs=15, data=0.791, seed=0.86)]
+    original = cv.decide([copy.copy(c) for c in cands], relative_margin=True)
+    amended = cv.decide(cands)
+    assert "hdbscan_umap" not in original.selected
+    assert amended.selected["hdbscan_umap"].params == {"min_cluster_size": 10}
+    assert all(c.eligible for c in cands)
