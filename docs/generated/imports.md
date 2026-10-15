@@ -204,6 +204,7 @@ flowchart TD
     narrative_processor["narrative_processor.py"]
     processing["processing.py"]
     relevance_filter["relevance_filter.py"]
+    storyline_decisions["storyline_decisions.py"]
     EXT_numpy(("numpy"))
     EXT_psycopg2(("psycopg2"))
     EXT_pydantic(("pydantic"))
@@ -228,10 +229,11 @@ flowchart TD
     narrative_processor --> EXT_numpy
     narrative_processor --> EXT_psycopg2
     narrative_processor --> EXT_sentence_transformers
-    narrative_processor --> EXT_sklearn
     processing --> EXT_numpy
     processing --> EXT_sentence_transformers
     processing --> EXT_spacy
+    storyline_decisions --> EXT_numpy
+    storyline_decisions --> EXT_sklearn
 ```
 
 ## src/macro — file-level graph
