@@ -140,6 +140,7 @@ class StudyReport(BaseModel):
     verdict: Literal["kmeans", "hdbscan_umap", "inconclusive"]
     reference_fit_check: dict[str, float]
     palette_overflow: dict[str, float]
+    notes: list[str] = []                 # e.g. labels missing, reliability gate failed
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +406,167 @@ def label_metrics(pred: np.ndarray, pairs: LabelledPairs, boot: dict[str, np.nda
 
 
 # ---------------------------------------------------------------------------
+# Pair sampling (design.md D6)
+# ---------------------------------------------------------------------------
+
+STRATUM_SIZES = {"S-C": 150, "S-N": 10, "S-A": 50, "S-B": 50}
+N_REPEATS = 30
+MIN_REPEAT_GAP = 60
+
+
+def _canon(x, y) -> tuple:
+    return (x, y) if str(x) < str(y) else (y, x)
+
+
+def _within_group_pairs(partition: dict, keep) -> list[tuple]:
+    """All id pairs sharing a label in `partition` (noise excluded) for which keep(a, b) holds."""
+    groups: dict = {}
+    for sid, lab in partition.items():
+        if lab != NOISE:
+            groups.setdefault(lab, []).append(sid)
+    return [_canon(a, b) for members in groups.values()
+            for a, b in combinations(sorted(members, key=str), 2) if keep(a, b)]
+
+
+def _draw(rng, candidates: list[tuple], n: int, taken: set) -> list[tuple]:
+    pool = sorted(set(candidates) - taken, key=lambda p: (str(p[0]), str(p[1])))
+    if len(pool) < n:
+        logger.warning("pair sampler: only %d candidates for %d requested", len(pool), n)
+    picked = [pool[i] for i in rng.choice(len(pool), size=min(n, len(pool)), replace=False)] if pool else []
+    taken.update(picked)
+    return picked
+
+
+def sample_pairs(
+    kmeans: dict,
+    hdbscan: dict,
+    entities: dict,
+    summary_vectors: dict,
+    seed: int,
+    sizes: dict = STRATUM_SIZES,
+) -> list[dict]:
+    """Draw the stratified reference pairs, in order S-C, S-N, S-A, S-B, each
+    excluding pairs already drawn.
+
+    kmeans / hdbscan: {id: label} on the full snapshot (hdbscan noise = -1).
+    entities: {id: list of key_entities}. summary_vectors: {id: ndarray}.
+    Returns [{"a", "b", "stratum", "direction"}]; direction is set for S-C only.
+    """
+    rng = np.random.default_rng(seed)
+    taken: set = set()
+    out: list[dict] = []
+
+    def hd(sid):
+        return hdbscan.get(sid, NOISE)
+
+    # S-C: disagreement with both storylines non-noise, balanced by direction
+    km_same = _within_group_pairs(
+        kmeans, lambda a, b: hd(a) != NOISE and hd(b) != NOISE and hd(a) != hd(b))
+    hd_same = _within_group_pairs(
+        {s: lab for s, lab in hdbscan.items() if s in kmeans},
+        lambda a, b: kmeans[a] != kmeans[b])
+    half = sizes["S-C"] // 2
+    for direction, cands, n in (("kmeans_same", km_same, half),
+                                ("hdbscan_same", hd_same, sizes["S-C"] - half)):
+        out += [{"a": a, "b": b, "stratum": "S-C", "direction": direction}
+                for a, b in _draw(rng, cands, n, taken)]
+
+    # S-N: same k-means cluster, exactly one storyline is HDBSCAN noise
+    noise_pairs = _within_group_pairs(kmeans, lambda a, b: (hd(a) == NOISE) != (hd(b) == NOISE))
+    out += [{"a": a, "b": b, "stratum": "S-N", "direction": None}
+            for a, b in _draw(rng, noise_pairs, sizes["S-N"], taken)]
+
+    # S-A: at least 2 shared key_entities (case-insensitive), independent of embeddings
+    by_entity: dict = {}
+    for sid, ents in entities.items():
+        for e in {str(x).lower() for x in ents or []}:
+            by_entity.setdefault(e, []).append(sid)
+    shared: dict = {}
+    for members in by_entity.values():
+        for a, b in combinations(sorted(members, key=str), 2):
+            key = _canon(a, b)
+            shared[key] = shared.get(key, 0) + 1
+    out += [{"a": a, "b": b, "stratum": "S-A", "direction": None}
+            for a, b in _draw(rng, [p for p, c in shared.items() if c >= 2], sizes["S-A"], taken)]
+
+    # S-B: top-3 summary_vector neighbours of random anchors (space C, not current_embedding)
+    ids = sorted(summary_vectors, key=str)
+    M = np.stack([summary_vectors[i] for i in ids]).astype(np.float64)
+    M /= np.maximum(np.linalg.norm(M, axis=1, keepdims=True), 1e-10)
+    picked_b = []
+    for anchor in rng.permutation(len(ids)):
+        if len(picked_b) >= sizes["S-B"]:
+            break
+        sims = M @ M[anchor]
+        sims[anchor] = -np.inf
+        top3 = np.argpartition(-sims, 3)[:3]
+        pair = _canon(ids[anchor], ids[int(rng.choice(top3))])
+        if pair not in taken:
+            taken.add(pair)
+            picked_b.append(pair)
+    out += [{"a": a, "b": b, "stratum": "S-B", "direction": None} for a, b in picked_b]
+    return out
+
+
+def labelling_order(pairs: list[dict], seed: int, n_repeats: int = N_REPEATS,
+                    min_gap: int = MIN_REPEAT_GAP) -> list[dict]:
+    """Shuffle the pairs into rows and add repeats for the reliability check.
+
+    Repeats sit in the second half of the file, each at least `min_gap` rows
+    after its first occurrence: they are drawn from the earliest rows and
+    shuffled only among the second half. Left/right order is randomised per row.
+    """
+    rng = np.random.default_rng(seed)
+    order = [dict(pairs[i]) for i in rng.permutation(len(pairs))]
+    total = len(order) + n_repeats
+    half = total // 2
+    eligible = [i for i in range(min(half, len(order))) if i + min_gap <= half]
+    rep_idx = sorted(rng.choice(eligible, size=min(n_repeats, len(eligible)), replace=False).tolist())
+    second = order[half:] + [dict(order[i], repeat_of=i) for i in rep_idx]
+    second = [second[i] for i in rng.permutation(len(second))]
+    rows = order[:half] + second
+    # Rows before `half` keep their position, so a repeat's `repeat_of` index is
+    # already its first occurrence's row_id.
+    for row_id, row in enumerate(rows):
+        row["row_id"] = row_id
+        row.setdefault("repeat_of", None)
+        if row["repeat_of"] is None:
+            row["swap"] = bool(rng.random() < 0.5)
+        else:
+            # a repeat shows the opposite left/right order of its first occurrence
+            row["swap"] = not rows[row["repeat_of"]]["swap"]
+    return rows
+
+
+def load_labelled_pairs(key_rows: list[dict], labels: dict) -> tuple[LabelledPairs, list[str], list[str]]:
+    """Join the sampler key with the user's labels.
+
+    key_rows: rows from the key file (row_id, a, b, stratum, repeat_of).
+    labels: {row_id: "same" | "different" | "unsure"}.
+    Returns (scored pairs without `unsure` or repeats, first labels, repeat labels)
+    for the reliability gate.
+    """
+    allowed = {"same", "different", "unsure"}
+    bad = {r: v for r, v in labels.items() if v not in allowed}
+    if bad:
+        raise ValueError(f"unexpected labels: {bad}")
+    a, b, strata, gold, first, second = [], [], [], [], [], []
+    for row in key_rows:
+        lab = labels.get(row["row_id"])
+        if lab is None:
+            raise ValueError(f"row {row['row_id']} is not labelled")
+        if row["repeat_of"] is not None:
+            first.append(labels[row["repeat_of"]])
+            second.append(lab)
+        elif lab != "unsure":
+            a.append(row["a"])
+            b.append(row["b"])
+            strata.append(row["stratum"])
+            gold.append(lab == "same")
+    return LabelledPairs(a=a, b=b, stratum=strata, gold=gold), first, second
+
+
+# ---------------------------------------------------------------------------
 # Rater reliability (design.md D6)
 # ---------------------------------------------------------------------------
 
@@ -457,7 +619,7 @@ def _delta(a: Candidate, b: Candidate, purpose) -> PairedDelta:
     return PairedDelta(a=a.key, b=b.key, delta_macro_f1=float(point), ci95=interval, purpose=purpose)
 
 
-def _apply_eligibility(cands: list[Candidate]) -> None:
+def apply_eligibility(cands: list[Candidate]) -> None:
     """Noise gate first (HDBSCAN), then stability bars relative to the best
     configuration among those that passed it, with ARI_FLOOR as a minimum."""
     passing = []
@@ -514,7 +676,7 @@ def decide(candidates: list[Candidate]) -> Decision:
     deltas: list[PairedDelta] = []
     by_algo = {a: [c for c in candidates if c.algorithm == a] for a in ("kmeans", "hdbscan_umap")}
     for cands in by_algo.values():
-        _apply_eligibility(cands)
+        apply_eligibility(cands)
 
     selected, tie_sets = {}, {}
     for algo, cands in by_algo.items():
