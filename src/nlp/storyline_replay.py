@@ -455,16 +455,18 @@ def load_formation_snapshot(path: Path) -> FormationSnapshot:
     tz = ZoneInfo(manifest["db_timezone"])
 
     z = np.load(path / "articles.npz")
+    # NpzFile decompresses an array on every key access: read each one once
+    npz_ids, embedding, has_embedding = z["ids"], z["embedding"], z["has_embedding"]
     rows = [json.loads(line) for line in (path / "articles.jsonl").read_text().splitlines()]
     articles = [
         ReplayArticle(
             id=r["id"], title=r["title"] or "", published_date=_aware(r["published_date"], tz),
             created_at=_aware(r["created_at"], tz),
-            embedding=z["embedding"][i].astype(np.float64) if z["has_embedding"][i] else None,
+            embedding=embedding[i].astype(np.float64) if has_embedding[i] else None,
             entities=r["entities"] or {}, category=r["category"])
         for i, r in enumerate(rows)
     ]
-    if [a.id for a in articles] != z["ids"].tolist():
+    if [a.id for a in articles] != npz_ids.tolist():
         raise ValueError("articles.npz and articles.jsonl are not aligned")
 
     prod_links: Dict[int, Set[int]] = {}
