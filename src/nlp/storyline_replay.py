@@ -146,6 +146,7 @@ class ReplayResult:
     storylines: Dict[int, ReplayStoryline]
     links: Dict[int, Set[int]]                   # article_id -> replay storyline ids
     members: Dict[int, Set[int]]                 # replay storyline id -> article ids
+    link_time: Dict[tuple, datetime]             # (article_id, storyline_id) -> run that linked it
     orphans: List[OrphanEvent]
     orphan_log: Dict[int, OrphanEvent]           # every orphan ever pooled, by id
     run_times: List[datetime]
@@ -196,6 +197,7 @@ class StorylineReplay:
         self.storylines: Dict[int, ReplayStoryline] = {}
         self.storyline_articles: Dict[int, Set[int]] = {}
         self.links: Dict[int, Set[int]] = {}
+        self.link_time: Dict[tuple, datetime] = {}
         self.orphans: List[OrphanEvent] = []
         self.orphan_log: Dict[int, OrphanEvent] = {}
         self.records: List[DecisionRecord] = []
@@ -226,16 +228,17 @@ class StorylineReplay:
                 'narrative_status': s.status, 'article_count': s.article_count,
                 'momentum_score': s.momentum}
 
-    def _link(self, article_ids: Sequence[int], storyline_id: int) -> None:
+    def _link(self, article_ids: Sequence[int], storyline_id: int, now: datetime) -> None:
         """INSERT ... ON CONFLICT (article_id, storyline_id) DO NOTHING."""
         members = self.storyline_articles.setdefault(storyline_id, set())
         for aid in article_ids:
             members.add(aid)
             self.links.setdefault(aid, set()).add(storyline_id)
+            self.link_time.setdefault((aid, storyline_id), now)
 
     # -- prod: NarrativeProcessor._assign_event_to_storyline
     def _assign(self, event: dict, storyline_id: int, now: datetime) -> None:
-        self._link(event['article_ids'], storyline_id)
+        self._link(event['article_ids'], storyline_id, now)
         s = self.storylines[storyline_id]
         current_emb = s.current_embedding if s.current_embedding is not None else event['embedding']
         s.current_embedding = sd.drift_embedding(
@@ -259,7 +262,7 @@ class StorylineReplay:
             initial_entities=list(seed['top_entities']), category=seed['category'],
             article_count=len(seed['article_ids']), momentum=INITIAL_MOMENTUM, status='emerging',
             created_at=now, last_update=now)
-        self._link(seed['article_ids'], sid)
+        self._link(seed['article_ids'], sid, now)
         return sid
 
     # -- prod: NarrativeProcessor._store_orphan_events
@@ -461,7 +464,7 @@ class StorylineReplay:
                                                    outcome='never_considered'))
         return ReplayResult(
             records=self.records, storylines=self.storylines, links=self.links,
-            members=self.storyline_articles,
+            members=self.storyline_articles, link_time=self.link_time,
             orphans=self.orphans, orphan_log=self.orphan_log, run_times=list(run_times),
             scored_since=(run_times[0] + self.burn_in) if run_times else None)
 

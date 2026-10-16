@@ -38,6 +38,7 @@ data/*
 !data/.gitkeep
 # Hand-labelled clustering reference set (clustering-offline-validation-study)
 !data/clustering_reference/
+!data/formation_reference/
 reports/*
 !reports/.gitkeep
 

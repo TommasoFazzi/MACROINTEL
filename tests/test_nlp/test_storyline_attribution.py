@@ -26,7 +26,7 @@ def _rec(outcome="orphan", orphan_id=None, **kw):
 
 
 def _result(records, orphans=()):
-    return rp.ReplayResult(records=list(records), storylines={}, links={}, members={},
+    return rp.ReplayResult(records=list(records), storylines={}, links={}, members={}, link_time={},
                            orphans=[], orphan_log={o.id: o for o in orphans},
                            run_times=[T0, T0 + timedelta(days=20)], scored_since=T0)
 
