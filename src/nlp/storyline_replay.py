@@ -59,6 +59,7 @@ RULE_4_DAYS = 5
 ORPHAN_TTL_DAYS = 14
 INITIAL_MOMENTUM = 0.5               # _create_storyline_from_events
 LOADER_DAYS = 1                      # daily_pipeline: process_narratives.py --days 1
+H8_ARCHIVAL_RULES = ("rule_4", "rule_5", "off_topic")   # archivals hypothesis H8 is about
 
 Outcome = Literal["joined", "new_storyline", "orphan", "orphan_recovered",
                   "orphan_expired", "never_considered"]
@@ -117,6 +118,8 @@ class OrphanEvent:
     category: Optional[str]
     created_at: datetime
     retry_count: int = 0
+    ended_at: Optional[datetime] = None
+    end: Optional[Literal["recovered", "expired"]] = None
 
 
 class DecisionRecord(BaseModel):
@@ -127,6 +130,12 @@ class DecisionRecord(BaseModel):
     best_active: Optional[dict] = None          # best emerging/active candidate, threshold ignored
     best_active_no_penalty: Optional[dict] = None
     best_any_status: Optional[dict] = None      # same scoring, stabilized/archived included
+    best_active_creation_boost: Optional[dict] = None  # boost from each storyline's initial entities (H4)
+    # best storyline archived by an H8 rule / best stabilized one, ranked WITHOUT the time
+    # penalty (`score_no_penalty`); flags the H8×H1 and H2×H1 overlaps
+    best_archived_h8: Optional[dict] = None
+    best_stabilized: Optional[dict] = None
+    orphan_id: Optional[int] = None
     primary_cause: Optional[str] = None
     flags: List[str] = []
 
@@ -138,6 +147,7 @@ class ReplayResult:
     links: Dict[int, Set[int]]                   # article_id -> replay storyline ids
     members: Dict[int, Set[int]]                 # replay storyline id -> article ids
     orphans: List[OrphanEvent]
+    orphan_log: Dict[int, OrphanEvent]           # every orphan ever pooled, by id
     run_times: List[datetime]
     scored_since: datetime
 
@@ -187,6 +197,7 @@ class StorylineReplay:
         self.storyline_articles: Dict[int, Set[int]] = {}
         self.links: Dict[int, Set[int]] = {}
         self.orphans: List[OrphanEvent] = []
+        self.orphan_log: Dict[int, OrphanEvent] = {}
         self.records: List[DecisionRecord] = []
         self.loaded: Set[int] = set()
         self._next_storyline = 1
@@ -252,43 +263,84 @@ class StorylineReplay:
         return sid
 
     # -- prod: NarrativeProcessor._store_orphan_events
-    def _store_orphans(self, events: Sequence[dict], now: datetime) -> None:
+    def _store_orphans(self, events: Sequence[dict], now: datetime) -> List[int]:
+        ids = []
         for event in events:
             entities = [self._clean(e) for e in event.get('entities', [])
                         if not self._garbage(self._clean(e))]
-            self.orphans.append(OrphanEvent(
+            o = OrphanEvent(
                 id=self._next_orphan, article_ids=list(event['article_ids']),
                 title=event.get('representative_title', '')[:200],
                 embedding=sd.orphan_embedding(event), entities=entities[:15],
-                category=event.get('category'), created_at=now))
+                category=event.get('category'), created_at=now)
+            self.orphans.append(o)
+            self.orphan_log[o.id] = o
+            ids.append(o.id)
             self._next_orphan += 1
+        return ids
+
+    def _best_creation_boost(self, event: dict, scores) -> Optional[dict]:
+        """Best active candidate if each storyline still had its creation entities (H4)."""
+        event_entities = set(e.lower() for e in event['entities'])
+        best, best_score = None, None
+        for c in scores:
+            initial = set(e.lower() for e in self.storylines[c.storyline_id].initial_entities)
+            boost = 0.0
+            if event_entities and initial:
+                jaccard = len(event_entities & initial) / len(event_entities | initial)
+                if jaccard >= self.params.entity_jaccard_threshold:
+                    boost = self.params.entity_boost
+            score = c.cosine_sim - c.time_penalty + boost
+            if best_score is None or score > best_score:
+                best, best_score = c, score
+        if best is None:
+            return None
+        return _candidate_dict(best) | {'boost': float(
+            best_score - best.cosine_sim + best.time_penalty), 'score': float(best_score)}
 
     # -- attribution context (D4): not used by any decision
-    def _best_other_status(self, event: dict, now: datetime) -> Optional[dict]:
+    def _best_other_status(self, event: dict, now: datetime):
+        """(best stabilized/archived by prod score, best H8-archived and best stabilized by
+        score without penalty). Attribution context only, never used by a decision."""
         others = [s for s in self.storylines.values() if s.status not in ('emerging', 'active')]
         if not others:
-            return None
+            return None, None, None
         scores = sd.score_candidates(event, [self._as_candidate(s) for s in others], now, self.params)
         if not scores:
-            return None
-        best = max(scores, key=lambda c: c.score)
-        s = self.storylines[best.storyline_id]
-        return _candidate_dict(best) | {'status': s.status, 'archived_by': s.archived_by}
+            return None, None, None
 
-    def _record(self, now, event, outcome, storyline_id=None, scores=None) -> None:
-        best_active = best_np = None
+        def describe(c):
+            s = self.storylines[c.storyline_id]
+            return _candidate_dict(c) | {'status': s.status, 'archived_by': s.archived_by,
+                                         'score_no_penalty': float(c.score + c.time_penalty)}
+
+        best = describe(max(scores, key=lambda c: c.score))
+        groups = {'h8': [c for c in scores if self.storylines[c.storyline_id].archived_by in H8_ARCHIVAL_RULES],
+                  'stabilized': [c for c in scores if self.storylines[c.storyline_id].status == 'stabilized']}
+        picked = {k: describe(max(v, key=lambda c: c.score + c.time_penalty)) if v else None
+                  for k, v in groups.items()}
+        return best, picked['h8'], picked['stabilized']
+
+    def _record(self, now, event, outcome, storyline_id=None, scores=None, orphan_id=None) -> None:
+        best_active = best_np = best_cb = None
+        if scores and outcome != 'joined':
+            best_cb = self._best_creation_boost(event, scores)
         if scores:
             best_active = _candidate_dict(max(scores, key=lambda c: c.score))
             c = max(scores, key=lambda c: c.score + c.time_penalty)
             best_np = _candidate_dict(c) | {'time_penalty': 0.0, 'score': float(c.score + c.time_penalty)}
-        best_any = self._best_other_status(event, now) if outcome != 'joined' else None
+        best_any = best_h8 = best_stab = None
+        if outcome != 'joined':
+            best_any, best_h8, best_stab = self._best_other_status(event, now)
         if best_any is not None and best_active is not None and best_active['score'] >= best_any['score']:
             best_any = best_active | {'status': self.storylines[best_active['storyline_id']].status,
                                       'archived_by': None}
         self.records.append(DecisionRecord(
             run_ts=now, event_article_ids=list(event['article_ids']), outcome=outcome,
             storyline_id=storyline_id, best_active=best_active,
-            best_active_no_penalty=best_np, best_any_status=best_any))
+            best_active_no_penalty=best_np, best_any_status=best_any,
+            best_active_creation_boost=best_cb, best_archived_h8=best_h8,
+            best_stabilized=best_stab, orphan_id=orphan_id))
 
     # -- prod: NarrativeProcessor._retry_orphan_pool
     def _retry_orphans(self, active: List[dict], now: datetime) -> int:
@@ -297,8 +349,9 @@ class StorylineReplay:
         cutoff = now - timedelta(days=ORPHAN_TTL_DAYS)
         expired = [o for o in self.orphans if o.created_at < cutoff]
         for o in expired:
+            o.ended_at, o.end = now, 'expired'
             self.records.append(DecisionRecord(run_ts=now, event_article_ids=o.article_ids,
-                                               outcome='orphan_expired'))
+                                               outcome='orphan_expired', orphan_id=o.id))
         self.orphans = sorted((o for o in self.orphans if o.created_at >= cutoff),
                               key=lambda o: (o.created_at, o.id))
         recovered = set()
@@ -310,7 +363,8 @@ class StorylineReplay:
             if match:
                 self._assign(pseudo, match.storyline_id, now)
                 recovered.add(o.id)
-                self._record(now, pseudo, 'orphan_recovered', match.storyline_id, scores)
+                o.ended_at, o.end = now, 'recovered'
+                self._record(now, pseudo, 'orphan_recovered', match.storyline_id, scores, orphan_id=o.id)
         for o in self.orphans:
             if o.id not in recovered:
                 o.retry_count += 1
@@ -385,9 +439,9 @@ class StorylineReplay:
                 updated.add(sid)
                 for event, scores in clusters[label]:
                     self._record(now, event, 'new_storyline', sid, scores)
-        self._store_orphans([e for e, _ in noise], now)
-        for event, scores in noise:
-            self._record(now, event, 'orphan', None, scores)
+        orphan_ids = self._store_orphans([e for e, _ in noise], now)
+        for (event, scores), oid in zip(noise, orphan_ids):
+            self._record(now, event, 'orphan', None, scores, orphan_id=oid)
 
         for sid in sorted(updated):
             s = self.storylines[sid]
@@ -408,7 +462,7 @@ class StorylineReplay:
         return ReplayResult(
             records=self.records, storylines=self.storylines, links=self.links,
             members=self.storyline_articles,
-            orphans=self.orphans, run_times=list(run_times),
+            orphans=self.orphans, orphan_log=self.orphan_log, run_times=list(run_times),
             scored_since=(run_times[0] + self.burn_in) if run_times else None)
 
 
