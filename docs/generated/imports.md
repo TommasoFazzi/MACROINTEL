@@ -204,6 +204,7 @@ flowchart TD
     narrative_processor["narrative_processor.py"]
     processing["processing.py"]
     relevance_filter["relevance_filter.py"]
+    storyline_attribution["storyline_attribution.py"]
     storyline_decisions["storyline_decisions.py"]
     storyline_replay["storyline_replay.py"]
     EXT_numpy(("numpy"))
@@ -233,6 +234,7 @@ flowchart TD
     processing --> EXT_numpy
     processing --> EXT_sentence_transformers
     processing --> EXT_spacy
+    storyline_attribution --> EXT_numpy
     storyline_decisions --> EXT_numpy
     storyline_decisions --> EXT_sklearn
     storyline_replay --> EXT_numpy
