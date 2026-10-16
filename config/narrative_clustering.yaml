@@ -54,6 +54,22 @@ decay:
   edge_weight_decay_days: 30
   edge_weight_change_threshold: 0.02
 
+formation_levers:                   # storyline-formation-causal-review design.md D6. Defaults = today's
+                                    # behaviour. Read by the offline replay only; prod wires a lever in
+                                    # only once it is accepted (tasks.md 7.x).
+  link_count_fix: false             # L0: loader skips orphan-pool articles; article_count = links inserted
+  time_penalty: linear              # L1: linear | exponential | capped (slope: matching.time_decay_factor)
+  time_penalty_cap: null
+  match_stabilized: false           # L2: stabilized storylines are join candidates
+  orphan_self_clustering: false     # L3: cluster the orphan pool with itself
+  entity_boost_mode: jaccard        # L4: jaccard | overlap | idf_overlap
+  micro_cluster_mode: greedy        # L5: greedy | average_linkage
+  loader_mode: published_window     # L6: published_window | created_window
+  loader_max_age_days: 1
+  small_storyline_ttl_from: created # L8: rule_4 clock starts at creation | last join
+  small_storyline_ttl_days: 5
+  archived_grace_days: 0            # L8: archived small storylines stay matchable this long
+
 community:
   algorithm: louvain                # kmeans_embedding is the target champion (narrative-clustering-
                                      # embedding-based); stays louvain until shadow-period promotion

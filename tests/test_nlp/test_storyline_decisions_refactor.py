@@ -202,6 +202,35 @@ def _old_assignment_update(event, row, DRIFT_WEIGHT_OLD, DRIFT_WEIGHT_NEW):
     return drifted, merged_entities, new_count, momentum_bump, new_status
 
 
+def _old_storyline_seed(events):
+    """Pre-extraction body of `_create_storyline_from_events`, up to the INSERT."""
+    all_embeddings = np.array([e['embedding'] for e in events])
+    centroid = all_embeddings.mean(axis=0)
+    norm = np.linalg.norm(centroid)
+    if norm > 0:
+        centroid = centroid / norm
+    entity_counter = Counter()
+    for event in events:
+        entity_counter.update(event['entities'])
+    top_entities = [e for e, _ in entity_counter.most_common(15)]
+    categories = [e['category'] for e in events if e.get('category')]
+    category = Counter(categories).most_common(1)[0][0] if categories else None
+    largest_event = max(events, key=lambda e: len(e['article_ids']))
+    title = largest_event['representative_title'][:100]
+    all_article_ids = []
+    for event in events:
+        all_article_ids.extend(event['article_ids'])
+    return centroid, top_entities, category, title, all_article_ids
+
+
+def _old_orphan_embedding(event):
+    embedding = event['embedding']
+    norm = np.linalg.norm(embedding)
+    if norm > 0:
+        embedding = embedding / norm
+    return embedding
+
+
 def _old_is_archived_off_topic(title, summary, _SCOPE_KEYWORDS, _OFF_TOPIC_PATTERNS):
     text = f"{title or ''} {summary or ''}"
     has_scope = bool(_SCOPE_KEYWORDS.search(text))
@@ -356,6 +385,22 @@ def test_assignment_update_identical(seed, status, count):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("seed", SEEDS)
+def test_storyline_seed_and_orphan_embedding_identical(seed):
+    events = sd.create_micro_clusters(_articles(seed, n=60), MICRO, extract)
+    events[1]['embedding'] = np.zeros_like(events[1]['embedding'])  # norm 0 path
+    for size in (1, 2, 5, len(events)):
+        group = events[:size]
+        centroid, ents, cat, title, ids = _old_storyline_seed(group)
+        new = sd.storyline_seed(group)
+        assert np.array_equal(centroid, new['centroid'])
+        assert (ents, cat, title, ids) == (new['top_entities'], new['category'], new['title'],
+                                           new['article_ids'])
+    for event in events:
+        assert np.array_equal(_old_orphan_embedding(event), sd.orphan_embedding(event))
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("title,summary", [
     ("Champions League final", None),
     ("Champions League final", "Russia sanctions on club owners"),
@@ -377,5 +422,6 @@ def test_processor_uses_extracted_functions():
     import inspect
     src = inspect.getsource(NarrativeProcessor)
     for name in ("create_micro_clusters", "score_candidates", "select_match", "residual_labels",
-                 "drift_embedding", "merge_entities", "momentum_bump", "promote_status", "is_off_topic"):
+                 "drift_embedding", "merge_entities", "momentum_bump", "promote_status", "is_off_topic",
+                 "storyline_seed", "orphan_embedding"):
         assert f"sd.{name}(" in src, name

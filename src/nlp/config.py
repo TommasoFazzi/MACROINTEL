@@ -16,7 +16,7 @@ Usage:
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,6 +78,29 @@ class DecayConfig(_StrictBase):
     emerging_ttl_days: int = 30  # consumed by rule_5 in _apply_decay()
     edge_weight_decay_days: int = 30
     edge_weight_change_threshold: float = 0.02
+
+
+class FormationLevers(_StrictBase):
+    """Level-1 formation levers (`storyline-formation-causal-review` design.md D6).
+
+    Every default reproduces today's behaviour. The offline replay
+    (`src/nlp/storyline_replay.py`) reads these; prod does not yet: each lever is
+    wired into `NarrativeProcessor` only when accepted (tasks.md 7.x). L7 re-tunes
+    `matching.threshold` and L1's linear slope is `matching.time_decay_factor`, so
+    neither has a key here.
+    """
+    link_count_fix: bool = False                       # L0: loader skips orphan-pool articles; count = links inserted
+    time_penalty: Literal["linear", "exponential", "capped"] = "linear"   # L1
+    time_penalty_cap: Optional[float] = None
+    match_stabilized: bool = False                     # L2
+    orphan_self_clustering: bool = False               # L3
+    entity_boost_mode: Literal["jaccard", "overlap", "idf_overlap"] = "jaccard"  # L4
+    micro_cluster_mode: Literal["greedy", "average_linkage"] = "greedy"         # L5
+    loader_mode: Literal["published_window", "created_window"] = "published_window"  # L6
+    loader_max_age_days: int = 1
+    small_storyline_ttl_from: Literal["created", "last_join"] = "created"  # L8 (rule_4)
+    small_storyline_ttl_days: int = 5
+    archived_grace_days: int = 0                       # L8
 
 
 class QualityGateConfig(_StrictBase):
@@ -197,6 +220,7 @@ class NarrativeClusteringConfig(_StrictBase):
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
     momentum: MomentumConfig = Field(default_factory=MomentumConfig)
     decay: DecayConfig = Field(default_factory=DecayConfig)
+    formation_levers: FormationLevers = Field(default_factory=FormationLevers)
     community: CommunityConfig = Field(default_factory=CommunityConfig)
     theme_clustering: ThemeClusteringConfig = Field(default_factory=ThemeClusteringConfig)
     sparsification: SparsificationConfig = Field(default_factory=SparsificationConfig)

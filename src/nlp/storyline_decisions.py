@@ -224,6 +224,50 @@ def residual_labels(event_embeddings: np.ndarray, min_cluster_size: int, min_sam
     return hdb.fit_predict(embeddings_norm)
 
 
+def storyline_seed(events: Sequence[Dict]) -> Dict:
+    """Initial state of a storyline created from a residual cluster: normalised
+    centroid of the event embeddings, 15 most frequent entities, most common
+    category, title of the largest event, and every article id (with repeats if two
+    events share an article; `article_count` is set from this list's length)."""
+    all_embeddings = np.array([e['embedding'] for e in events])
+    centroid = all_embeddings.mean(axis=0)
+    norm = np.linalg.norm(centroid)
+    if norm > 0:
+        centroid = centroid / norm
+
+    entity_counter = Counter()
+    for event in events:
+        entity_counter.update(event['entities'])
+    top_entities = [e for e, _ in entity_counter.most_common(15)]
+
+    categories = [e['category'] for e in events if e.get('category')]
+    category = Counter(categories).most_common(1)[0][0] if categories else None
+
+    largest_event = max(events, key=lambda e: len(e['article_ids']))
+    title = largest_event['representative_title'][:100]
+
+    all_article_ids = []
+    for event in events:
+        all_article_ids.extend(event['article_ids'])
+
+    return {
+        'centroid': centroid,
+        'top_entities': top_entities,
+        'category': category,
+        'title': title,
+        'article_ids': all_article_ids,
+    }
+
+
+def orphan_embedding(event: Dict) -> np.ndarray:
+    """Unit-normalised event embedding, as stored in the orphan pool."""
+    embedding = event['embedding']
+    norm = np.linalg.norm(embedding)
+    if norm > 0:
+        embedding = embedding / norm
+    return embedding
+
+
 # ---------------------------------------------------------------------------
 # Assignment: state update of a storyline that receives an event
 # ---------------------------------------------------------------------------

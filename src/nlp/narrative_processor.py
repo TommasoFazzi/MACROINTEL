@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
-from collections import defaultdict, Counter
+from collections import defaultdict
 import numpy as np
 import yaml
 from psycopg2.extras import Json, execute_values
@@ -634,31 +634,12 @@ class NarrativeProcessor:
         if not events:
             return None
 
-        # Centroid embedding
-        all_embeddings = np.array([e['embedding'] for e in events])
-        centroid = all_embeddings.mean(axis=0)
-        norm = np.linalg.norm(centroid)
-        if norm > 0:
-            centroid = centroid / norm
-
-        # Aggregate entities by frequency
-        entity_counter = Counter()
-        for event in events:
-            entity_counter.update(event['entities'])
-        top_entities = [e for e, _ in entity_counter.most_common(15)]
-
-        # Category: most common
-        categories = [e['category'] for e in events if e.get('category')]
-        category = Counter(categories).most_common(1)[0][0] if categories else None
-
-        # Title: representative from largest event
-        largest_event = max(events, key=lambda e: len(e['article_ids']))
-        title = largest_event['representative_title'][:100]
-
-        # Total articles across all events
-        all_article_ids = []
-        for event in events:
-            all_article_ids.extend(event['article_ids'])
+        seed = sd.storyline_seed(events)
+        centroid = seed['centroid']
+        top_entities = seed['top_entities']
+        category = seed['category']
+        title = seed['title']
+        all_article_ids = seed['article_ids']
         total_articles = len(all_article_ids)
 
         try:
@@ -724,11 +705,7 @@ class NarrativeProcessor:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     for event in events:
-                        # Compute centroid for single-event (already a centroid for micro-cluster)
-                        embedding = event['embedding']
-                        norm = np.linalg.norm(embedding)
-                        if norm > 0:
-                            embedding = embedding / norm
+                        embedding = sd.orphan_embedding(event)
 
                         entities = [
                             self._clean_entity(e) for e in event.get('entities', [])

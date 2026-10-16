@@ -111,3 +111,28 @@ def test_full_project_config_loads_with_theme_clustering():
     assert isinstance(cfg.theme_clustering, ThemeClusteringConfig)
     assert cfg.theme_clustering.k_current == 12
     assert cfg.community.algorithm == "louvain"
+
+
+def test_formation_levers_default_to_current_behaviour():
+    """storyline-formation-causal-review D6: every lever default reproduces prod."""
+    from src.nlp.config import FormationLevers
+
+    yaml_levers = load_clustering_config(force_reload=True).formation_levers
+    assert yaml_levers == FormationLevers()
+    assert yaml_levers.time_penalty == "linear"
+    assert yaml_levers.loader_mode == "published_window"
+    assert yaml_levers.loader_max_age_days == 1
+    assert yaml_levers.small_storyline_ttl_days == 5
+    assert not (yaml_levers.link_count_fix or yaml_levers.match_stabilized
+                or yaml_levers.orphan_self_clustering)
+
+
+def test_formation_levers_reject_unknown_values():
+    from pydantic import ValidationError
+
+    from src.nlp.config import FormationLevers
+
+    with pytest.raises(ValidationError):
+        FormationLevers(time_penalty="quadratic")
+    with pytest.raises(ValidationError):
+        FormationLevers(typo_lever=True)
