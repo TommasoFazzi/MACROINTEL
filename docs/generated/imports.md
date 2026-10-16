@@ -205,6 +205,7 @@ flowchart TD
     processing["processing.py"]
     relevance_filter["relevance_filter.py"]
     storyline_decisions["storyline_decisions.py"]
+    storyline_replay["storyline_replay.py"]
     EXT_numpy(("numpy"))
     EXT_psycopg2(("psycopg2"))
     EXT_pydantic(("pydantic"))
@@ -234,6 +235,9 @@ flowchart TD
     processing --> EXT_spacy
     storyline_decisions --> EXT_numpy
     storyline_decisions --> EXT_sklearn
+    storyline_replay --> EXT_numpy
+    storyline_replay --> EXT_pydantic
+    storyline_replay --> EXT_sklearn
 ```
 
 ## src/macro — file-level graph
