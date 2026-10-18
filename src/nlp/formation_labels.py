@@ -49,6 +49,7 @@ NEAR_MISS = (0.65, 0.75)
 S_NEW_MIN_COSINE = 0.60
 S_PROD_MIN_COSINE = 0.80
 RECENT_TITLES = 3
+RICH_ARTICLES = 8          # rich-context relabelling (6.4c): article ids kept per storyline side
 N_BOOT = 2000
 
 
@@ -70,11 +71,12 @@ def j_pool(result: ReplayResult, variant: str, titles: Dict[int, str]) -> List[d
     idx = _link_index(result)
 
     def item(rec, stratum, sid, score):
-        recent = [titles.get(aid, "") for t, aid in idx.get(sid, []) if t < rec.run_ts][:RECENT_TITLES]
+        before = [aid for t, aid in idx.get(sid, []) if t < rec.run_ts]
+        recent = [titles.get(aid, "") for aid in before[:RECENT_TITLES]]
         return {"stratum": stratum, "variant": variant, "run_ts": rec.run_ts.isoformat(),
                 "article_id": rec.event_article_ids[0], "n_event_articles": len(rec.event_article_ids),
                 "storyline_id": sid, "storyline_title": result.storylines[sid].title,
-                "recent_titles": recent, "score": score}
+                "recent_titles": recent, "recent_ids": before[:RICH_ARTICLES], "score": score}
 
     pool = []
     for rec in result.records:
@@ -123,8 +125,10 @@ def s_new_pool(result: ReplayResult, variant: str, titles: Dict[int, str]) -> Li
         pool.append({"stratum": "S-new", "variant": variant, "left_id": sid, "right_id": b["other"],
                      "left_title": result.storylines[sid].title,
                      "left_titles": [titles.get(a, "") for _, a in idx.get(sid, [])][:5],
+                     "left_ids": [a for _, a in idx.get(sid, [])][:RICH_ARTICLES],
                      "right_title": result.storylines[b["other"]].title,
                      "right_titles": [titles.get(a, "") for _, a in idx.get(b["other"], [])][:5],
+                     "right_ids": [a for _, a in idx.get(b["other"], [])][:RICH_ARTICLES],
                      "cosine": b["cosine"]})
     return pool
 
@@ -156,8 +160,10 @@ def s_prod_pool(snap: FormationSnapshot, since: datetime) -> List[dict]:
                 pool.append({"stratum": "S-prod", "variant": "prod", "left_id": ids[i], "right_id": ids[j],
                              "left_title": a["title"], "left_summary": (a["summary"] or "")[:300],
                              "left_titles": [titles.get(x, "") for x in sorted(members[ids[i]])[-5:]],
+                             "left_ids": sorted(members[ids[i]])[::-1][:RICH_ARTICLES],
                              "right_title": b["title"], "right_summary": (b["summary"] or "")[:300],
                              "right_titles": [titles.get(x, "") for x in sorted(members[ids[j]])[-5:]],
+                             "right_ids": sorted(members[ids[j]])[::-1][:RICH_ARTICLES],
                              "cosine": float(m[i, j])})
     return pool
 
@@ -191,6 +197,39 @@ def sample_strata(pool: Sequence[dict], sizes: Dict[str, int], seed: int,
 class StratumLabels:
     """0/1 correctness labels per stratum (`unsure` and repeats removed)."""
     by_stratum: Dict[str, np.ndarray]
+
+
+def stratum_labels(labels: Dict[str, str], strata: Dict[str, str], positive: str) -> StratumLabels:
+    """0/1 arrays per stratum from row labels (`row_id -> label`) and the key's strata
+    (`row_id -> stratum`). Rows labelled `unsure` are dropped, as D5 prescribes."""
+    out: Dict[str, list] = {}
+    for row_id, label in labels.items():
+        if label == "unsure":
+            continue
+        out.setdefault(strata[row_id], []).append(1.0 if label == positive else 0.0)
+    return StratumLabels({s: np.array(v) for s, v in out.items()})
+
+
+def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple:
+    """95% Wilson score interval for k successes out of n."""
+    if n == 0:
+        return (float("nan"), float("nan"))
+    p = k / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return (float(centre - half), float(centre + half))
+
+
+def auc(scores: Sequence[float], positive: Sequence[bool]) -> float:
+    """ROC AUC as the Mann–Whitney probability that a positive outscores a negative
+    (ties count half). H6: does article-centroid cosine separate same from different?"""
+    pos = np.array([x for x, y in zip(scores, positive) if y])
+    neg = np.array([x for x, y in zip(scores, positive) if not y])
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    greater = (pos[:, None] > neg[None, :]).sum()
+    ties = (pos[:, None] == neg[None, :]).sum()
+    return float((greater + 0.5 * ties) / (len(pos) * len(neg)))
 
 
 def stratified_precision(counts: Dict[str, int], labels: StratumLabels,

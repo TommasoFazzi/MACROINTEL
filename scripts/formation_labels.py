@@ -49,15 +49,16 @@ def _write(path: Path, header: list, rows: list) -> None:
         w.writerows(rows)
 
 
-def cmd_sample(args) -> int:
+def _pools(snapshot: Path):
+    """Replay both bracket ends and build the J and S candidate pools (deterministic)."""
     from src.nlp import formation_labels as fl
     from src.nlp import storyline_attribution as at
     from src.nlp import storyline_replay as rp
     from src.nlp.config import load_clustering_config
 
-    snap = rp.load_formation_snapshot(args.snapshot)
+    snap = rp.load_formation_snapshot(snapshot)
     meta = {json.loads(line)["id"]: json.loads(line)
-            for line in (Path(args.snapshot) / "articles.jsonl").read_text().splitlines()}
+            for line in (Path(snapshot) / "articles.jsonl").read_text().splitlines()}
     titles = {aid: m["title"] or "" for aid, m in meta.items()}
 
     j_pool, s_pool, since = [], [], None
@@ -72,6 +73,13 @@ def cmd_sample(args) -> int:
         since = result.scored_since
         print(f"[{variant}] replayed", flush=True)
     s_pool += fl.s_prod_pool(snap, since)
+    return snap, meta, titles, j_pool, s_pool
+
+
+def cmd_sample(args) -> int:
+    from src.nlp import formation_labels as fl
+
+    snap, meta, titles, j_pool, s_pool = _pools(args.snapshot)
 
     j_items = fl.sample_strata(j_pool, fl.J_STRATUM_SIZES, J_SEED)
     s_items = fl.sample_strata(s_pool, fl.S_STRATUM_SIZES, S_SEED)
@@ -108,14 +116,7 @@ def cmd_sample(args) -> int:
            ["row_id", "stratum", "variant", "left_id", "right_id", "cosine", "swap", "repeat_of"], s_key)
 
     ids = sorted({r["article_id"] for r in j_rows})
-    (OUT / f"leads_query_{stamp}.sql").write_text(
-        "-- Read-only: first 400 characters of the J articles' text.\n"
-        "-- Run from the Mac (repo root): ssh deploy@IP 'cd /opt/intelligence-ita/repo && docker compose -p app "
-        "exec -T postgres psql -U intelligence_user -d intelligence_ita -q --csv' "
-        f"< data/formation_reference/leads_query_{stamp}.sql > data/formation_reference/leads_{stamp}.csv\n"
-        "BEGIN TRANSACTION READ ONLY;\n"
-        "SELECT id, LEFT(regexp_replace(COALESCE(full_text, ''), '\\s+', ' ', 'g'), 400) AS lead\n"
-        f"FROM articles WHERE id IN ({', '.join(map(str, ids))})\nORDER BY id;\nROLLBACK;\n")
+    (OUT / f"leads_query_{stamp}.sql").write_text(_leads_query(ids, f"leads_query_{stamp}"))
 
     counts = lambda rows: {s: sum(1 for r in rows if r["stratum"] == s and r["repeat_of"] is None)  # noqa: E731
                            for s in sorted({r["stratum"] for r in rows})}
@@ -132,6 +133,82 @@ def cmd_sample(args) -> int:
     }
     (OUT / f"labels_manifest_{stamp}.json").write_text(json.dumps(manifest, indent=2))
     print(json.dumps(manifest, indent=2))
+    return 0
+
+
+def _leads_query(ids, out_name: str) -> str:
+    return ("-- Read-only: first 400 characters of the articles' text.\n"
+            "-- Run from the Mac (repo root): ssh deploy@IP 'cd /opt/intelligence-ita/repo && docker compose -p app "
+            "exec -T postgres psql -U intelligence_user -d intelligence_ita -q --csv' "
+            f"< data/formation_reference/{out_name}.sql > data/formation_reference/{out_name.replace('query_', '')}.csv\n"
+            "BEGIN TRANSACTION READ ONLY;\n"
+            "SELECT id, LEFT(regexp_replace(COALESCE(full_text, ''), '\\s+', ' ', 'g'), 400) AS lead\n"
+            f"FROM articles WHERE id IN ({', '.join(map(str, sorted(ids)))})\nORDER BY id;\nROLLBACK;\n")
+
+
+def cmd_enrich(args) -> int:
+    """Rich context for the judges (tasks.md 6.4c): for every labelled row, the ids of up
+    to RICH_ARTICLES storyline articles that existed at decision time (J) or that each
+    storyline holds (S). Rebuilt from the deterministic replay and matched to the key."""
+    _, _, titles, j_pool, s_pool = _pools(args.snapshot)
+    stamp = args.stamp
+    j_index = {(x["variant"], x["run_ts"], x["article_id"], x["storyline_id"], x["stratum"]): x for x in j_pool}
+    s_index = {(x["variant"], x["left_id"], x["right_id"]): x for x in s_pool}
+
+    context, mismatched = {"J": {}, "S": {}}, 0
+    shown = {r["row_id"]: r for r in csv.DictReader(open(OUT / f"labels_J_{stamp}.csv"))}
+    for k in csv.DictReader(open(OUT / f"key_J_{stamp}.csv")):
+        x = j_index[(k["variant"], k["run_ts"], int(k["article_id"]), int(k["storyline_id"]), k["stratum"])]
+        # the replay must reproduce the recent titles the labeller saw
+        replayed = [titles.get(a, "") for a in x["recent_ids"][:3]]
+        replayed += [""] * (3 - len(replayed))
+        mismatched += replayed != [shown[k["row_id"]][f"recent_article_{i}"] for i in (1, 2, 3)]
+        context["J"][k["row_id"]] = {"article": int(k["article_id"]), "storyline": x["recent_ids"]}
+    for k in csv.DictReader(open(OUT / f"key_S_{stamp}.csv")):
+        variant = k["variant"]
+        x = s_index[(variant, int(k["left_id"]), int(k["right_id"]))]
+        left, right = (x["right_ids"], x["left_ids"]) if k["swap"] == "True" else (x["left_ids"], x["right_ids"])
+        context["S"][k["row_id"]] = {"left": left, "right": right}
+    if mismatched:
+        raise SystemExit(f"{mismatched} J rows do not reproduce the labelled recent titles: replay drifted")
+
+    have = {int(r["id"]) for r in csv.DictReader(open(OUT / f"leads_{stamp}.csv"))}
+    need = {a for c in context["J"].values() for a in c["storyline"]} | {
+        a for c in context["S"].values() for a in c["left"] + c["right"]}
+    (OUT / f"context_{stamp}.json").write_text(json.dumps(context))
+    (OUT / f"leads_query_rich_{stamp}.sql").write_text(_leads_query(need - have, f"leads_query_rich_{stamp}"))
+    print(f"context for {len(context['J'])} J and {len(context['S'])} S rows; "
+          f"{len(need - have)} article leads to fetch: leads_query_rich_{stamp}.sql")
+    return 0
+
+
+def cmd_rich_inputs(args) -> int:
+    """Judge inputs with rich context: every storyline side lists up to RICH_ARTICLES
+    articles as `title — lead`. First occurrences only, like the plain judge inputs."""
+    stamp = args.stamp
+    titles = {json.loads(line)["id"]: json.loads(line)["title"] or ""
+              for line in (Path(args.snapshot) / "articles.jsonl").read_text().splitlines()}
+    leads = {}
+    for name in (f"leads_{stamp}.csv", f"leads_rich_{stamp}.csv"):
+        leads.update({int(r["id"]): r["lead"] for r in csv.DictReader(open(OUT / name))})
+    context = json.loads((OUT / f"context_{stamp}.json").read_text())
+    side = lambda ids: "\n".join(  # noqa: E731
+        f"- {titles.get(a, '')} — {leads.get(a, '')[:args.lead_chars]}" for a in ids)
+    for set_ in ("J", "S"):
+        key = {r["row_id"]: r for r in csv.DictReader(open(OUT / f"key_{set_}_{stamp}.csv"))}
+        rows = [r for r in csv.DictReader(open(OUT / f"labels_{set_}_{stamp}.csv"))
+                if key[r["row_id"]]["repeat_of"] in ("", "None")]
+        if set_ == "J":
+            header = ["row_id", "article_title", "article_source", "article_lead", "storyline_title",
+                      "storyline_articles_at_decision_time"]
+            out = [[r["row_id"], r["article_title"], r["article_source"], r["article_lead"], r["storyline_title"],
+                    side(context["J"][r["row_id"]]["storyline"])] for r in rows]
+        else:
+            header = ["row_id", "left_title", "left_articles", "right_title", "right_articles"]
+            out = [[r["row_id"], r["left_title"], side(context["S"][r["row_id"]]["left"]),
+                    r["right_title"], side(context["S"][r["row_id"]]["right"])] for r in rows]
+        _write(OUT / "judges" / f"rich_input_{set_}_{stamp}.csv", header, out)
+        print(f"rich_input_{set_}_{stamp}.csv: {len(out)} rows")
     return 0
 
 
@@ -164,8 +241,16 @@ def main(argv=None) -> int:
     p.add_argument("snapshot", type=Path)
     p = sub.add_parser("merge-leads")
     p.add_argument("leads", type=Path)
+    p = sub.add_parser("enrich")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("--stamp", default="20261016")
+    p = sub.add_parser("rich-inputs")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("--stamp", default="20261016")
+    p.add_argument("--lead-chars", type=int, default=250)
     args = parser.parse_args(argv)
-    return {"sample": cmd_sample, "merge-leads": cmd_merge_leads}[args.cmd](args)
+    return {"sample": cmd_sample, "merge-leads": cmd_merge_leads, "enrich": cmd_enrich,
+            "rich-inputs": cmd_rich_inputs}[args.cmd](args)
 
 
 if __name__ == "__main__":
