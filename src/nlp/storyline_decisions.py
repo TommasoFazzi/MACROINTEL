@@ -131,6 +131,30 @@ class MatchParams:
     time_decay_factor: float
     entity_boost: float
     entity_jaccard_threshold: float
+    # Lever L1 (`FormationLevers.time_penalty`); the defaults are prod's linear penalty.
+    time_penalty_mode: str = "linear"
+    time_penalty_cap: Optional[float] = None
+
+
+def time_penalty(days_inactive: float, params: MatchParams) -> float:
+    """Score penalty for a storyline silent `days_inactive` days.
+
+    - linear (prod): factor · days, unbounded;
+    - capped: min(factor · days, cap);
+    - exponential: cap · (1 − exp(−factor · days / cap)), same initial slope as
+      linear, saturating smoothly at `cap`.
+    """
+    linear = params.time_decay_factor * days_inactive
+    if params.time_penalty_mode == "linear":
+        return linear
+    cap = params.time_penalty_cap
+    if cap is None or cap <= 0:
+        raise ValueError(f"time_penalty '{params.time_penalty_mode}' needs a positive time_penalty_cap")
+    if params.time_penalty_mode == "capped":
+        return min(linear, cap)
+    if params.time_penalty_mode == "exponential":
+        return float(cap * (1.0 - np.exp(-linear / cap)))
+    raise ValueError(f"unknown time_penalty mode: {params.time_penalty_mode}")
 
 
 @dataclass(frozen=True)
@@ -174,7 +198,7 @@ def score_candidates(
         if storyline['last_update']:
             delta = now - storyline['last_update']
             days_inactive = max(0, delta.total_seconds() / 86400)
-        time_penalty = params.time_decay_factor * days_inactive
+        penalty = time_penalty(days_inactive, params)
 
         s_entities = storyline['key_entities']
         entity_boost = 0.0
@@ -189,9 +213,9 @@ def score_candidates(
         scores.append(CandidateScore(
             storyline_id=storyline['storyline_id'],
             title=storyline['title'],
-            score=cosine_sim - time_penalty + entity_boost,
+            score=cosine_sim - penalty + entity_boost,
             cosine_sim=cosine_sim,
-            time_penalty=time_penalty,
+            time_penalty=penalty,
             entity_boost=entity_boost,
             days_inactive=days_inactive,
             jaccard=jaccard,

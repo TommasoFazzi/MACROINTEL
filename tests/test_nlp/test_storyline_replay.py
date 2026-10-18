@@ -164,8 +164,99 @@ def test_deterministic():
 
 @pytest.mark.unit
 def test_non_default_levers_refused_until_implemented():
-    with pytest.raises(NotImplementedError, match="match_stabilized"):
-        _replay([], levers=FormationLevers(match_stabilized=True))
+    with pytest.raises(NotImplementedError, match="orphan_self_clustering"):
+        _replay([], levers=FormationLevers(orphan_self_clustering=True))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["capped", "exponential"])
+def test_l1_bounded_penalty_lets_the_silent_storyline_take_the_article(mode):
+    """L1: with the penalty bounded at 0.10, Y (silent 16 days) takes article 30."""
+    arts, runs = _stream()
+    base = _replay(arts).run(runs)
+    lever = _replay(arts, levers=FormationLevers(time_penalty=mode, time_penalty_cap=0.10)).run(runs)
+    y = next(iter(base.links[10]))
+    assert 30 not in base.links
+    assert lever.links[30] == {next(iter(lever.links[10]))}
+    rec = next(r for r in lever.records if r.event_article_ids == [30])
+    assert rec.outcome == "joined" and rec.best_active["days_inactive"] == pytest.approx(16)
+    assert rec.best_active["time_penalty"] <= 0.10 + 1e-12
+    assert y is not None
+
+
+@pytest.mark.unit
+def test_l0_loader_skips_pooled_articles_and_count_equals_links():
+    """L0 regression (task 7.0): an orphan still inside the loader window is re-read
+    by today's loader and pooled again; with the fix it is not. The same article fed
+    twice to one storyline counts once."""
+    arts = [_art(21, _e(1) - _e(0), 1)]
+    runs = [DAY0 + timedelta(days=1), DAY0 + timedelta(days=1, hours=6)]
+    bug = _replay(arts).run(runs)
+    fixed = _replay(arts, levers=FormationLevers(link_count_fix=True)).run(runs)
+    assert sum(o.article_ids == [21] for o in bug.orphan_log.values()) == 2
+    assert sum(o.article_ids == [21] for o in fixed.orphan_log.values()) == 1
+
+    arts, runs = _stream()
+    for levers, expected in ((FormationLevers(), 7), (FormationLevers(link_count_fix=True), 4)):
+        r = _replay(arts, levers=levers)
+        r.run(runs[:2])
+        x = next(iter(r.links[20]))
+        event = {"article_ids": [1, 2, 3], "embedding": _e(0), "entities": []}
+        r._assign(event, x, runs[1])
+        assert r.storylines[x].article_count == expected
+    assert len(r.storyline_articles[x]) == 4         # links: 1, 2, 3, 20
+
+
+def _after_day1(levers):
+    arts, runs = _stream()
+    r = _replay(arts, levers=levers)
+    r.run(runs[:2])
+    return r, runs, next(iter(r.links[20])), next(iter(r.links[10]))
+
+
+@pytest.mark.unit
+def test_l2_stabilized_is_a_candidate_and_a_join_reactivates_it():
+    for on in (False, True):
+        r, runs, x, _ = _after_day1(FormationLevers(match_stabilized=on))
+        r.storylines[x].status = "stabilized"
+        ids = {c["storyline_id"] for c in r._active_storylines(runs[1])}
+        assert (x in ids) is on
+    r._assign({"article_ids": [99], "embedding": _e(0), "entities": []}, x, runs[1])
+    assert r.storylines[x].status == "active"
+
+
+@pytest.mark.unit
+def test_l8_grace_period_and_rule_4_clock():
+    assert FormationLevers().small_storyline_ttl_days == rp.RULE_4_DAYS
+    r, runs, x, y = _after_day1(FormationLevers(archived_grace_days=7))
+    r._archive(r.storylines[y], "rule_4", runs[1])
+    r._archive(r.storylines[x], "off_topic", runs[1])
+    ids = lambda now: {c["storyline_id"] for c in r._active_storylines(now)}  # noqa: E731
+    assert y in ids(runs[1] + timedelta(days=3)) and y not in ids(runs[1] + timedelta(days=8))
+    assert x not in ids(runs[1] + timedelta(days=3))                       # off-topic is never revived
+    r._assign({"article_ids": [99], "embedding": _e(4), "entities": []}, y, runs[1] + timedelta(days=3))
+    s = r.storylines[y]
+    assert (s.status, s.archived_by) == ("active", None)                  # 4 articles: promoted
+
+    for ttl_from, archived in (("created", True), ("last_join", False)):
+        r, runs, x, _ = _after_day1(FormationLevers(small_storyline_ttl_from=ttl_from))
+        s = r.storylines[x]
+        s.status, s.article_count = "emerging", 2
+        s.created_at, s.last_update = runs[1] - timedelta(days=10), runs[1]
+        r._decay(runs[1] + timedelta(hours=1))
+        assert (s.status == "archived") is archived
+
+
+@pytest.mark.unit
+def test_time_penalty_modes():
+    from src.nlp import storyline_decisions as sd
+    p = lambda mode, cap=None: sd.MatchParams(0.75, 0.05, 0.1, 0.05, mode, cap)  # noqa: E731
+    assert sd.time_penalty(16, p("linear")) == pytest.approx(0.80)
+    assert sd.time_penalty(16, p("capped", 0.1)) == pytest.approx(0.10)
+    assert sd.time_penalty(1, p("capped", 0.1)) == pytest.approx(0.05)
+    assert sd.time_penalty(1, p("exponential", 0.1)) < 0.05 < sd.time_penalty(16, p("exponential", 0.1)) < 0.10
+    with pytest.raises(ValueError):
+        sd.time_penalty(1, p("capped"))
 
 
 def _norm(sql: str) -> str:

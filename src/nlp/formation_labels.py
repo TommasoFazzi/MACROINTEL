@@ -261,3 +261,74 @@ def paired_delta(counts_lever: Dict[str, int], counts_base: Dict[str, int], labe
     lo, hi = np.percentile(deltas, [2.5, 97.5])
     return {"delta": float(point), "ci95": (float(lo), float(hi)),
             "passes_bound": bool(lo >= J_PRECISION_BOUND)}
+
+
+# ---------------------------------------------------------------------------
+# Lever evaluation (D7, tasks.md 7.2)
+# ---------------------------------------------------------------------------
+
+COVERAGE_GAIN_PP = 2.0             # D7: coverage gain of at least 2 percentage points ...
+DUPLICATE_DROP_REL = 0.10          # ... or the duplicate-story rate down by at least 10% relative
+
+
+def join_counts(result: ReplayResult, base_threshold: float, base_decay: float) -> Dict[str, int]:
+    """A configuration's scored-window joins per J stratum.
+
+    A join to a stabilized storyline (L2) stands for `J-H2`, one to an archived
+    storyline revived within L8's grace period for `J-H8`. Any other join that would
+    also clear under the baseline's linear penalty is `J-base`-like; one that clears
+    only because the lever changed the penalty is `J-H1`-like. The baseline replay is
+    all J-base.
+    """
+    counts = {"J-base": 0, "J-H1": 0, "J-H2": 0, "J-H8": 0}
+    for rec in result.records:
+        if rec.run_ts < result.scored_since or rec.outcome not in ("joined", "orphan_recovered"):
+            continue
+        if rec.target_status == "stabilized":
+            counts["J-H2"] += 1
+            continue
+        if rec.target_status == "archived":
+            counts["J-H8"] += 1
+            continue
+        c = rec.best_active
+        base_score = c["cosine"] - base_decay * c["days_inactive"] + c["boost"]
+        counts["J-base" if base_score >= base_threshold else "J-H1"] += 1
+    return counts
+
+
+def coverage(result: ReplayResult, articles) -> float:
+    """Share of scored-window articles (with an embedding) linked to a storyline."""
+    end = result.run_times[-1]
+    ids = [a.id for a in articles
+           if a.embedding is not None and result.scored_since <= a.created_at <= end]
+    return sum(1 for a in ids if a in result.links) / max(len(ids), 1)
+
+
+def close_duplicate_share(result: ReplayResult) -> float:
+    """New storylines in the scored window that have a close existing candidate
+    (the S-new pool), over all new storylines. The duplicate-story rate is
+    p(S-new) × this share; p cancels in the relative change D7 tests, as long as a
+    stratum's precision is taken as fixed (the same assumption as J)."""
+    n_new = sum(1 for s in result.storylines.values() if s.created_at >= result.scored_since)
+    return len(s_new_pool(result, "", {})) / max(n_new, 1)
+
+
+def lever_result(base: ReplayResult, lever: ReplayResult, articles, labels: Dict[str, StratumLabels],
+                 base_threshold: float, base_decay: float) -> dict:
+    """D7 verdict of one lever against the baseline replay, under each label source."""
+    cov_b, cov_l = coverage(base, articles), coverage(lever, articles)
+    dup_b, dup_l = close_duplicate_share(base), close_duplicate_share(lever)
+    counts_b = join_counts(base, base_threshold, base_decay)
+    counts_l = join_counts(lever, base_threshold, base_decay)
+    gain_pp = 100 * (cov_l - cov_b)
+    dup_rel = (dup_l - dup_b) / dup_b if dup_b else 0.0
+    benefit = gain_pp >= COVERAGE_GAIN_PP or dup_rel <= -DUPLICATE_DROP_REL
+    out = {"coverage": [round(cov_b, 4), round(cov_l, 4)], "coverage_gain_pp": round(gain_pp, 2),
+           "close_duplicate_share": [round(dup_b, 4), round(dup_l, 4)], "duplicate_change_rel": round(dup_rel, 3),
+           "benefit": benefit, "join_counts": [counts_b, counts_l], "j_precision": {}}
+    for name, sl in labels.items():
+        d = paired_delta(counts_l, counts_b, sl)
+        out["j_precision"][name] = {"delta": round(d["delta"], 4), "ci95": [round(x, 4) for x in d["ci95"]],
+                                    "passes_bound": d["passes_bound"], "accepted": benefit and d["passes_bound"]}
+    return out
+
