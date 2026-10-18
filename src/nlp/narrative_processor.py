@@ -178,6 +178,9 @@ class NarrativeProcessor:
         # The rest of the decay section is still hardcoded inline in
         # _apply_decay() — only this threshold is wired to YAML for now.
         self.EMERGING_TTL_DAYS = self.config.decay.emerging_ttl_days
+        # Lever L0 (storyline-formation-causal-review, accepted 2026-10-19). Off by default;
+        # switched on in a separate deploy at least 7 days after the level-2 promotion (D10).
+        self.LINK_COUNT_FIX = self.config.formation_levers.link_count_fix
         # MOMENTUM_DECAY_FACTOR retained as hardcoded constant: Phase 2F replaces
         # the linear weekly multiplier with EWMA + burst detection (task 2.12-2.13);
         # until then keep current production behavior.
@@ -248,7 +251,8 @@ class NarrativeProcessor:
         # 1. Load unassigned articles with embeddings
         articles = self.db.get_all_article_embeddings(
             days=days,
-            exclude_assigned=True
+            exclude_assigned=True,
+            exclude_orphan_pool=self.LINK_COUNT_FIX,
         )
         stats['articles_loaded'] = len(articles)
 
@@ -506,12 +510,14 @@ class NarrativeProcessor:
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
                 # 1. Insert article-storyline links
+                inserted = 0
                 for article_id in event['article_ids']:
                     cur.execute("""
                         INSERT INTO article_storylines (article_id, storyline_id, relevance_score, is_origin)
                         VALUES (%s, %s, %s, FALSE)
                         ON CONFLICT (article_id, storyline_id) DO NOTHING
                     """, (article_id, storyline_id, 1.0))
+                    inserted += max(cur.rowcount, 0)
 
                 # 2. Get current storyline state
                 cur.execute("""
@@ -540,7 +546,8 @@ class NarrativeProcessor:
                 merged_entities = sd.merge_entities(current_entities, new_event_entities)
 
                 # 5. Update counts and status; emerging → active at 3 articles
-                new_count = current_count + len(event['article_ids'])
+                # L0: count the links actually inserted, so article_count matches article_storylines
+                new_count = current_count + (inserted if self.LINK_COUNT_FIX else len(event['article_ids']))
                 momentum_bump = sd.momentum_bump(len(event['article_ids']))
                 new_status = sd.promote_status(current_status, new_count)
 

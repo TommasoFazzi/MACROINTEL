@@ -55,9 +55,10 @@ decay:
   edge_weight_change_threshold: 0.02
 
 formation_levers:                   # storyline-formation-causal-review design.md D6. Defaults = today's
-                                    # behaviour. Read by the offline replay only; prod wires a lever in
-                                    # only once it is accepted (tasks.md 7.x).
-  link_count_fix: false             # L0: loader skips orphan-pool articles; article_count = links inserted
+                                    # behaviour. The offline replay reads all keys; prod reads only the
+                                    # accepted ones (link_count_fix, decision-memo.md 2026-10-19).
+  link_count_fix: false             # L0, READ BY PROD: loader skips orphan-pool articles; article_count =
+                                    # links inserted. Switch on only >= 7 days after the level-2 promotion
   time_penalty: linear              # L1: linear | exponential | capped (slope: matching.time_decay_factor)
   time_penalty_cap: null
   match_stabilized: false           # L2: stabilized storylines are join candidates

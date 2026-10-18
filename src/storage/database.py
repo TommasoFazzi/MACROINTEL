@@ -895,7 +895,8 @@ class DatabaseManager:
     def get_all_article_embeddings(
         self,
         days: int = 30,
-        exclude_assigned: bool = True
+        exclude_assigned: bool = True,
+        exclude_orphan_pool: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Get all article embeddings for batch clustering (DBSCAN/HDBSCAN).
@@ -903,6 +904,9 @@ class DatabaseManager:
         Args:
             days: Time window in days (0 = all articles)
             exclude_assigned: If True, exclude articles already assigned to storylines
+            exclude_orphan_pool: If True, also exclude articles waiting in `orphan_events`
+                (lever L0, storyline-formation-causal-review: otherwise they are re-read
+                as new articles and can reach a storyline twice)
 
         Returns:
             List of {id, title, embedding, entities, category, published_date, source}
@@ -935,6 +939,14 @@ class DatabaseManager:
                             AND NOT EXISTS (
                                 SELECT 1 FROM article_storylines als
                                 WHERE als.article_id = a.id
+                            )
+                        """
+
+                    if exclude_orphan_pool:
+                        query += """
+                            AND NOT EXISTS (
+                                SELECT 1 FROM orphan_events oe
+                                WHERE a.id = ANY(oe.article_ids)
                             )
                         """
 
