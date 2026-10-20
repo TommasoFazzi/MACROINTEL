@@ -453,9 +453,11 @@ quantitative KPI, both values are annotated with sources instead of silently pic
 
 **Key design patterns:**
 - Singleton instantiation (400 MB embedding model loaded once per process, thread-safe double-checked locking)
-- Long tool outputs summarized for history by T5 (≤400 words, numbers/names preserved) — the loop never stalls
+- `rag_search` results reach Claude as an **attributed digest** (`src/llm/rag_evidence.py`): every document block starts with a code-written header `[N] TIPO — source — date — title`, T5 writes ≤4 points per document, and `[N]` is the same number shown in the sources sidebar. Only documents Claude actually reads are citable. Other long tool outputs are summarized by T5 (≤400 words)
+- Prompt sourcing rules: cite-or-omit (a claim cites the `[N]` that contains it, else the detail is dropped) and no "the DB lacks X" claim when relevant blocks were returned
 - All tools take a mandatory `rationale` first parameter (CoT forcing: +20–35% SQL accuracy on Spider/BIRD)
-- Time-weighted decay: `score × exp(-k × days_old)`, k per intent (FACTUAL=0.03, ANALYTICAL=0.015, MARKET=0.04, OVERVIEW=0.005)
+- Time-weighted decay: `score × exp(-k × days_old)` on bounded scores (sigmoid of the cross-encoder logit), k per intent (FACTUAL=0.03, COMPARATIVE=0.015, MARKET=0.04, OVERVIEW=0.005), slower for think-tank / academic / government sources
+- `oracle_query_log.metadata` records each `rag_search` (query, filters, effective k, digest mode) and the numbered source list
 - TTL caching (SQL 5 min, embeddings 1 h) + anti-hallucination guard (structured "no data found")
 - Rate limit: 3 queries/minute per IP
 

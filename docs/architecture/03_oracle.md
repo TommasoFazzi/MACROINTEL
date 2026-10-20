@@ -36,10 +36,14 @@ sequenceDiagram
             Tools->>DB: semantic search / SQL / graph / spatial query
             DB-->>Tools: results + metadata
             Tools-->>OO: ToolResult (content + sources + citations)
-            alt result > 1500 chars
+            alt rag_search
+                Note over OO: select rendered docs → register global [N]
+                OO->>T5: digest (≤4 points per [N], JSON schema)
+                Note over OO: code writes "[N] TIPO — source — date — title" headers
+            else other tool, result > 1500 chars
                 OO->>T5: summarize (≤400 words, preserve numbers/names)
             end
-            OO->>Claude: tool_result blocks (user message)
+            OO->>Claude: tool_result blocks + REGISTRO FONTI (user message)
         else final text
             Note over OO: Exit loop
         end
@@ -49,7 +53,7 @@ sequenceDiagram
     Note over OO: On max iterations: forced synthesis\nvia ClaudeClient.generate() (no tools)
 
     OO->>MEM: save exchange
-    OO->>DB: log_oracle_query() → oracle_query_log (intent="agentic")
+    OO->>DB: log_oracle_query() → oracle_query_log (intent="agentic", metadata.rag_calls + sources)
     OO-->>API: {answer, sources, execution_steps}
     API-->>PROXY: OracleResponse JSON
     PROXY-->>U: rendered response + citations
@@ -152,20 +156,25 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    RAW["Raw relevance score\n(cosine similarity)"] --> DECAY
+    RAW["Cross-encoder logit\n(or cosine similarity if no rerank)"] --> SIG["rerank_prob = sigmoid(logit)\n(decay needs a score in [0, 1])"]
+    SIG --> DECAY
 
     DECAY["score_final = score × exp(-k × days_ago)
     
     k values by intent:
     FACTUAL    k=0.03
-    ANALYTICAL k=0.015
+    ANALYTICAL k=0.015 (rag fallback of the SQL path)
     NARRATIVE  k=0.02
     MARKET     k=0.04
-    COMPARATIVE k=0.025
-    OVERVIEW   k=0.005"]
+    COMPARATIVE k=0.015
+    OVERVIEW   k=0.005
 
-    DECAY --> FLOOR["min floor 0.15 — informational only\n(no hard filter: preserves high\ncross-encoder / low similarity chunks)"]
-    FLOOR --> RANK[Final ranked results]
+    source-type override: k = min(intent k, override)
+    Think Tank / Accademia 0.002 · Ufficiale/Gov 0.003
+    Think Tank/Media 0.005"]
+
+    DECAY --> AUTH["authority rerank (alpha 0.15)"]
+    AUTH --> RANK[Final ranked results]
 ```
 
 ---

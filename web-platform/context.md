@@ -22,6 +22,7 @@ Advanced visualization layer consuming data from `src/api/` REST endpoints. Prov
 - `app/romania/page.tsx` - **Romania Intelligence vertical** (`/romania`): public page with macro dashboard (5 indicator cards with sparklines) + briefing list (Daily/Weekly tab). Server component layout + client SWR components. No auth.
 - `app/romania/[id]/page.tsx` - **Single Romania briefing** (`/romania/{id}`): server-side fetch + full content render as pre-formatted text. Shows macro header summary bar when available. No auth.
 - `middleware.ts` - **Sets a per-request nonce CSP** on every non-static route (matcher excludes `_next/static`, `_next/image`, and static asset extensions). No authentication: the platform is fully public and no route is gated. Emits `Content-Security-Policy` + `x-nonce`; `script-src` needs `'unsafe-eval'` for mapbox-gl's WebGL shader compilation and sigma/graphology-layout-forceatlas2. `frame-ancestors` and `form-action` are set explicitly because they do not inherit from `default-src`. **Note:** the nonce makes every matched route dynamic (`cache-control: private, no-cache, no-store`), so the landing page's full route cache is off and its RSC fetches run on every request — the fetch-level `revalidate` is the only cache in play.
+- `lib/oracleCitations.ts` - `preprocessCitations(text, offset)` for Oracle answers (pure; no frontend test runner yet — verify with a `node` one-off)
 - `lib/communityColors.ts` - **Shared 15-color palette**: used by both `TacticalMap` (COLOR: COMM toggle) and `StorylineGraph` for visual consistency across pages.
   - State: `compareId` (nullable) to track which report is being compared
   - Fetches: `report` detail, `compareReport` detail (when `compareId` is set), `comparison` delta (LLM-synthesized)
@@ -104,7 +105,7 @@ Oracle 2.0 UI fully decomposed into separate components. `app/oracle/page.tsx` i
 
 - `OracleHeader.tsx` — sticky header: ◆ Oracle logo, `?` Guide, ⚙ Settings, `+` Nuova sessione; "key mancante" badge when BYOK not set
 - `OracleMessage.tsx` — `UserBubble` + `AssistantBubble`
-  - **Inline citation badges**: preprocesses `[1]` → `` `__CITE__1__` `` (unique marker), intercepts in `code` react-markdown component → renders clickable orange badge; clicking scrolls sidebar to source card
+  - **Inline citation badges**: `preprocessCitations()` from `lib/oracleCitations.ts` turns `[1]` → `` `__CITE__1__` `` (unique marker) and splits runs of adjacent citations of any length (`[2][3][22]`, lookahead regex — the old consuming regex split only the first pair and leaked `__CITE__` text); the `code` react-markdown component renders a clickable orange badge; clicking scrolls the sidebar to the source card. `[N]` is the 1-based position in the answer's `sources` (backend insertion order), shifted by `sourceOffset` across turns
   - **Follow-up badge**: shows "↩ Continuazione" when `metadata.is_follow_up === true`
   - **Collapsible query plan**: "Analisi elaborazione" section below answer — intent (Italian label), complexity, execution time, tools, sub-queries (COMPARATIVE), execution step descriptions
 - `OracleThinkingState.tsx` — replaces 3-dot spinner; shows sequential processing steps with ASCII braille spinner: "Analisi semantica → Scansione database vettoriale (N fonti) → Estrazione documenti → Sintesi strategica"

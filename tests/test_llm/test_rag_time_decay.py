@@ -11,6 +11,7 @@ from src.llm.tools.rag_tool import (
     MIN_DECAYED_SCORE,
     OVER_FETCH_MULTIPLIER,
     SEARCH_TYPE_SCORE_FIELD,
+    SOURCE_TYPE_DECAY_K,
     apply_time_decay,
     RAGTool,
 )
@@ -314,3 +315,109 @@ class TestIntentDecayK:
     def test_default_decay_k(self):
         """DEFAULT_DECAY_K should be 0.025."""
         assert DEFAULT_DECAY_K == 0.025
+
+
+# ── Test source-type override ─────────────────────────────────────────────────
+
+def _seeded_source_type_labels() -> set:
+    """source_type labels written by scripts/seed_sources.py (the DB's vocabulary)."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "seed_sources.py"
+    spec = importlib.util.spec_from_file_location("seed_sources_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {row[2] for row in module.SOURCES}
+
+
+class TestSourceTypeOverride:
+    """The override must match stored labels and only ever slow decay down."""
+
+    def test_keys_are_seeded_labels(self):
+        """Every override key must be a real intelligence_sources.source_type label.
+
+        The original keys (think_tank, government, …) matched no stored label, so the
+        override never applied (diagnosed 2026-10-18).
+        """
+        assert set(SOURCE_TYPE_DECAY_K) <= _seeded_source_type_labels()
+
+    def test_think_tank_uses_slow_decay(self):
+        ref = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        chunk = {**_make_chunk(0.80, 180, ref.date()), "source_type": "Think Tank"}
+        decayed = apply_time_decay(
+            [chunk], decay_k=0.015, date_field="published_date",
+            score_field="similarity", reference_date=ref,
+        )
+        assert abs(decayed[0]["time_decay_factor"] - math.exp(-0.002 * 180)) < 1e-4
+
+    def test_unlisted_label_uses_intent_k(self):
+        ref = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        chunk = {**_make_chunk(0.80, 30, ref.date()), "source_type": "Regionale"}
+        decayed = apply_time_decay(
+            [chunk], decay_k=0.015, date_field="published_date",
+            score_field="similarity", reference_date=ref,
+        )
+        assert abs(decayed[0]["time_decay_factor"] - math.exp(-0.015 * 30)) < 1e-4
+
+    def test_override_never_faster_than_intent(self):
+        """REFERENCE intent (k=0.001) is already slower than the think-tank override."""
+        ref = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        chunk = {**_make_chunk(0.80, 100, ref.date()), "source_type": "Think Tank"}
+        decayed = apply_time_decay(
+            [chunk], decay_k=0.001, date_field="published_date",
+            score_field="similarity", reference_date=ref,
+        )
+        assert abs(decayed[0]["time_decay_factor"] - math.exp(-0.001 * 100)) < 1e-4
+
+
+# ── Test decay on cross-encoder output ───────────────────────────────────────
+
+def _run_reranked(chunks: list, logits: list, time_decay_k: float, top_k: int) -> list:
+    """Run RAGTool._execute with a mocked cross-encoder returning `logits`."""
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_reranker = MagicMock()
+    mock_reranker.predict.return_value = logits
+
+    mock_db = MagicMock()
+    mock_db.semantic_search.return_value = chunks
+    mock_db.semantic_search_reports.return_value = []
+
+    with patch("src.llm.tools.rag_tool._get_embedding_model", return_value=mock_model), \
+         patch("src.llm.tools.rag_tool._get_reranker", return_value=mock_reranker):
+        tool = RAGTool(db=mock_db, llm=MagicMock())
+        result = tool._execute(query="q", top_k=top_k, mode="both",
+                               filters={"search_type": "vector", "time_decay_k": time_decay_k})
+    return result.data["chunks"]
+
+
+def _ranked_chunk(article_id: int, days_ago: int) -> dict:
+    return {**_make_chunk(0.5, days_ago), "article_id": article_id}
+
+
+class TestRerankDecay:
+    """Decay must never raise a score: logits are squashed to [0, 1] first."""
+
+    def test_replay_case_old_irrelevant_not_promoted(self):
+        """2026-10-18 replay: −7.81 at 324 d ranked above −1.9 at 34 d with k=0.015."""
+        chunks = [_ranked_chunk(1, 324), _ranked_chunk(2, 34), _ranked_chunk(3, 400)]
+        ranked = _run_reranked(chunks, [-7.81, -1.9, -9.0], time_decay_k=0.015, top_k=2)
+        assert [c["article_id"] for c in ranked] == [2, 1]
+
+    def test_equal_logit_newer_wins(self):
+        chunks = [_ranked_chunk(1, 200), _ranked_chunk(2, 10), _ranked_chunk(3, 300)]
+        ranked = _run_reranked(chunks, [-3.0, -3.0, -8.0], time_decay_k=0.015, top_k=2)
+        assert ranked[0]["article_id"] == 2
+
+    def test_no_decay_keeps_logit_order(self):
+        chunks = [_ranked_chunk(1, 5), _ranked_chunk(2, 300), _ranked_chunk(3, 1)]
+        ranked = _run_reranked(chunks, [-4.0, 1.2, -0.5], time_decay_k=0, top_k=2)
+        assert [c["article_id"] for c in ranked[:3]] == [2, 3, 1]
+
+    def test_raw_logit_kept_and_prob_bounded(self):
+        chunks = [_ranked_chunk(1, 5), _ranked_chunk(2, 30), _ranked_chunk(3, 60)]
+        ranked = _run_reranked(chunks, [0.67, -4.98, -7.81], time_decay_k=0.015, top_k=2)
+        top = ranked[0]
+        assert top["rerank_score"] == 0.67
+        assert 0.0 <= top["rerank_prob"] <= 1.0

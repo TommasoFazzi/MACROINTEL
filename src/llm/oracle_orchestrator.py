@@ -28,6 +28,7 @@ Preserved from v3:
 """
 
 import hashlib
+import json
 import os
 import re
 import threading
@@ -43,7 +44,8 @@ from .conversation_memory import ConversationContext
 from .llm_factory import LLMFactory, ClaudeClient
 from .schemas import QueryIntent
 from .tools import ToolRegistry
-from .tools.rag_tool import RAGTool
+from .rag_evidence import digest_rag_result
+from .tools.rag_tool import DEFAULT_DECAY_K, RAGTool
 from .tools.sql_tool import SQLTool
 from .tools.aggregation_tool import AggregationTool
 from .tools.graph_tool import GraphTool
@@ -240,16 +242,25 @@ Quando hai raccolto abbastanza informazioni, rispondi con questo formato:
 [2-3 frasi con i punti chiave]
 
 ## Analisi Dettagliata
-[Paragrafi densi con dati specifici. Ogni affermazione fattuale deve essere seguita dalla citazione inline `[N]` usando il numero dal REGISTRO FONTI iniettato nel contesto.]
+[Paragrafi densi con dati specifici, citati secondo la REGOLA FONTI — CITA O OMETTI.]
 
 ## Implicazioni Strategiche
 [Implicazioni per decisori]
 </DOCUMENTO>
 
-Se i dati sono insufficienti o assenti, usa comunque il formato <DOCUMENTO> e dichiara onestamente cosa non è stato trovato, con possibili cause (periodo non indicizzato, topic assente nel DB, query troppo specifica).
+Se gli strumenti non restituiscono documenti pertinenti, usa comunque il formato <DOCUMENTO> e dichiaralo seguendo la REGOLA ASSENZA.
 
-## REGOLA CITAZIONI OBBLIGATORIA
-Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, eventi, dichiarazioni, date, nomi di attori) DEVE essere seguita dalla citazione inline `[N]` dove N è il numero della fonte nel REGISTRO FONTI. Esempio: "Le truppe hanno attraversato il confine il 3 marzo [2]." Non omettere mai le citazioni su affermazioni specifiche.
+## REGOLA FONTI — CITA O OMETTI
+Ogni blocco nei risultati di rag_search inizia con l'intestazione `[N] TIPO — fonte — data — titolo`: N è il numero della fonte nel REGISTRO FONTI.
+- Ogni affermazione concreta (chi ha fatto cosa, un numero, un nome, un luogo, una data) DEVE citare il `[N]` del blocco che la contiene. Esempio: "Le truppe hanno attraversato il confine il 3 marzo [2]."
+- Se nessun blocco sostiene un dettaglio specifico, OMETTI il dettaglio: mantieni l'affermazione generale oppure eliminala. Non assegnare mai un `[N]` a un'informazione che quel blocco non contiene.
+- Rispetta la forza della fonte: "secondo indiscrezioni", "pianifica", "starebbe valutando" non diventano "ha annunciato" o "ha confermato".
+- Analisi, inferenze e scenari (cosa significano i fatti, dove possono portare) sono esenti da citazione, ma non devono introdurre fatti concreti nuovi. Quando un'inferenza va oltre le fonti, dichiaralo esplicitamente ("Valutazione analitica: …").
+- Se una fonte contiene già un'analisi o una raccomandazione, attribuiscila alla fonte (testata, titolo e `[N]`) invece di presentarla come tua.
+
+## REGOLA ASSENZA
+- Puoi affermare che il database non contiene materiale su un aspetto SOLO se nessun blocco restituito dagli strumenti è pertinente a quell'aspetto.
+- Se esistono blocchi pertinenti, NON dichiarare assenza: nominali (testata, titolo, `[N]`) e usali, anche se coprono solo parte della domanda. Puoi indicare quali aspetti specifici restano scoperti.
 
 ## REGOLE ANTI-ALLUCINAZIONE
 - Basa la risposta ESCLUSIVAMENTE sui dati restituiti dagli strumenti.
@@ -320,7 +331,8 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
         # State tracking
         tool_results_log: List[Tuple[str, ToolResult]] = []
         sources: List[Dict] = []
-        _source_keys: set = set()  # dedup set for (type, id) pairs
+        source_numbers: Dict[Tuple[str, Any], int] = {}  # (type, id) -> global [N]
+        rag_calls: List[Dict[str, Any]] = []              # per-call evidence for the query log
         iterations_done = 0
         total_tool_calls = 0
 
@@ -409,22 +421,16 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
 
                 tool_results_log.append((tool_name, result))
 
-                # Collect sources from ALL RAG calls (additive, deduplicated by type+id)
-                if tool_name == "rag_search" and result.success and result.data:
-                    rag_instance = RAGTool(db=self.db)
-                    new_sources = rag_instance.prepare_sources(
-                        result.data.get("reports", []),
-                        result.data.get("chunks", []),
-                    )
-                    for src in new_sources:
-                        key = (src.get("type"), src.get("id"))
-                        if key not in _source_keys:
-                            _source_keys.add(key)
-                            sources.append(src)
-
-                # Summarize result for chat history (T5 if too long, verbatim otherwise)
                 tool = self.tool_registry.get_tool(tool_name)
-                history_content = self._summarize_for_history(tool_name, tool.format_for_history(result))
+                if tool_name == "rag_search":
+                    # Attributed digest with global [N] — never the free-text summarizer,
+                    # which drops titles/sources and breaks citation numbering.
+                    history_content = self._rag_tool_result(
+                        tool, result, tool_args, sources, source_numbers, rag_calls,
+                    )
+                else:
+                    # Summarize result for chat history (T5 if too long, verbatim otherwise)
+                    history_content = self._summarize_for_history(tool_name, tool.format_for_history(result))
                 tool_result_blocks.append(self._make_fn_response(tool_use_id, history_content))
 
             # Append tool results as a user message; include numbered source registry
@@ -532,6 +538,8 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
             user_id=user_id,
             iterations=iterations_done,
             response=answer,
+            rag_calls=rag_calls,
+            sources=sources,
         )
 
         return {
@@ -557,9 +565,55 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
-    def _summarize_for_history(self, tool_name: str, content: str) -> str:
-        """Compress a tool result for chat history using T5 (Flash-Lite).
+    def _rag_tool_result(
+        self,
+        tool: RAGTool,
+        result: ToolResult,
+        tool_args: Dict[str, Any],
+        sources: List[Dict],
+        source_numbers: Dict[Tuple[str, Any], int],
+        rag_calls: List[Dict[str, Any]],
+    ) -> str:
+        """Register the documents Sonnet will read and build their attributed digest.
 
+        Only documents rendered into the tool_result are registered, so every [N]
+        in the REGISTRO FONTI / sidebar is something Sonnet actually received. A
+        document seen in an earlier call keeps its number.
+        """
+        if not result.success:
+            return tool.format_for_history(result)
+
+        docs = tool.select_context_documents(result.data or {})
+        numbers: List[int] = []
+        for doc in docs:
+            n = source_numbers.get(doc.key)
+            if n is None:
+                sources.append(doc.to_source())
+                n = len(sources)
+                source_numbers[doc.key] = n
+            numbers.append(n)
+
+        digest = digest_rag_result(docs, numbers, self._t5_client)
+
+        filters = tool_args.get("filters") or {}
+        rag_calls.append({
+            "query": tool_args.get("query"),
+            # ui_filters inject datetime objects; keep the log row JSON-serializable
+            "filters": json.loads(json.dumps(filters, default=str)),
+            "time_decay_k": filters.get("time_decay_k", DEFAULT_DECAY_K),
+            "n_chunks": sum(1 for d in docs if d.kind == "ARTICOLO"),
+            "n_reports_rendered": sum(1 for d in docs if d.kind == "REPORT"),
+            "digest_mode": digest.mode,
+            "fallback_docs": digest.fallback_docs,
+        })
+        if digest.mode == "fallback":
+            logger.warning(f"RAG digest fell back to snippets for {len(docs)} documents")
+        return digest.text
+
+    def _summarize_for_history(self, tool_name: str, content: str) -> str:
+        """Compress a non-RAG tool result for chat history using T5 (Flash-Lite).
+
+        `rag_search` results never come here — see _rag_tool_result.
         Only invoked when content exceeds _SUMMARY_THRESHOLD. Falls back to
         hard truncation if the LLM call fails, so the agentic loop never stalls.
         """
@@ -709,6 +763,8 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
         user_id: Optional[str] = None,
         iterations: int = 0,
         response: Optional[str] = None,
+        rag_calls: Optional[List[Dict[str, Any]]] = None,
+        sources: Optional[List[Dict]] = None,
     ):
         try:
             metadata: Dict[str, Any] = {
@@ -720,6 +776,15 @@ Nel testo della risposta finale, ogni affermazione fattuale (dati numerici, even
                 metadata["user_id"] = user_id
             if response:
                 metadata["response"] = response
+            # Retrieval evidence: enough to reconstruct what Sonnet read without a replay
+            if rag_calls:
+                metadata["rag_calls"] = rag_calls
+            if sources:
+                metadata["sources"] = [
+                    {"n": n, "type": s.get("type"), "id": s.get("id"),
+                     "title": s.get("title"), "source": s.get("source")}
+                    for n, s in enumerate(sources, 1)
+                ]
             self.db.log_oracle_query(
                 session_id=session_id,
                 query=query,

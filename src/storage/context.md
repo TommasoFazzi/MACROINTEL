@@ -34,8 +34,8 @@ Central persistence layer between the processing pipeline and intelligence gener
   - `save_article(article, _known_links=None, _known_hashes=None)` - Store a single article with content-hash deduplication; optional pre-loaded sets skip DB duplicate-check round-trips
   - `batch_save()` - Bulk insert with bulk dedup pre-check: pre-loads existing links + content_hashes in 2 queries (instead of 2 per-article DB queries), eliminating N+1 round-trips. Falls back to per-article checks if bulk pre-check fails. Auto-populates `source_id` and `domain` via source cache.
   - `semantic_search()` - Vector similarity search on chunks with filters
-  - `full_text_search()` - PostgreSQL `ts_query` for keyword search
-  - `hybrid_search()` - Combines vector + keyword with RRF fusion
+  - `full_text_search()` - PostgreSQL `ts_query` for keyword search; like `semantic_search()` it `LEFT JOIN`s `intelligence_sources` and returns `source_type` / `authority_score` (needed by RAGTool's source-type decay override and authority rerank)
+  - `hybrid_search()` - Combines vector + keyword with RRF fusion (or `_weighted_fusion`). On a chunk found by both searches the **vector entry wins** (it carries `similarity`/`embedding`); before 2026-10 the keyword entry overwrote it and dropped the source metadata
   - `save_report()` / `update_report()` - Report lifecycle management. When the report carries `generation_context`, `save_report()` also inserts it into `report_generation_context` (migration 048) via `_save_generation_context()`, in the same transaction under a savepoint. A missing table or bad payload loses only the context row, logs an error, and never fails the report.
   - `save_feedback()` / `get_report_feedback()` - HITL feedback storage
 
