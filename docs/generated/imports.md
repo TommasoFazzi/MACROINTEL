@@ -138,6 +138,7 @@ flowchart TD
     oracle_orchestrator["oracle_orchestrator.py"]
     query_analyzer["query_analyzer.py"]
     query_router["query_router.py"]
+    rag_evidence["rag_evidence.py"]
     report_generator["report_generator.py"]
     schemas["schemas.py"]
     storyline_scoring["storyline_scoring.py"]
@@ -162,6 +163,7 @@ flowchart TD
     oracle_orchestrator --> utils
     query_analyzer --> utils
     query_router --> utils
+    rag_evidence --> utils
     report_generator --> finance
     report_generator --> integrations
     report_generator --> knowledge
@@ -184,6 +186,7 @@ flowchart TD
     citation_verifier --> EXT_pydantic
     llm_factory --> EXT_pydantic
     query_analyzer --> EXT_pydantic
+    rag_evidence --> EXT_pydantic
     report_generator --> EXT_numpy
     report_generator --> EXT_psycopg2
     report_generator --> EXT_pydantic
