@@ -1,0 +1,12 @@
+# Files holding article text (titles + leads from prod) stay local: the repo is public.
+# They are reproducible: `formation_labels.py sample|enrich|rich-inputs` + the read-only leads queries.
+labels_J_*.csv
+labels_S_*.csv
+leads_*.csv
+anchor_J_*.csv
+anchor_S_*.csv
+*.xlsx
+~$*
+judges/rich_input_*
+judges/opus_input_*
+judges/agent_chunks/*/*.md

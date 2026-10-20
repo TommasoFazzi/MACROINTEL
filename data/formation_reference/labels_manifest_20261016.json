@@ -1,0 +1,49 @@
+{
+  "created_at": "2026-10-16T11:10:23.682216+00:00",
+  "snapshot": "artifacts/formation_snapshot_20261016",
+  "snapshot_git_sha": "71a896cc070504bd3691b6e7182c2cfcfc768c52",
+  "bracket": [
+    "spacy_boost",
+    "no_boost"
+  ],
+  "seeds": {
+    "J": 1016,
+    "S": 1017,
+    "J_order": 1018,
+    "S_order": 1019
+  },
+  "pool_sizes": {
+    "J": {
+      "J-base": 3490,
+      "J-H1": 5125,
+      "J-H8": 4823,
+      "J-H2": 3145,
+      "J-near": 3957
+    },
+    "S": {
+      "S-new": 3461,
+      "S-prod": 2937
+    }
+  },
+  "sampled": {
+    "J": {
+      "J-H1": 110,
+      "J-H2": 30,
+      "J-H8": 45,
+      "J-base": 150,
+      "J-near": 15
+    },
+    "S": {
+      "S-new": 70,
+      "S-prod": 30
+    }
+  },
+  "rows": {
+    "J": 380,
+    "S": 120
+  },
+  "repeats": {
+    "J": 30,
+    "S": 20
+  }
+}

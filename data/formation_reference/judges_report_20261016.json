@@ -1,0 +1,60 @@
+{
+  "J": {
+    "judges": [
+      "sonnet46_chat",
+      "gemini31pro",
+      "opus"
+    ],
+    "n_rows": 350,
+    "pairwise": {
+      "sonnet46_chat vs gemini31pro": {
+        "kappa": 0.433,
+        "agreement": 0.749
+      },
+      "sonnet46_chat vs opus": {
+        "kappa": 0.408,
+        "agreement": 0.723
+      },
+      "gemini31pro vs opus": {
+        "kappa": 0.751,
+        "agreement": 0.877
+      }
+    },
+    "gate_passed": false,
+    "gold_counts": {
+      "yes": 218,
+      "no": 130,
+      "unsure": 2
+    },
+    "unanimous": 237
+  },
+  "S": {
+    "judges": [
+      "sonnet46_chat",
+      "gemini31pro",
+      "opus"
+    ],
+    "n_rows": 100,
+    "pairwise": {
+      "sonnet46_chat vs gemini31pro": {
+        "kappa": 0.403,
+        "agreement": 0.73
+      },
+      "sonnet46_chat vs opus": {
+        "kappa": 0.677,
+        "agreement": 0.84
+      },
+      "gemini31pro vs opus": {
+        "kappa": 0.48,
+        "agreement": 0.78
+      }
+    },
+    "gate_passed": false,
+    "gold_counts": {
+      "different": 67,
+      "same": 32,
+      "unsure": 1
+    },
+    "unanimous": 68
+  }
+}

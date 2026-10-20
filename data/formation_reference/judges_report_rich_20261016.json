@@ -1,0 +1,59 @@
+{
+  "J": {
+    "judges": [
+      "gemini31pro_rich",
+      "claude_opus_agent_rich",
+      "claude_sonnet_agent_rich"
+    ],
+    "n_rows": 350,
+    "pairwise": {
+      "gemini31pro_rich vs claude_opus_agent_rich": {
+        "kappa": 0.834,
+        "agreement": 0.923
+      },
+      "gemini31pro_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.625,
+        "agreement": 0.843
+      },
+      "claude_opus_agent_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.608,
+        "agreement": 0.834
+      }
+    },
+    "gate_passed": true,
+    "gold_counts": {
+      "yes": 235,
+      "no": 113,
+      "unsure": 2
+    },
+    "unanimous": 281
+  },
+  "S": {
+    "judges": [
+      "gemini31pro_rich",
+      "claude_opus_agent_rich",
+      "claude_sonnet_agent_rich"
+    ],
+    "n_rows": 100,
+    "pairwise": {
+      "gemini31pro_rich vs claude_opus_agent_rich": {
+        "kappa": 0.763,
+        "agreement": 0.9
+      },
+      "gemini31pro_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.763,
+        "agreement": 0.9
+      },
+      "claude_opus_agent_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.729,
+        "agreement": 0.88
+      }
+    },
+    "gate_passed": true,
+    "gold_counts": {
+      "same": 31,
+      "different": 69
+    },
+    "unanimous": 84
+  }
+}

@@ -74,4 +74,20 @@ def test_pools_on_replay_stream():
     y = next(iter(res.links[10]))
     assert h1[0]["storyline_id"] == y
     assert set(h1[0]["recent_titles"]) == {titles[10], titles[11], titles[12]}
+    # rich context: ids only from before the decision, most recent first, titles in step
+    assert set(h1[0]["recent_ids"]) == {10, 11, 12}
+    assert [titles[a] for a in h1[0]["recent_ids"][:3]] == h1[0]["recent_titles"]
     assert any(x["stratum"] == "J-base" and x["article_id"] == 20 for x in pool)
+
+
+@pytest.mark.unit
+def test_stratum_labels_drop_unsure_and_auc():
+    labels = {"0": "yes", "1": "no", "2": "unsure", "3": "yes"}
+    strata = {"0": "J-base", "1": "J-base", "2": "J-H1", "3": "J-H1"}
+    sl = fl.stratum_labels(labels, strata, "yes")
+    assert sl.by_stratum["J-base"].tolist() == [1.0, 0.0]
+    assert sl.by_stratum["J-H1"].tolist() == [1.0]
+    assert fl.auc([0.9, 0.8, 0.2, 0.1], [True, True, False, False]) == 1.0
+    assert fl.auc([0.5, 0.5], [True, False]) == 0.5
+    lo, hi = fl.wilson_ci(5, 10)
+    assert lo < 0.5 < hi
