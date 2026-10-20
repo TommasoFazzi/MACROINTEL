@@ -502,3 +502,70 @@ def test_close_handles_no_pool():
 
         # Non dovrebbe crashare
         db.close()
+
+
+# ============================================================================
+# TEST: HYBRID SEARCH — SOURCE METADATA SURVIVES FUSION
+# ============================================================================
+
+def _vector_hit(chunk_id):
+    return {'chunk_id': chunk_id, 'content': 'v', 'similarity': 0.8,
+            'embedding': [0.1], 'source_type': 'Think Tank', 'authority_score': 4.5}
+
+
+def _keyword_hit(chunk_id, source_type='Think Tank', authority_score=4.5):
+    return {'chunk_id': chunk_id, 'content': 'k', 'fts_score': 0.3,
+            'source_type': source_type, 'authority_score': authority_score}
+
+
+@pytest.mark.unit
+def test_full_text_search_returns_source_metadata(db_manager, mock_connection):
+    """Test: full_text_search espone source_type/authority_score (JOIN intelligence_sources)."""
+    conn, cursor = mock_connection
+    cursor.fetchall.return_value = [
+        (1, 'Chunk text', 0, 10, 100, 'Title', 'https://ex.com', 'RAND', datetime(2026, 9, 1), 'intel', 0.42, 'Think Tank', 4.5)
+    ]
+
+    with patch.object(db_manager, 'get_connection') as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = Mock(return_value=conn)
+        mock_get_conn.return_value.__exit__ = Mock(return_value=False)
+
+        results = db_manager.full_text_search("nuclear deterrence", top_k=1)
+
+    sql = cursor.execute.call_args[0][0]
+    assert 'LEFT JOIN intelligence_sources' in sql
+    assert results[0]['source_type'] == 'Think Tank'
+    assert results[0]['authority_score'] == 4.5
+    assert results[0]['fts_score'] == 0.42
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fusion", ["rrf", "weighted"])
+def test_fusion_overlap_keeps_vector_fields(db_manager, fusion):
+    """Test: a chunk found by both searches keeps the vector entry's similarity/embedding."""
+    vector, keyword = [_vector_hit(1)], [_keyword_hit(1)]
+    if fusion == "rrf":
+        fused = db_manager._reciprocal_rank_fusion(vector, keyword)
+    else:
+        fused = db_manager._weighted_fusion(vector, keyword, 0.7, 0.3)
+
+    assert len(fused) == 1
+    assert fused[0]['similarity'] == 0.8
+    assert fused[0]['embedding'] == [0.1]
+    assert fused[0]['source_type'] == 'Think Tank'
+    assert fused[0]['authority_score'] == 4.5
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fusion", ["rrf", "weighted"])
+def test_fusion_keyword_only_chunk_carries_source_type(db_manager, fusion):
+    """Test: a keyword-only chunk still carries source metadata from full_text_search."""
+    vector, keyword = [_vector_hit(1)], [_keyword_hit(2, 'Ufficiale/Gov', 4.0)]
+    if fusion == "rrf":
+        fused = db_manager._reciprocal_rank_fusion(vector, keyword)
+    else:
+        fused = db_manager._weighted_fusion(vector, keyword, 0.7, 0.3)
+
+    by_id = {r['chunk_id']: r for r in fused}
+    assert by_id[2]['source_type'] == 'Ufficiale/Gov'
+    assert by_id[2]['authority_score'] == 4.0

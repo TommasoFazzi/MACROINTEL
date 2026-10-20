@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .base import BaseTool, ToolResult
+from ..rag_evidence import EvidenceDoc, render_verbatim, select_context_documents
 from ...utils.logger import get_logger
 from ...utils.stopwords import clean_query
 
@@ -13,18 +14,17 @@ logger = get_logger(__name__)
 # ── Time-weighted decay constants ─────────────────────────────────────────────
 DEFAULT_DECAY_K = 0.025          # half-life ~28 days
 OVER_FETCH_MULTIPLIER = 3        # fetch 3x to avoid Top-K bias before decay
-MIN_DECAYED_SCORE = 0.15         # floor: discard noise after decay
+MIN_DECAYED_SCORE = 0.15         # floor for reports' decayed similarity (hard filter with fallback)
 
 # Source-type override for decay K.
 # Think tank reports retain value for months/years, not days.
-# None = use intent-based K (no override).
+# Keys are the exact intelligence_sources.source_type labels written by
+# scripts/seed_sources.py (Italian display labels). Unlisted labels use the intent K.
 SOURCE_TYPE_DECAY_K = {
-    "think_tank":   0.002,   # half-life ~346 days (~1 year)
-    "government":   0.003,   # half-life ~231 days (~8 months)
-    "academic":     0.002,   # half-life ~346 days
-    "news_agency":  None,    # use intent K
-    "trade_press":  None,    # use intent K
-    "ngo":          0.005,   # half-life ~139 days
+    "Think Tank":       0.002,   # half-life ~346 days (~1 year)
+    "Accademia":        0.002,   # half-life ~346 days
+    "Ufficiale/Gov":    0.003,   # half-life ~231 days (~8 months)
+    "Think Tank/Media": 0.005,   # half-life ~139 days (analysis essays, e.g. War on the Rocks)
 }
 
 # Score field name per search type
@@ -108,13 +108,9 @@ def apply_time_decay(
 
         days_old = max((ref_date - pub).days, 0)
 
-        # Source-type override: think tank/government reports decay much slower
-        effective_k = decay_k
-        source_type = r.get("source_type")
-        if source_type and source_type in SOURCE_TYPE_DECAY_K:
-            override_k = SOURCE_TYPE_DECAY_K[source_type]
-            if override_k is not None:
-                effective_k = override_k
+        # Source-type override: think tank/government reports decay slower — never faster
+        # than the intent K (REFERENCE uses 0.001, below the think-tank override).
+        effective_k = min(decay_k, SOURCE_TYPE_DECAY_K.get(r.get("source_type"), decay_k))
 
         decay_factor = math.exp(-effective_k * days_old)
 
@@ -410,7 +406,11 @@ class RAGTool(BaseTool):
                 pairs = [[query, c.get("content", "")] for c in chunks]
                 scores = reranker.predict(pairs, batch_size=32, show_progress_bar=False)
                 for i, chunk in enumerate(chunks):
-                    chunk["rerank_score"] = float(scores[i])
+                    logit = float(scores[i])
+                    chunk["rerank_score"] = logit
+                    # Logits are mostly negative on long queries; decay needs a [0, 1]
+                    # score, otherwise multiplying by e^(-k·days) raises old chunks.
+                    chunk["rerank_prob"] = 1.0 / (1.0 + math.exp(-logit))
                 chunks.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
                 has_reranked = True
                 logger.info(f"Cross-encoder reranking: {len(chunks)} chunks reranked")
@@ -423,9 +423,9 @@ class RAGTool(BaseTool):
             # Time-shifting: use end_date as reference for historical queries
             ref_date = filters.get("time_decay_reference")
 
-            # When cross-encoder has reranked, decay on rerank_score so we preserve
-            # the cross-encoder ordering instead of reverting to raw similarity.
-            effective_score_field = "rerank_score" if has_reranked else score_field
+            # When cross-encoder has reranked, decay on its sigmoid probability so we
+            # preserve the cross-encoder ordering instead of reverting to raw similarity.
+            effective_score_field = "rerank_prob" if has_reranked else score_field
 
             if chunks:
                 chunks = apply_time_decay(
@@ -433,12 +433,6 @@ class RAGTool(BaseTool):
                     date_field="published_date", score_field=effective_score_field,
                     reference_date=ref_date,
                 )
-
-                # Log how many chunks fall below the quality floor (informational only —
-                # no hard filter, to avoid discarding high-rerank/low-similarity chunks)
-                below_floor = [c for c in chunks if c.get(effective_score_field, 0) < MIN_DECAYED_SCORE]
-                if below_floor:
-                    logger.debug(f"Decay floor info: {len(below_floor)} chunks below {MIN_DECAYED_SCORE} (kept)")
 
                 # Authority-weighted re-ranking as final tiebreaker (alpha=0.15)
                 chunks = apply_authority_rerank(chunks, score_field=effective_score_field)
@@ -601,131 +595,18 @@ class RAGTool(BaseTool):
             merged.append(item)
         return merged
 
-    @staticmethod
-    def _score_line(result: Dict, score_field: str = "similarity") -> str:
-        """Format score line with optional decay transparency."""
-        score = result.get(score_field, 0)
-        raw = result.get(f"{score_field}_raw")
-        decay = result.get("time_decay_factor")
-        line = f"Score: {score:.2f}"
-        if raw is not None and decay is not None:
-            line += f" (raw: {raw:.2f}, freshness: {decay:.2f})"
-        return line
+    def select_context_documents(self, data: Dict) -> List[EvidenceDoc]:
+        """Documents rendered into the LLM context (articles first, then ≤2 reports).
+
+        Uses the tighter of the two char limits so `format_for_history` never has to
+        truncate: what gets registered as citable is exactly what the LLM reads.
+        """
+        return select_context_documents(
+            data, max_chars=min(self.DEFAULT_CONTEXT_MAX_CHARS, self.HISTORY_MAX_CHARS)
+        )
 
     def _format_success(self, data: Any, metadata: Dict) -> str:
-        reports = data.get("reports", [])
-        chunks = data.get("chunks", [])
-        search_type = metadata.get("search_type", "hybrid")
-        chunk_score_field = "rerank_score" if chunks and "rerank_score" in chunks[0] else SEARCH_TYPE_SCORE_FIELD.get(search_type, "similarity")
-        parts = []
-        current_len = 0
-
-        # ── Chunks (articles) FIRST — specific factual sources go in before reports ──
-        # Reports are daily briefings (generic) — articles are the targeted evidence.
-        # Ordering articles first ensures they are never starved by long report content.
-        for j, chunk in enumerate(chunks, 1):
-            pub_date = chunk.get("published_date")
-            date_str = (
-                pub_date.strftime("%d/%m/%Y")
-                if hasattr(pub_date, "strftime")
-                else (str(pub_date)[:10] if pub_date else "N/A")
-            )
-            score_line = self._score_line(chunk, chunk_score_field)
-            auth = chunk.get("authority_score")
-            authority_line = f"Autorevolezza: {float(auth):.1f}/5.0\n" if auth is not None else ""
-            doc = (
-                f"\n<DOCUMENTO_{j}>\n"
-                f"Tipo: ARTICOLO\nTitolo: {chunk.get('title', 'N/A')}\n"
-                f"Fonte: {chunk.get('source', 'Unknown')}\n"
-                f"{authority_line}"
-                f"Data: {date_str}\n"
-                f"{score_line}\n\n"
-                f"[INIZIO_TESTO]\n{chunk.get('content', '')}\n[FINE_TESTO]\n"
-                f"</DOCUMENTO_{j}>\n"
-            )
-            if current_len + len(doc) > self.DEFAULT_CONTEXT_MAX_CHARS:
-                break
-            parts.append(doc)
-            current_len += len(doc)
-
-        # ── Reports AFTER — strategic context, max 2, using smart excerpt ──
-        # Each report contributes Executive Summary + most query-relevant section (~5,000 chars).
-        # Pre-computed by _extract_report_excerpt() in _execute(), stored as "relevant_excerpt".
-        REPORT_BUDGET = 12000  # max chars for all reports combined (~2 reports × 5,000 chars)
-        report_len = 0
-        offset = len(chunks) + 1
-        for i, report in enumerate(reports, offset):
-            if report_len >= REPORT_BUDGET:
-                break
-            report_date = report.get("report_date")
-            date_str = (
-                report_date.strftime("%d/%m/%Y")
-                if hasattr(report_date, "strftime")
-                else (str(report_date)[:10] if report_date else "N/A")
-            )
-            # Use smart excerpt (Executive Summary + relevant section), fall back to head-truncation
-            content = report.get("relevant_excerpt") or (report.get("final_content") or report.get("draft_content", ""))[:5000]
-            score_line = self._score_line(report, "similarity")
-            doc = (
-                f"\n<DOCUMENTO_{i}>\n"
-                f"Tipo: REPORT\nID: {report.get('id', 'N/A')}\n"
-                f"Data: {date_str}\nStatus: {report.get('status', 'draft')}\n"
-                f"{score_line}\n\n"
-                f"[INIZIO_TESTO]\n{content}\n[FINE_TESTO]\n"
-                f"</DOCUMENTO_{i}>\n"
-            )
-            if current_len + len(doc) > self.DEFAULT_CONTEXT_MAX_CHARS:
-                break
-            parts.append(doc)
-            report_len += len(doc)
-            current_len += len(doc)
-
-        return "\n".join(parts) if parts else "[RAG: nessun documento trovato]"
-
-    def prepare_sources(self, reports: List[Dict], chunks: List[Dict]) -> List[Dict]:
-        """Return structured source list for API response."""
-        sources = []
-        for report in reports:
-            rd = report.get("report_date")
-            date_str = (
-                rd.strftime("%d/%m/%Y")
-                if hasattr(rd, "strftime")
-                else (str(rd)[:10] if rd else "N/A")
-            )
-            sources.append({
-                "type": "REPORT",
-                "id": report.get("id"),
-                "title": f"Report #{report.get('id')} - {date_str}",
-                "date_str": date_str,
-                "similarity": report.get("similarity", 0),
-                "similarity_raw": report.get("similarity_raw"),
-                "time_decay_factor": report.get("time_decay_factor"),
-                "days_old": report.get("days_old"),
-                "status": report.get("status", "draft"),
-                "preview": (report.get("final_content") or report.get("draft_content", ""))[:200],
-            })
-        for chunk in chunks:
-            pd = chunk.get("published_date")
-            date_str = (
-                pd.strftime("%d/%m/%Y")
-                if hasattr(pd, "strftime")
-                else (str(pd)[:10] if pd else "N/A")
-            )
-            sources.append({
-                "type": "ARTICOLO",
-                "id": chunk.get("article_id"),
-                "title": chunk.get("title", "Articolo senza titolo"),
-                "date_str": date_str,
-                "source": chunk.get("source", "Unknown"),
-                "similarity": chunk.get("similarity", 0),
-                "similarity_raw": chunk.get("similarity_raw"),
-                "time_decay_factor": chunk.get("time_decay_factor"),
-                "days_old": chunk.get("days_old"),
-                "preview": chunk.get("content", "")[:200],
-                "link": chunk.get("link"),
-            })
-        sources.sort(
-            key=lambda x: x.get("_sort_score", x.get("similarity", 0)),
-            reverse=True,
-        )
-        return sources
+        # Local numbering (1..N). The Oracle loop renders with global citation numbers
+        # via src/llm/rag_evidence.digest_rag_result instead.
+        docs = self.select_context_documents(data)
+        return render_verbatim(docs, range(1, len(docs) + 1))

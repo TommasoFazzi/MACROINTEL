@@ -2493,9 +2493,12 @@ class DatabaseManager:
                             a.source,
                             a.published_date,
                             a.category,
-                            ts_rank(c.content_tsv, websearch_to_tsquery('multilingual', %s)) as fts_score
+                            ts_rank(c.content_tsv, websearch_to_tsquery('multilingual', %s)) as fts_score,
+                            s.source_type,
+                            s.authority_score
                         FROM chunks c
                         JOIN articles a ON c.article_id = a.id
+                        LEFT JOIN intelligence_sources s ON a.source_id = s.id
                         WHERE {where_sql}
                           AND c.content_tsv @@ websearch_to_tsquery('multilingual', %s)
                         ORDER BY fts_score DESC
@@ -2518,7 +2521,9 @@ class DatabaseManager:
                             'source': row[7],
                             'published_date': row[8],
                             'category': row[9],
-                            'fts_score': float(row[10])
+                            'fts_score': float(row[10]),
+                            'source_type': row[11],
+                            'authority_score': float(row[12]) if row[12] else None,
                         })
 
                     return results
@@ -2630,8 +2635,8 @@ class DatabaseManager:
             chunk_id = result['chunk_id']
             scores[chunk_id] = scores.get(chunk_id, 0) + 1 / (k + rank)
 
-        # Merge results (use vector_results as base for metadata)
-        chunk_map = {r['chunk_id']: r for r in vector_results + keyword_results}
+        # Merge results: vector entries win on overlap (they carry similarity/embedding)
+        chunk_map = {r['chunk_id']: r for r in keyword_results + vector_results}
 
         # Sort by RRF score
         fused = [
@@ -2682,8 +2687,8 @@ class DatabaseManager:
 
             scores[chunk_id] = (vector_weight * vec_score + keyword_weight * kw_score)
 
-        # Merge and sort
-        chunk_map = {**vector_map, **keyword_map}
+        # Merge and sort: vector entries win on overlap (they carry similarity/embedding)
+        chunk_map = {**keyword_map, **vector_map}
         fused = [
             {**chunk_map[chunk_id], 'fusion_score': score}
             for chunk_id, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)

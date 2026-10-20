@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { OracleChatMessage, QueryPlan } from '../../types/oracle';
+import { preprocessCitations } from '../../lib/oracleCitations';
 
 // ── Intent labels and colors ──────────────────────────────────────────────────
 
@@ -25,18 +26,6 @@ const INTENT_COLORS: Record<string, string> = {
   comparative: 'bg-pink-500/20 text-pink-300 border-pink-500/30',
   overview: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
 };
-
-// ── Citation preprocessing ─────────────────────────────────────────────────────
-// Converts [1], [2] in text to `__CITE__N__` code markers that the code component
-// intercepts. The marker is deliberately unique and unambiguous — the LLM would never
-// generate this string naturally (unlike `[[1]]` which could appear in code samples).
-
-function preprocessCitations(text: string, offset: number): string {
-  // Separate adjacent citations [1][6] → [1] [6] before wrapping in backtick markers,
-  // otherwise consecutive `` `...``...` `` spans merge and break the markdown parser.
-  const spaced = text.replace(/\]\[(\d+)\]/g, '] [$1]');
-  return spaced.replace(/\[(\d+)\]/g, (_, n) => `\`__CITE__${parseInt(n, 10) + offset}__\``);
-}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
