@@ -19,8 +19,9 @@ bootstrap over the labelled rows.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 
@@ -63,6 +64,41 @@ def load_vectors(path, article_ids: Sequence[int]) -> Dict[int, np.ndarray]:
     if ids.tolist() != list(article_ids):
         raise ValueError(f"{path} is not aligned to the snapshot's article ids")
     return {int(a): emb[i].astype(np.float64) for i, a in enumerate(ids) if emb[i].any()}
+
+
+BASELINE_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def sentence_windows(text: str, count_tokens: Callable[[str], int], max_tokens: int) -> List[str]:
+    """R2/R3 input: consecutive sentences packed greedily into windows of at most
+    `max_tokens`. A sentence longer than that is cut into word runs that fit. Sentences
+    are split on terminal punctuation (no spaCy: the text is already cleaned)."""
+    windows: List[str] = []
+    current, used = [], 0
+    for sentence in _SENTENCE_END.split(text.strip()):
+        n = count_tokens(sentence)
+        if n > max_tokens:
+            pieces, piece = [], []
+            for word in sentence.split():
+                if piece and count_tokens(" ".join(piece + [word])) > max_tokens:
+                    pieces.append(" ".join(piece))
+                    piece = []
+                piece.append(word)
+            if piece:
+                pieces.append(" ".join(piece))
+        else:
+            pieces = [sentence]
+        for piece in pieces:
+            k = count_tokens(piece)
+            if current and used + k > max_tokens:
+                windows.append(" ".join(current))
+                current, used = [], 0
+            current.append(piece)
+            used += k
+    if current:
+        windows.append(" ".join(current))
+    return [w for w in windows if w]
 
 
 def with_formation_vectors(articles: Sequence, vectors: Dict[int, np.ndarray]) -> list:

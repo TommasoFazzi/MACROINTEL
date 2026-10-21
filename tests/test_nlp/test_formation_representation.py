@@ -155,3 +155,13 @@ def test_co_assignment_result_benefit_and_guard():
     assert out["benefit"] is True and out["different"]["delta"] == 0.0
     merge_all = {a: {1} for a in split}
     assert fr.co_assignment_result(gold, members, half, merge_all, n_boot=100)["benefit"] is False
+
+
+def test_sentence_windows_pack_and_cut():
+    count = lambda t: len(t.split())  # noqa: E731  one token per word
+    text = "One two three. Four five. Six seven eight nine ten eleven twelve! Thirteen."
+    windows = fr.sentence_windows(text, count, 5)
+    assert all(count(w) <= 5 for w in windows)
+    assert " ".join(windows).split() == text.split()           # nothing lost, order kept
+    assert windows[0] == "One two three. Four five."
+    assert fr.sentence_windows("", count, 5) == []
