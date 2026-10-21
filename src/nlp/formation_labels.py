@@ -76,7 +76,8 @@ def j_pool(result: ReplayResult, variant: str, titles: Dict[int, str]) -> List[d
         return {"stratum": stratum, "variant": variant, "run_ts": rec.run_ts.isoformat(),
                 "article_id": rec.event_article_ids[0], "n_event_articles": len(rec.event_article_ids),
                 "storyline_id": sid, "storyline_title": result.storylines[sid].title,
-                "recent_titles": recent, "recent_ids": before[:RICH_ARTICLES], "score": score}
+                "recent_titles": recent, "recent_ids": before[:RICH_ARTICLES], "member_ids": before,
+                "score": score}
 
     pool = []
     for rec in result.records:
@@ -126,9 +127,11 @@ def s_new_pool(result: ReplayResult, variant: str, titles: Dict[int, str]) -> Li
                      "left_title": result.storylines[sid].title,
                      "left_titles": [titles.get(a, "") for _, a in idx.get(sid, [])][:5],
                      "left_ids": [a for _, a in idx.get(sid, [])][:RICH_ARTICLES],
+                     "left_members": [a for _, a in idx.get(sid, [])],
                      "right_title": result.storylines[b["other"]].title,
                      "right_titles": [titles.get(a, "") for _, a in idx.get(b["other"], [])][:5],
                      "right_ids": [a for _, a in idx.get(b["other"], [])][:RICH_ARTICLES],
+                     "right_members": [a for _, a in idx.get(b["other"], [])],
                      "cosine": b["cosine"]})
     return pool
 
@@ -161,9 +164,11 @@ def s_prod_pool(snap: FormationSnapshot, since: datetime) -> List[dict]:
                              "left_title": a["title"], "left_summary": (a["summary"] or "")[:300],
                              "left_titles": [titles.get(x, "") for x in sorted(members[ids[i]])[-5:]],
                              "left_ids": sorted(members[ids[i]])[::-1][:RICH_ARTICLES],
+                             "left_members": sorted(members[ids[i]])[::-1],
                              "right_title": b["title"], "right_summary": (b["summary"] or "")[:300],
                              "right_titles": [titles.get(x, "") for x in sorted(members[ids[j]])[-5:]],
                              "right_ids": sorted(members[ids[j]])[::-1][:RICH_ARTICLES],
+                             "right_members": sorted(members[ids[j]])[::-1],
                              "cosine": float(m[i, j])})
     return pool
 

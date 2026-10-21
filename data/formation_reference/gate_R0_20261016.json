@@ -1,0 +1,32 @@
+{
+  "J": {
+    "n": 348,
+    "n_positive": 235,
+    "auc_base": 0.7112,
+    "auc_candidate": 0.7112,
+    "delta": 0.0,
+    "ci95": [
+      0.0,
+      0.0
+    ]
+  },
+  "S": {
+    "n": 100,
+    "n_positive": 31,
+    "auc_base": 0.6587,
+    "auc_candidate": 0.6587,
+    "delta": 0.0,
+    "ci95": [
+      0.0,
+      0.0
+    ]
+  },
+  "passes": false,
+  "candidate": "R0",
+  "gold": "gold_{J,S}_rich_20261016.csv",
+  "rule": {
+    "S_min_delta": 0.05,
+    "S_ci95_low": "> 0",
+    "J_min_delta": -0.02
+  }
+}

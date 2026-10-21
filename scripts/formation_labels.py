@@ -146,12 +146,11 @@ def _leads_query(ids, out_name: str) -> str:
             f"FROM articles WHERE id IN ({', '.join(map(str, sorted(ids)))})\nORDER BY id;\nROLLBACK;\n")
 
 
-def cmd_enrich(args) -> int:
-    """Rich context for the judges (tasks.md 6.4c): for every labelled row, the ids of up
-    to RICH_ARTICLES storyline articles that existed at decision time (J) or that each
-    storyline holds (S). Rebuilt from the deterministic replay and matched to the key."""
-    _, _, titles, j_pool, s_pool = _pools(args.snapshot)
-    stamp = args.stamp
+def _key_context(stamp: str, titles: dict, j_pool: list, s_pool: list, j_field: str, s_field: str) -> dict:
+    """Article ids per labelled row, matched to the key: J `{article, storyline}` from the
+    pool item's `j_field`, S `{left, right}` from `left_<s_field>` / `right_<s_field>`
+    (in the order the labeller saw them). Raises if the replay no longer reproduces the
+    recent titles the labeller saw."""
     j_index = {(x["variant"], x["run_ts"], x["article_id"], x["storyline_id"], x["stratum"]): x for x in j_pool}
     s_index = {(x["variant"], x["left_id"], x["right_id"]): x for x in s_pool}
 
@@ -159,18 +158,41 @@ def cmd_enrich(args) -> int:
     shown = {r["row_id"]: r for r in csv.DictReader(open(OUT / f"labels_J_{stamp}.csv"))}
     for k in csv.DictReader(open(OUT / f"key_J_{stamp}.csv")):
         x = j_index[(k["variant"], k["run_ts"], int(k["article_id"]), int(k["storyline_id"]), k["stratum"])]
-        # the replay must reproduce the recent titles the labeller saw
         replayed = [titles.get(a, "") for a in x["recent_ids"][:3]]
         replayed += [""] * (3 - len(replayed))
         mismatched += replayed != [shown[k["row_id"]][f"recent_article_{i}"] for i in (1, 2, 3)]
-        context["J"][k["row_id"]] = {"article": int(k["article_id"]), "storyline": x["recent_ids"]}
+        context["J"][k["row_id"]] = {"article": int(k["article_id"]), "storyline": x[j_field]}
     for k in csv.DictReader(open(OUT / f"key_S_{stamp}.csv")):
-        variant = k["variant"]
-        x = s_index[(variant, int(k["left_id"]), int(k["right_id"]))]
-        left, right = (x["right_ids"], x["left_ids"]) if k["swap"] == "True" else (x["left_ids"], x["right_ids"])
+        x = s_index[(k["variant"], int(k["left_id"]), int(k["right_id"]))]
+        left, right = x[f"left_{s_field}"], x[f"right_{s_field}"]
+        if k["swap"] == "True":
+            left, right = right, left
         context["S"][k["row_id"]] = {"left": left, "right": right}
     if mismatched:
         raise SystemExit(f"{mismatched} J rows do not reproduce the labelled recent titles: replay drifted")
+    return context
+
+
+def cmd_members(args) -> int:
+    """Full storyline membership per labelled row (storyline-representation-track D3):
+    J, every article linked to the storyline before the decision; S, every article each
+    storyline holds. Ids only, no text: `members_<stamp>.json`."""
+    _, _, titles, j_pool, s_pool = _pools(args.snapshot)
+    members = _key_context(args.stamp, titles, j_pool, s_pool, "member_ids", "members")
+    (OUT / f"members_{args.stamp}.json").write_text(json.dumps(members))
+    sizes = [len(c["storyline"]) for c in members["J"].values()]
+    print(f"members for {len(members['J'])} J and {len(members['S'])} S rows; "
+          f"J storyline size median {sorted(sizes)[len(sizes) // 2]}")
+    return 0
+
+
+def cmd_enrich(args) -> int:
+    """Rich context for the judges (tasks.md 6.4c): for every labelled row, the ids of up
+    to RICH_ARTICLES storyline articles that existed at decision time (J) or that each
+    storyline holds (S). Rebuilt from the deterministic replay and matched to the key."""
+    _, _, titles, j_pool, s_pool = _pools(args.snapshot)
+    stamp = args.stamp
+    context = _key_context(stamp, titles, j_pool, s_pool, "recent_ids", "ids")
 
     have = {int(r["id"]) for r in csv.DictReader(open(OUT / f"leads_{stamp}.csv"))}
     need = {a for c in context["J"].values() for a in c["storyline"]} | {
@@ -248,9 +270,12 @@ def main(argv=None) -> int:
     p.add_argument("snapshot", type=Path)
     p.add_argument("--stamp", default="20261016")
     p.add_argument("--lead-chars", type=int, default=250)
+    p = sub.add_parser("members")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("--stamp", default="20261016")
     args = parser.parse_args(argv)
     return {"sample": cmd_sample, "merge-leads": cmd_merge_leads, "enrich": cmd_enrich,
-            "rich-inputs": cmd_rich_inputs}[args.cmd](args)
+            "rich-inputs": cmd_rich_inputs, "members": cmd_members}[args.cmd](args)
 
 
 if __name__ == "__main__":
