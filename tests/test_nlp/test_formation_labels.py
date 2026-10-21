@@ -91,3 +91,24 @@ def test_stratum_labels_drop_unsure_and_auc():
     assert fl.auc([0.5, 0.5], [True, False]) == 0.5
     lo, hi = fl.wilson_ci(5, 10)
     assert lo < 0.5 < hi
+
+
+@pytest.mark.unit
+def test_lever_result_classifies_l1_join_as_h1():
+    """The day-16 join that only the bounded penalty allows counts as J-H1; the
+    baseline's joins are all J-base."""
+    from src.nlp.config import FormationLevers
+    from tests.test_nlp.test_storyline_replay import _stream
+
+    arts, runs = _stream()
+    cfg = NarrativeClusteringConfig()
+    base = rp.StorylineReplay(arts, cfg, burn_in_days=0).run(runs)
+    lever = rp.StorylineReplay(arts, cfg, burn_in_days=0,
+                               levers=FormationLevers(time_penalty="capped", time_penalty_cap=0.1)).run(runs)
+    th, f = cfg.matching.threshold, cfg.matching.time_decay_factor
+    assert fl.join_counts(base, th, f) == {"J-base": 1, "J-H1": 0, "J-H2": 0, "J-H8": 0}
+    assert fl.join_counts(lever, th, f) == {"J-base": 1, "J-H1": 1, "J-H2": 0, "J-H8": 0}
+    labels = {"gold": fl.StratumLabels({"J-base": np.array([1.0, 1.0, 0.0]), "J-H1": np.array([1.0, 0.0])})}
+    res = fl.lever_result(base, lever, arts, labels, th, f)
+    assert res["coverage"][1] > res["coverage"][0]
+    assert res["join_counts"][1]["J-H1"] == 1 and "gold" in res["j_precision"]

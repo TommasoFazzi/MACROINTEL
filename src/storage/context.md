@@ -40,7 +40,7 @@ Central persistence layer between the processing pipeline and intelligence gener
   - `save_feedback()` / `get_report_feedback()` - HITL feedback storage
 
   **Specialized Methods:**
-  - `get_all_article_embeddings(days, exclude_assigned)` - Returns articles with embeddings for storyline clustering; `exclude_assigned=True` skips articles already in `article_storylines` (used by `NarrativeProcessor.process_daily_batch`)
+  - `get_all_article_embeddings(days, exclude_assigned, exclude_orphan_pool=False)` - Returns articles with embeddings for storyline clustering; `exclude_assigned=True` skips articles already in `article_storylines`; `exclude_orphan_pool=True` also skips articles waiting in `orphan_events` (lever L0, set from `formation_levers.link_count_fix`, default off) (used by `NarrativeProcessor.process_daily_batch`)
   - `get_entities_with_coordinates()` - GeoJSON output for map (legacy; new map router uses `get_entities_for_map`)
   - `get_entities_for_map(limit, entity_types, days, min_mentions, min_score, search)` - GeoJSON FeatureCollection with enriched properties (intelligence_score, storyline_count, top_storyline, community_id); supports filtering by type, recency, score, search
   - `get_entity_detail_with_storylines(entity_id)` - Full entity detail with related articles and storylines (traverses entity_mentions → articles → article_storylines)

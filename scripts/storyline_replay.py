@@ -19,6 +19,13 @@ artifacts/storyline_replay/<run_id>/: `records.jsonl` (one DecisionRecord per
 decision), `storylines.jsonl` (final replay state) and `fidelity.json`
 (FidelityReport). Per D3, no lever result is read before this report is checked.
 
+`levers` replays a baseline and each pre-registered lever configuration of a
+grid (`GRIDS`) at both bracket ends, with the title-only relevance filter on both
+sides (D3), and writes the D7 verdict per lever, bracket end and label source
+(rich gold, broadest judge) to `levers.json` (tasks.md 7.2):
+
+    python scripts/storyline_replay.py levers artifacts/formation_snapshot_<date> [--grid round2] [--only NAME ...]
+
 PYTHONHASHSEED is pinned (the process re-executes itself if it is not 0):
 `merge_entities` truncates a set-ordered list, so string hashing would otherwise
 make two runs on the same export differ.
@@ -154,6 +161,90 @@ def cmd_attribution(args) -> int:
     return 0
 
 
+# Each grid is pre-registered in tasks.md before it is run: (baseline levers, {name: levers}).
+# round1 (7.2): prod baseline; the four L1 variants are a small grid, chosen with that
+# multiplicity in mind. round2 (7.2/7.3): L0 is part of the baseline from now on, so the
+# bug's extra chances are not credited to the levers; L2 and L8 alone, then on top of L1.
+_L0 = {"link_count_fix": True}
+_L1 = {"time_penalty": "exponential", "time_penalty_cap": 0.15}
+_L2 = {"match_stabilized": True}
+_L8 = {"small_storyline_ttl_from": "last_join", "archived_grace_days": 7}
+GRIDS = {
+    "round1": ({}, {
+        "L0": _L0,
+        "L1-capped-0.10": {"time_penalty": "capped", "time_penalty_cap": 0.10},
+        "L1-capped-0.15": {"time_penalty": "capped", "time_penalty_cap": 0.15},
+        "L1-exp-0.10": {"time_penalty": "exponential", "time_penalty_cap": 0.10},
+        "L1-exp-0.15": _L1,
+    }),
+    "round2": (_L0, {
+        "L1": _L1,
+        "L2": _L2,
+        "L8-last-join": {"small_storyline_ttl_from": "last_join"},
+        "L8-grace-7": {"archived_grace_days": 7},
+        "L8": _L8,
+        "L1+L2": _L1 | _L2,
+        "L1+L8": _L1 | _L8,
+        "L1+L2+L8": _L1 | _L2 | _L8,
+    }),
+}
+LABEL_SOURCES = {"gold": "label", "broadest_judge": "claude_sonnet_agent_rich"}
+LABELS_DIR = project_root / "data" / "formation_reference"
+
+
+def _j_labels(stamp: str) -> dict:
+    import csv
+
+    from src.nlp import formation_labels as fl
+
+    strata = {r["row_id"]: r["stratum"] for r in csv.DictReader(open(LABELS_DIR / f"key_J_{stamp}.csv"))}
+    gold = list(csv.DictReader(open(LABELS_DIR / f"gold_J_rich_{stamp}.csv")))
+    return {name: fl.stratum_labels({r["row_id"]: r[col] for r in gold}, strata, "yes")
+            for name, col in LABEL_SOURCES.items()}
+
+
+def cmd_levers(args) -> int:
+    from src.nlp import formation_labels as fl
+    from src.nlp import storyline_replay as rp
+    from src.nlp.config import FormationLevers, load_clustering_config
+
+    snap = rp.load_formation_snapshot(args.snapshot)
+    labels = _j_labels(args.stamp)
+    baseline, grid = GRIDS[args.grid]
+    grid = {k: baseline | v for k, v in grid.items() if not args.only or k in args.only}
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = args.out / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    report = {"snapshot": str(args.snapshot), "burn_in_days": args.burn_in, "grid_name": args.grid,
+              "baseline": baseline, "grid": grid,
+              "label_sources": LABEL_SOURCES, "variants": {}}
+
+    for variant, boost in BRACKET.items():
+        cfg = load_clustering_config().model_copy(deep=True)
+        if boost is not None:
+            cfg.matching.entity_boost = boost
+        th, decay = cfg.matching.threshold, cfg.matching.time_decay_factor
+
+        def replay(levers):
+            return rp.StorylineReplay(snap.articles, cfg, levers=levers,
+                                      burn_in_days=args.burn_in).run(snap.run_starts)
+
+        base = replay(FormationLevers(**baseline))
+        print(f"[{variant}] baseline done", flush=True)
+        report["variants"][variant] = {}
+        for name, overrides in grid.items():
+            res = fl.lever_result(base, replay(FormationLevers(**overrides)), snap.articles, labels, th, decay)
+            report["variants"][variant][name] = res
+            (out / "levers.json").write_text(json.dumps(report, indent=2))
+            verdicts = " ".join(f"{k}:{'ACCEPT' if v['accepted'] else 'reject'}"
+                                f"(Δ{v['delta']:+.3f} [{v['ci95'][0]:+.3f},{v['ci95'][1]:+.3f}])"
+                                for k, v in res["j_precision"].items())
+            print(f"[{variant}] {name:16s} cov +{res['coverage_gain_pp']:.2f}pp "
+                  f"dup {res['duplicate_change_rel']:+.1%}  {verdicts}", flush=True)
+    print(f"Levers written to {out}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -165,8 +256,15 @@ def main(argv=None) -> int:
     p.add_argument("snapshot", type=Path)
     p.add_argument("--burn-in", type=int, default=30)
     p.add_argument("--out", type=Path, default=project_root / "artifacts" / "storyline_replay")
+    p = sub.add_parser("levers", help="D7 verdict of each pre-registered lever at both bracket ends")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("--burn-in", type=int, default=30)
+    p.add_argument("--stamp", default="20261016", help="labelled-set date in data/formation_reference/")
+    p.add_argument("--grid", choices=list(GRIDS), default="round2")
+    p.add_argument("--only", nargs="*", help="subset of the grid's names")
+    p.add_argument("--out", type=Path, default=project_root / "artifacts" / "storyline_replay")
     args = parser.parse_args(argv)
-    return {"fidelity": cmd_fidelity, "attribution": cmd_attribution}[args.cmd](args)
+    return {"fidelity": cmd_fidelity, "attribution": cmd_attribution, "levers": cmd_levers}[args.cmd](args)
 
 
 if __name__ == "__main__":

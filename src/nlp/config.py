@@ -84,8 +84,9 @@ class FormationLevers(_StrictBase):
     """Level-1 formation levers (`storyline-formation-causal-review` design.md D6).
 
     Every default reproduces today's behaviour. The offline replay
-    (`src/nlp/storyline_replay.py`) reads these; prod does not yet: each lever is
-    wired into `NarrativeProcessor` only when accepted (tasks.md 7.x). L7 re-tunes
+    (`src/nlp/storyline_replay.py`) reads all of them; prod reads only accepted
+    levers: `link_count_fix` (L0, accepted 2026-10-19, decision-memo.md). The
+    others stay replay-only (L1, L2, L8 parked; L3–L6 not evaluated). L7 re-tunes
     `matching.threshold` and L1's linear slope is `matching.time_decay_factor`, so
     neither has a key here.
     """

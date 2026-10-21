@@ -135,6 +135,7 @@ class DecisionRecord(BaseModel):
     # penalty (`score_no_penalty`); flags the H8×H1 and H2×H1 overlaps
     best_archived_h8: Optional[dict] = None
     best_stabilized: Optional[dict] = None
+    target_status: Optional[str] = None         # status of the joined storyline just before the join
     orphan_id: Optional[int] = None
     primary_cause: Optional[str] = None
     flags: List[str] = []
@@ -165,10 +166,17 @@ def title_only_off_topic(storyline: ReplayStoryline, article_ids: Set[int]) -> b
 # Replay
 # ---------------------------------------------------------------------------
 
-def _require_baseline(levers: FormationLevers) -> None:
+IMPLEMENTED_LEVERS = {"link_count_fix", "time_penalty", "time_penalty_cap",         # L0, L1
+                      "match_stabilized",                                             # L2
+                      "small_storyline_ttl_from", "small_storyline_ttl_days", "archived_grace_days"}  # L8
+L8_REVIVABLE_RULES = ("rule_4", "rule_5")     # small/stale emerging storylines; never off-topic ones
+
+
+def _require_implemented(levers: FormationLevers) -> None:
     changed = {k for k, v in levers.model_dump().items() if v != FormationLevers.model_fields[k].default}
-    if changed:
-        raise NotImplementedError(f"levers not implemented in the replay yet (tasks.md 7.0/7.1): {sorted(changed)}")
+    missing = changed - IMPLEMENTED_LEVERS
+    if missing:
+        raise NotImplementedError(f"levers not implemented in the replay yet (tasks.md 7.1): {sorted(missing)}")
 
 
 class StorylineReplay:
@@ -179,13 +187,15 @@ class StorylineReplay:
         from .narrative_processor import NarrativeProcessor  # entity helpers only, no DB
 
         self.levers = levers or cfg.formation_levers
-        _require_baseline(self.levers)
+        _require_implemented(self.levers)
         self.cfg = cfg
         self.params = sd.MatchParams(
             threshold=cfg.matching.threshold,
             time_decay_factor=cfg.matching.time_decay_factor,
             entity_boost=cfg.matching.entity_boost,
             entity_jaccard_threshold=cfg.matching.entity_jaccard_threshold,
+            time_penalty_mode=self.levers.time_penalty,
+            time_penalty_cap=self.levers.time_penalty_cap,
         )
         self.off_topic = off_topic
         self.burn_in = timedelta(days=burn_in_days)
@@ -208,18 +218,29 @@ class StorylineReplay:
     # -- prod: DatabaseManager.get_all_article_embeddings(days, exclude_assigned=True)
     def _load_articles(self, now: datetime) -> List[dict]:
         since = now - timedelta(days=LOADER_DAYS)
+        # L0: prod re-reads articles waiting in the orphan pool (task 1.4); the fix skips them
+        pooled = {aid for o in self.orphans for aid in o.article_ids} if self.levers.link_count_fix else set()
         rows = [a for a in self.articles.values()
                 if a.embedding is not None and a.created_at <= now
                 and a.published_date is not None and a.published_date > since
-                and a.id not in self.links]
+                and a.id not in self.links and a.id not in pooled]
         rows.sort(key=lambda a: (-a.published_date.timestamp(), a.id))
         return [a.as_loader_row() for a in rows]
 
     # -- prod: NarrativeProcessor._load_active_storylines
-    def _active_storylines(self) -> List[dict]:
-        active = [s for s in self.storylines.values() if s.status in ('emerging', 'active')]
+    def _active_storylines(self, now: Optional[datetime] = None) -> List[dict]:
+        active = [s for s in self.storylines.values() if self._is_candidate(s, now)]
         active.sort(key=lambda s: (-s.momentum, s.id))
         return [self._as_candidate(s) for s in active]
+
+    def _is_candidate(self, s: ReplayStoryline, now: Optional[datetime]) -> bool:
+        if s.status in ('emerging', 'active'):
+            return True
+        if s.status == 'stabilized':
+            return self.levers.match_stabilized                                  # L2
+        grace = self.levers.archived_grace_days                                  # L8
+        return (s.status == 'archived' and grace > 0 and now is not None
+                and s.archived_by in L8_REVIVABLE_RULES and s.archived_at >= now - timedelta(days=grace))
 
     @staticmethod
     def _as_candidate(s: ReplayStoryline) -> dict:
@@ -228,17 +249,20 @@ class StorylineReplay:
                 'narrative_status': s.status, 'article_count': s.article_count,
                 'momentum_score': s.momentum}
 
-    def _link(self, article_ids: Sequence[int], storyline_id: int, now: datetime) -> None:
-        """INSERT ... ON CONFLICT (article_id, storyline_id) DO NOTHING."""
+    def _link(self, article_ids: Sequence[int], storyline_id: int, now: datetime) -> int:
+        """INSERT ... ON CONFLICT (article_id, storyline_id) DO NOTHING; returns the rowcount."""
         members = self.storyline_articles.setdefault(storyline_id, set())
+        inserted = 0
         for aid in article_ids:
+            inserted += aid not in members
             members.add(aid)
             self.links.setdefault(aid, set()).add(storyline_id)
             self.link_time.setdefault((aid, storyline_id), now)
+        return inserted
 
     # -- prod: NarrativeProcessor._assign_event_to_storyline
     def _assign(self, event: dict, storyline_id: int, now: datetime) -> None:
-        self._link(event['article_ids'], storyline_id, now)
+        inserted = self._link(event['article_ids'], storyline_id, now)
         s = self.storylines[storyline_id]
         current_emb = s.current_embedding if s.current_embedding is not None else event['embedding']
         s.current_embedding = sd.drift_embedding(
@@ -246,8 +270,13 @@ class StorylineReplay:
             self.cfg.evolution.drift_weight_old, self.cfg.evolution.drift_weight_new)
         new_clean = [self._clean(e) for e in event['entities'] if not self._garbage(self._clean(e))]
         s.key_entities = sd.merge_entities(set(s.key_entities), new_clean)
-        s.article_count = s.article_count + len(event['article_ids'])
+        # L0: count the links actually inserted, as prod's fix will (rowcount)
+        s.article_count += inserted if self.levers.link_count_fix else len(event['article_ids'])
         s.momentum = min(1.0, s.momentum + sd.momentum_bump(len(event['article_ids'])))
+        if s.status == 'stabilized':                  # L2: a join reactivates it
+            s.status = 'active'
+        elif s.status == 'archived':                  # L8: a join within the grace period revives it
+            s.status, s.archived_by, s.archived_at = 'emerging', None, None
         s.status = sd.promote_status(s.status, s.article_count)
         s.last_update = now
 
@@ -324,7 +353,8 @@ class StorylineReplay:
                   for k, v in groups.items()}
         return best, picked['h8'], picked['stabilized']
 
-    def _record(self, now, event, outcome, storyline_id=None, scores=None, orphan_id=None) -> None:
+    def _record(self, now, event, outcome, storyline_id=None, scores=None, orphan_id=None,
+                target_status=None) -> None:
         best_active = best_np = best_cb = None
         if scores and outcome != 'joined':
             best_cb = self._best_creation_boost(event, scores)
@@ -343,7 +373,7 @@ class StorylineReplay:
             storyline_id=storyline_id, best_active=best_active,
             best_active_no_penalty=best_np, best_any_status=best_any,
             best_active_creation_boost=best_cb, best_archived_h8=best_h8,
-            best_stabilized=best_stab, orphan_id=orphan_id))
+            best_stabilized=best_stab, target_status=target_status, orphan_id=orphan_id))
 
     # -- prod: NarrativeProcessor._retry_orphan_pool
     def _retry_orphans(self, active: List[dict], now: datetime) -> int:
@@ -364,10 +394,12 @@ class StorylineReplay:
             scores = sd.score_candidates(pseudo, active, now, self.params)
             match = sd.select_match(scores, self.params.threshold)
             if match:
+                status = self.storylines[match.storyline_id].status
                 self._assign(pseudo, match.storyline_id, now)
                 recovered.add(o.id)
                 o.ended_at, o.end = now, 'recovered'
-                self._record(now, pseudo, 'orphan_recovered', match.storyline_id, scores, orphan_id=o.id)
+                self._record(now, pseudo, 'orphan_recovered', match.storyline_id, scores, orphan_id=o.id,
+                             target_status=status)
         for o in self.orphans:
             if o.id not in recovered:
                 o.retry_count += 1
@@ -387,13 +419,17 @@ class StorylineReplay:
             ('rule_3', lambda s: s.status == 'stabilized'
              and s.last_update < now - timedelta(days=RULE_3_STABILIZED_DAYS)),
             ('rule_4', lambda s: s.status == 'emerging' and s.article_count < RULE_4_MIN_ARTICLES
-             and s.created_at < now - timedelta(days=RULE_4_DAYS)),
+             and self._rule_4_clock(s) < now - timedelta(days=self.levers.small_storyline_ttl_days)),
             ('rule_5', lambda s: s.status == 'emerging' and s.last_update < now - timedelta(days=ttl)),
         ]
         for name, predicate in rules:
             for s in self.storylines.values():
                 if predicate(s):
                     self._archive(s, name, now)
+
+    def _rule_4_clock(self, s: ReplayStoryline) -> datetime:
+        """rule_4 counts from creation (prod) or, under L8, from the last join."""
+        return s.last_update if self.levers.small_storyline_ttl_from == 'last_join' else s.created_at
 
     def _archive(self, s: ReplayStoryline, by: str, now: datetime) -> None:
         s.status, s.archived_by, s.archived_at = 'archived', by, now
@@ -406,9 +442,9 @@ class StorylineReplay:
         self.loaded.update(a['id'] for a in articles)
 
         events = sd.create_micro_clusters(articles, self.cfg.micro_cluster.threshold, self._extract)
-        active = self._active_storylines()
+        active = self._active_storylines(now)
         if self._retry_orphans(active, now) > 0:
-            active = self._active_storylines()
+            active = self._active_storylines(now)
 
         matched, orphaned = [], []
         for event in events:
@@ -421,9 +457,10 @@ class StorylineReplay:
 
         updated = set()
         for event, sid, scores in matched:
+            status = self.storylines[sid].status
             self._assign(event, sid, now)
             updated.add(sid)
-            self._record(now, event, 'joined', sid, scores)
+            self._record(now, event, 'joined', sid, scores, target_status=status)
 
         mcs, ms = self.cfg.hdbscan.min_cluster_size_base, self.cfg.hdbscan.min_samples
         if len(orphaned) < mcs:
@@ -472,7 +509,7 @@ class StorylineReplay:
 def _candidate_dict(c: sd.CandidateScore) -> dict:
     return {'storyline_id': c.storyline_id, 'cosine': float(c.cosine_sim),
             'time_penalty': float(c.time_penalty), 'boost': float(c.entity_boost),
-            'score': float(c.score)}
+            'score': float(c.score), 'days_inactive': float(c.days_inactive)}
 
 
 # ---------------------------------------------------------------------------
