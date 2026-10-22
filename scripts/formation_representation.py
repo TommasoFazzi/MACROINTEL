@@ -129,6 +129,7 @@ def cmd_build_text(args) -> int:
 
     model = SentenceTransformer(args.model, device="cpu")
     limit = model.max_seq_length - 2                      # [CLS] and [SEP]
+    limit -= len(model.tokenizer.tokenize(args.prefix)) if args.prefix else 0   # e5 needs "query: "
     count = lambda t: len(model.tokenizer.tokenize(t))    # noqa: E731
     order = [a for a in ids if texts.get(a)]
     is_baseline = args.model == fr.BASELINE_MODEL
@@ -142,14 +143,15 @@ def cmd_build_text(args) -> int:
             ws = fr.sentence_windows(texts[aid], count, limit)
             windows += ws
             owner += [aid] * len(ws)
-        w_emb = model.encode(windows, batch_size=32, convert_to_numpy=True)
+        w_emb = model.encode([args.prefix + w for w in windows], batch_size=args.batch, convert_to_numpy=True)
         for aid in block:
             vs = [fr.unit(v.astype(np.float64)) for a, v in zip(owner, w_emb) if a == aid]
             if vs:
                 means[aid], n_windows[aid] = np.mean(vs, axis=0), len(vs)
         if is_baseline:
             probe = [a for a in block if a in base]
-            for a, v in zip(probe, model.encode([texts[a] for a in probe], batch_size=32, convert_to_numpy=True)):
+            for a, v in zip(probe, model.encode([texts[a] for a in probe], batch_size=args.batch,
+                                                convert_to_numpy=True)):
                 check[a] = float(fr.unit(v.astype(np.float64)) @ fr.unit(base[a]))
         done = start + len(block)
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
@@ -164,6 +166,7 @@ def cmd_build_text(args) -> int:
     cos = np.array(sorted(check.values())) if check else None
     manifest = {"candidate": args.name, "built_at": started.isoformat(), "model": args.model,
                 "window": f"sentence-packed, <= {limit} tokens, mean of L2-normalised windows",
+                "prefix": args.prefix, "batch": args.batch,
                 "articles": len(ids), "fallback": int(fallback.sum()),
                 "windows": sum(per_article), "windows_per_article": {"median": per_article[len(per_article) // 2],
                                                                  "p90": per_article[int(0.9 * len(per_article))]},
@@ -214,6 +217,8 @@ def main(argv=None) -> int:
     p.add_argument("--model", default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     p.add_argument("--block", type=int, default=200)
     p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--batch", type=int, default=32)
+    p.add_argument("--prefix", default="", help='e.g. "query: " for intfloat/multilingual-e5-*')
     p = sub.add_parser("gate")
     p.add_argument("snapshot", type=Path)
     p.add_argument("candidate")

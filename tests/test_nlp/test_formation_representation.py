@@ -165,3 +165,46 @@ def test_sentence_windows_pack_and_cut():
     assert " ".join(windows).split() == text.split()           # nothing lost, order kept
     assert windows[0] == "One two three. Four five."
     assert fr.sentence_windows("", count, 5) == []
+
+
+def _stream_results(swap_21=False):
+    from src.nlp import storyline_replay as rp
+    from src.nlp.config import NarrativeClusteringConfig
+
+    arts, runs = _replay_stream()
+    base = rp.StorylineReplay(arts, NarrativeClusteringConfig(), burn_in_days=0).run(runs)
+    vectors = {a.id: a.embedding for a in arts}
+    if swap_21:
+        # close enough to storyline X to join it, not to article 20 to share its micro-cluster
+        vectors[21] = np.eye(len(vectors[20]))[0] + 0.6 * np.eye(len(vectors[20]))[7]
+    cand = rp.StorylineReplay(fr.with_formation_vectors(arts, vectors), NarrativeClusteringConfig(),
+                              burn_in_days=0).run(runs)
+    return arts, base, cand
+
+
+def test_join_split_identical_replays_are_all_shared():
+    _, base, _ = _stream_results()
+    split = fr.join_split(base, base)
+    assert split["new"] == [] and split["shared"] > 0
+
+
+def test_join_split_flags_a_join_baseline_never_made():
+    _, base, cand = _stream_results(swap_21=True)
+    split = fr.join_split(base, cand)
+    assert [n["article_id"] for n in split["new"]] == [21]
+    assert split["new"][0]["storyline_members"]          # the target's prior articles, for the judges
+
+
+def test_representation_result_pending_then_decided():
+    from src.nlp.formation_labels import StratumLabels
+
+    arts, base, cand = _stream_results(swap_21=True)
+    labels = {"gold": StratumLabels({"J-base": np.array([1.0, 1.0, 0.0, 1.0])})}
+    out, new = fr.representation_result(base, cand, arts, labels, {}, {})
+    assert len(new) == 1
+    status = out["j_precision"]["gold"]["status"]
+    assert status == ("pending_labels" if out["benefit"] else "rejected_no_benefit")
+    out, _ = fr.representation_result(base, cand, arts, labels, {}, {}, {"gold": np.array([1.0, 0.0])})
+    assert out["j_precision"]["gold"]["status"] == "decided"
+    same, _ = fr.representation_result(base, base, arts, labels, {}, {})
+    assert same["j_precision"]["gold"]["delta"] == 0 and same["coverage_gain_pp"] == 0

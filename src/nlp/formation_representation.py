@@ -281,3 +281,81 @@ def co_assignment_result(gold_s: Dict[str, str], members_s: dict, base_links: Di
     out["same_gain_rel"] = round(gain_rel, 4)
     out["benefit"] = bool(gain_rel >= CO_SAME_GAIN_REL and diff["ci95"][1] <= CO_DIFF_MAX_RISE)
     return out
+
+
+# ---------------------------------------------------------------------------
+# D8: verdict of a representation arm against the baseline replay
+# ---------------------------------------------------------------------------
+
+SHARED_MIN_OVERLAP = 0.5     # a join is "shared" when ≥ half the target's prior articles match B's target
+JOIN_OUTCOMES = ("joined", "orphan_recovered")
+NEW_JOIN_STRATUM = "J-new-R"
+
+
+def _prior_members(result):
+    """`f(storyline_id, run_ts)` -> the storyline's articles linked before that run, most recent first."""
+    idx: Dict[int, list] = {}
+    for (aid, sid), t in result.link_time.items():
+        idx.setdefault(sid, []).append((t, aid))
+    for v in idx.values():
+        v.sort(reverse=True)
+    return lambda sid, ts: [a for t, a in idx.get(sid, []) if t < ts]
+
+
+def join_split(base, cand) -> dict:
+    """The candidate's scored-window joins, split into those B also made (`shared`) and
+    the rest (`new`, with what a judge needs: article, target's prior articles, title)."""
+    prior_b, prior_c = _prior_members(base), _prior_members(cand)
+    base_target: Dict[int, set] = {}
+    for rec in base.records:
+        if rec.run_ts >= base.scored_since and rec.outcome in JOIN_OUTCOMES:
+            members = set(prior_b(rec.storyline_id, rec.run_ts))
+            for aid in rec.event_article_ids:
+                base_target.setdefault(aid, members)
+    shared, new = 0, []
+    for rec in cand.records:
+        if rec.run_ts < cand.scored_since or rec.outcome not in JOIN_OUTCOMES:
+            continue
+        aid = rec.event_article_ids[0]
+        members = prior_c(rec.storyline_id, rec.run_ts)
+        b = base_target.get(aid)
+        if b is not None and members and len(set(members) & b) / len(members) >= SHARED_MIN_OVERLAP:
+            shared += 1
+        else:
+            new.append({"run_ts": rec.run_ts.isoformat(), "article_id": aid,
+                        "storyline_members": members, "storyline_title": cand.storylines[rec.storyline_id].title})
+    return {"shared": shared, "new": new}
+
+
+def representation_result(base, cand, articles, j_labels: dict, gold_s: Dict[str, str], members_s: dict,
+                          new_join_labels: Optional[Dict[str, np.ndarray]] = None) -> dict:
+    """D8 verdict of one arm against B under each label source.
+
+    `j_labels` is `{source: StratumLabels}` from the causal review's gold (J-base is what
+    shared joins take); `new_join_labels` is `{source: 0/1 array}` for the J-new-R sample.
+    Without it, an arm with new joins is `pending_labels`."""
+    from .formation_labels import COVERAGE_GAIN_PP, StratumLabels, coverage, paired_delta
+
+    cov_b, cov_c = coverage(base, articles), coverage(cand, articles)
+    co = co_assignment_result(gold_s, members_s, base.links, cand.links)
+    split = join_split(base, cand)
+    n_base = sum(1 for r in base.records if r.run_ts >= base.scored_since and r.outcome in JOIN_OUTCOMES)
+    counts_b = {"J-base": n_base}
+    counts_c = {"J-base": split["shared"], NEW_JOIN_STRATUM: len(split["new"])}
+    gain_pp = 100 * (cov_c - cov_b)
+    benefit = gain_pp >= COVERAGE_GAIN_PP or co["benefit"]
+    out = {"coverage": [round(cov_b, 4), round(cov_c, 4)], "coverage_gain_pp": round(gain_pp, 2),
+           "co_assignment": co, "benefit": benefit, "joins": {"base": n_base, **counts_c},
+           "j_precision": {}}
+    for name, sl in j_labels.items():
+        if split["new"] and not (new_join_labels and name in new_join_labels):
+            out["j_precision"][name] = {"status": "pending_labels" if benefit else "rejected_no_benefit"}
+            continue
+        by_stratum = dict(sl.by_stratum)
+        if new_join_labels and name in new_join_labels:
+            by_stratum[NEW_JOIN_STRATUM] = np.asarray(new_join_labels[name], dtype=float)
+        d = paired_delta(counts_c, counts_b, StratumLabels(by_stratum))
+        out["j_precision"][name] = {"delta": round(d["delta"], 4), "ci95": [round(x, 4) for x in d["ci95"]],
+                                    "passes_bound": d["passes_bound"], "accepted": benefit and d["passes_bound"],
+                                    "status": "decided"}
+    return out, split["new"]
