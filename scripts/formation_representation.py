@@ -135,9 +135,28 @@ def cmd_build_text(args) -> int:
     is_baseline = args.model == fr.BASELINE_MODEL
     # Blocks of articles, so memory stays flat: only one block's windows are held at a time
     means, n_windows, check = {}, {}, {}
+    # Checkpoint every few blocks; a rerun with the same settings resumes from it
+    partial = args.snapshot / f"formation_{args.name}.partial.npz"
+    settings = json.dumps({"model": args.model, "prefix": args.prefix, "limit": limit, "text": str(args.text)})
+    if partial.exists():
+        z = np.load(partial, allow_pickle=False)
+        if str(z["settings"]) == settings:
+            for i, aid in enumerate(z["ids"].tolist()):
+                means[aid], n_windows[aid] = z["means"][i].astype(np.float64), int(z["n_windows"][i])
+            check = dict(zip(z["check_ids"].tolist(), z["check"].tolist()))
+            print(f"resuming from {partial.name}: {len(means)} articles done", flush=True)
+
+    def save_partial():
+        done_ids = list(means)
+        np.savez(partial, settings=np.array(settings), ids=np.array(done_ids, dtype=np.int64),
+                 means=np.array([means[a] for a in done_ids]).reshape(len(done_ids), -1),
+                 n_windows=np.array([n_windows[a] for a in done_ids], dtype=np.int64),
+                 check_ids=np.array(list(check), dtype=np.int64), check=np.array(list(check.values())))
+
+    todo = [a for a in order if a not in means]
     started = datetime.now(timezone.utc)
-    for start in range(0, len(order), args.block):
-        block = order[start:start + args.block]
+    for n_block, start in enumerate(range(0, len(todo), args.block), 1):
+        block = todo[start:start + args.block]
         windows, owner = [], []
         for aid in block:
             ws = fr.sentence_windows(texts[aid], count, limit)
@@ -153,10 +172,12 @@ def cmd_build_text(args) -> int:
             for a, v in zip(probe, model.encode([texts[a] for a in probe], batch_size=args.batch,
                                                 convert_to_numpy=True)):
                 check[a] = float(fr.unit(v.astype(np.float64)) @ fr.unit(base[a]))
+        if n_block % 5 == 0:
+            save_partial()
         done = start + len(block)
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-        print(f"{done}/{len(order)} articles, {elapsed / 60:.1f} min, "
-              f"~{elapsed / done * (len(order) - done) / 60:.1f} min left", flush=True)
+        print(f"{len(order) - len(todo) + done}/{len(order)} articles, {elapsed / 60:.1f} min, "
+              f"~{elapsed / done * (len(todo) - done) / 60:.1f} min left", flush=True)
     seconds = (datetime.now(timezone.utc) - started).total_seconds()
 
     emb, fallback = fr.build_from_means(ids, means, base if is_baseline else {})
@@ -170,14 +191,15 @@ def cmd_build_text(args) -> int:
                 "articles": len(ids), "fallback": int(fallback.sum()),
                 "windows": sum(per_article), "windows_per_article": {"median": per_article[len(per_article) // 2],
                                                                  "p90": per_article[int(0.9 * len(per_article))]},
-                "encode_seconds": round(seconds, 1), "threads": args.threads,
+                "encode_seconds": round(seconds, 1), "threads": args.threads,  # this run only (after a resume)
                 "note": "encode time includes the prod-like check re-embedding for MiniLM",
-                "seconds_per_1000_articles": round(1000 * seconds / max(len(order), 1), 1),
+                "seconds_per_1000_articles": round(1000 * seconds / max(len(todo), 1), 1),
                 "text_check_cosine_vs_snapshot": None if cos is None else {
                     "n": len(cos), "median": round(float(np.median(cos)), 4),
                     "share_ge_0.99": round(float(np.mean(cos >= 0.99)), 4)},
                 "sha256": hashlib.sha256(out.read_bytes()).hexdigest()}
     (args.snapshot / f"formation_{args.name}.json").write_text(json.dumps(manifest, indent=2))
+    partial.unlink(missing_ok=True)
     print(json.dumps(manifest, indent=2))
     return 0
 
