@@ -79,12 +79,15 @@ def sentence_windows(text: str, count_tokens: Callable[[str], int], max_tokens: 
     for sentence in _SENTENCE_END.split(text.strip()):
         n = count_tokens(sentence)
         if n > max_tokens:
-            pieces, piece = [], []
+            # word by word, counting each word once (linear; subword counts add up per word)
+            pieces, piece, piece_n = [], [], 0
             for word in sentence.split():
-                if piece and count_tokens(" ".join(piece + [word])) > max_tokens:
+                k = count_tokens(word)
+                if piece and piece_n + k > max_tokens:
                     pieces.append(" ".join(piece))
-                    piece = []
+                    piece, piece_n = [], 0
                 piece.append(word)
+                piece_n += k
             if piece:
                 pieces.append(" ".join(piece))
         else:

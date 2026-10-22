@@ -116,48 +116,59 @@ def cmd_build_text(args) -> int:
     from sentence_transformers import SentenceTransformer
 
     from src.nlp import formation_representation as fr
-    from src.nlp.processing import HybridNLPProcessor
+    from src.nlp.processing import NLPProcessor
 
     ids, base = _snapshot(args.snapshot)
-    clean = HybridNLPProcessor.clean_text.__get__(object.__new__(HybridNLPProcessor))
+    clean = object.__new__(NLPProcessor).clean_text          # stateless; skips loading spaCy and the model
     csv.field_size_limit(sys.maxsize)
     with gzip.open(args.text, "rt") as f:
         texts = {int(r["id"]): clean(r["full_text"] or "") for r in csv.DictReader(f)}
 
-    model = SentenceTransformer(args.model)
+    import torch
+    torch.set_num_threads(args.threads)                   # an 8 GB laptop: bounded CPU, no MPS
+
+    model = SentenceTransformer(args.model, device="cpu")
     limit = model.max_seq_length - 2                      # [CLS] and [SEP]
     count = lambda t: len(model.tokenizer.tokenize(t))    # noqa: E731
     order = [a for a in ids if texts.get(a)]
-    windows, owner = [], []
-    for aid in order:
-        for w in fr.sentence_windows(texts[aid], count, limit):
-            windows.append(w)
-            owner.append(aid)
+    is_baseline = args.model == fr.BASELINE_MODEL
+    # Blocks of articles, so memory stays flat: only one block's windows are held at a time
+    means, n_windows, check = {}, {}, {}
     started = datetime.now(timezone.utc)
-    w_emb = model.encode(windows, batch_size=64, convert_to_numpy=True, show_progress_bar=True)
+    for start in range(0, len(order), args.block):
+        block = order[start:start + args.block]
+        windows, owner = [], []
+        for aid in block:
+            ws = fr.sentence_windows(texts[aid], count, limit)
+            windows += ws
+            owner += [aid] * len(ws)
+        w_emb = model.encode(windows, batch_size=32, convert_to_numpy=True)
+        for aid in block:
+            vs = [fr.unit(v.astype(np.float64)) for a, v in zip(owner, w_emb) if a == aid]
+            if vs:
+                means[aid], n_windows[aid] = np.mean(vs, axis=0), len(vs)
+        if is_baseline:
+            probe = [a for a in block if a in base]
+            for a, v in zip(probe, model.encode([texts[a] for a in probe], batch_size=32, convert_to_numpy=True)):
+                check[a] = float(fr.unit(v.astype(np.float64)) @ fr.unit(base[a]))
+        done = start + len(block)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        print(f"{done}/{len(order)} articles, {elapsed / 60:.1f} min, "
+              f"~{elapsed / done * (len(order) - done) / 60:.1f} min left", flush=True)
     seconds = (datetime.now(timezone.utc) - started).total_seconds()
-    sums: dict = {}
-    for aid, v in zip(owner, w_emb):
-        sums.setdefault(aid, []).append(fr.unit(v.astype(np.float64)))
-    means = {aid: np.mean(vs, axis=0) for aid, vs in sums.items()}
 
-    check = {}
-    if args.model == fr.BASELINE_MODEL:
-        probe = [a for a in order if a in base]
-        prod_like = model.encode([texts[a] for a in probe], batch_size=64, convert_to_numpy=True)
-        check = {a: float(fr.unit(v) @ fr.unit(base[a])) for a, v in zip(probe, prod_like)}
-
-    emb, fallback = fr.build_from_means(ids, means, base if args.model == fr.BASELINE_MODEL else {})
+    emb, fallback = fr.build_from_means(ids, means, base if is_baseline else {})
     out = args.snapshot / f"formation_{args.name}.npz"
     np.savez_compressed(out, ids=np.array(ids), embedding=emb, fallback=fallback)
-    per_article = sorted(len(v) for v in sums.values())
+    per_article = sorted(n_windows.values())
     cos = np.array(sorted(check.values())) if check else None
     manifest = {"candidate": args.name, "built_at": started.isoformat(), "model": args.model,
                 "window": f"sentence-packed, <= {limit} tokens, mean of L2-normalised windows",
                 "articles": len(ids), "fallback": int(fallback.sum()),
-                "windows": len(windows), "windows_per_article": {"median": per_article[len(per_article) // 2],
+                "windows": sum(per_article), "windows_per_article": {"median": per_article[len(per_article) // 2],
                                                                  "p90": per_article[int(0.9 * len(per_article))]},
-                "encode_seconds": round(seconds, 1),
+                "encode_seconds": round(seconds, 1), "threads": args.threads,
+                "note": "encode time includes the prod-like check re-embedding for MiniLM",
                 "seconds_per_1000_articles": round(1000 * seconds / max(len(order), 1), 1),
                 "text_check_cosine_vs_snapshot": None if cos is None else {
                     "n": len(cos), "median": round(float(np.median(cos)), 4),
@@ -201,6 +212,8 @@ def main(argv=None) -> int:
     p.add_argument("text", type=Path)
     p.add_argument("--name", default="R2")
     p.add_argument("--model", default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    p.add_argument("--block", type=int, default=200)
+    p.add_argument("--threads", type=int, default=4)
     p = sub.add_parser("gate")
     p.add_argument("snapshot", type=Path)
     p.add_argument("candidate")
