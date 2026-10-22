@@ -30,6 +30,8 @@ Rich judges are named `<name>_rich`; the plain chat labels have no rich counterp
     python scripts/formation_judges.py aggregate [--context rich]   # κ per pair, majority-vote gold files
     python scripts/formation_judges.py merge-agents claude_opus_agent  # agent chunks -> one rich judge file
     python scripts/formation_judges.py report      # tasks.md 6.5: per-stratum J precision, S duplicate rate, H6 AUC
+    python scripts/formation_judges.py --stamp 20261022 chunks claude_opus_agent --set J --seed 3101
+    # --stamp selects another labelled set, e.g. 20261022 = representation-track J-new-R (rich only)
 
 Agent judges (rich round only): a fresh Claude Code subagent per chunk of
 `judges/agent_chunks/<judge>/{J,S}_NN.md` (rows in a judge-specific order), prompted with
@@ -77,7 +79,8 @@ def _rows(set_: str, context: str = "plain") -> list[dict]:
     return [r for r in labels if key[r["row_id"]]["repeat_of"] in ("", "None")]
 
 
-def _prompt(set_: str, r: dict) -> str:
+def _body(set_: str, r: dict) -> str:
+    """What a judge sees for one row (the question, without the answer format)."""
     if set_ == "J" and "storyline_articles_at_decision_time" in r:
         body = (f"ARTICLE\nTitle: {r['article_title']}\nSource: {r['article_source']}\n"
                 f"First lines: {r['article_lead']}\n\nSTORYLINE\nTitle: {r['storyline_title']}\n"
@@ -98,8 +101,12 @@ def _prompt(set_: str, r: dict) -> str:
         body = (f"STORYLINE A\nTitle: {r['left_title']}\nDetail: {r['left_detail']}\n\n"
                 f"STORYLINE B\nTitle: {r['right_title']}\nDetail: {r['right_detail']}\n\n"
                 "Question: are these two storylines the same story?")
+    return body
+
+
+def _prompt(set_: str, r: dict) -> str:
     labels = " | ".join(ALLOWED[set_])
-    return (f"{body}\n\nApply the guideline strictly. Titles may be in any language; judge the story, "
+    return (f"{_body(set_, r)}\n\nApply the guideline strictly. Titles may be in any language; judge the story, "
             f'not the wording.\nAnswer with JSON only: {{"label": "{labels}", "reason": "<one short sentence>"}}')
 
 
@@ -149,7 +156,7 @@ def cmd_run(args) -> int:
 
 
 def _load_judges(set_: str, context: str = "plain") -> dict[str, dict[str, str]]:
-    first = {r["row_id"] for r in _rows(set_)}
+    first = {r["row_id"] for r in _rows(set_, context)}
     sfx = _suffix(context)
     judges = {}
     if context == "plain":
@@ -180,7 +187,7 @@ def cmd_aggregate(args) -> int:
     from src.nlp.clustering_validation import rater_agreement
 
     report = {}
-    for set_ in ("J", "S"):
+    for set_ in (("J", "S") if args.set == "both" else (args.set,)):
         judges = _load_judges(set_, args.context)
         names = list(judges)
         rows = sorted(set.intersection(*(set(v) for v in judges.values())), key=int)
@@ -218,8 +225,10 @@ def cmd_merge_agents(args) -> int:
     Tolerates `row_id label` lines (the first pilot chunk used a space)."""
     import re
 
-    d = JUDGES_DIR / "agent_chunks" / args.judge
+    d = _chunk_dir(args.judge)
     for set_ in ("J", "S"):
+        if not any(d.glob(f"{set_}_*.md")):
+            continue
         labels = {}
         for chunk in sorted(d.glob(f"{set_}_*.md")):
             expected = set(re.findall(r"^## row_id (\d+)", chunk.read_text(), re.M))
@@ -237,6 +246,26 @@ def cmd_merge_agents(args) -> int:
             w.writerow(["row_id", "label"])
             w.writerows(sorted(labels.items(), key=lambda kv: int(kv[0])))
         print(f"{args.judge} {set_}: {len(labels)} rows")
+    return 0
+
+
+def _chunk_dir(judge: str) -> Path:
+    """Agent chunks: `agent_chunks/<judge>/` for the 20261016 sets, `agent_chunks/<stamp>/<judge>/` after."""
+    base = JUDGES_DIR / "agent_chunks"
+    return base / judge if STAMP == "20261016" else base / STAMP / judge
+
+
+def cmd_chunks(args) -> int:
+    """Write one agent judge's chunks: rich rows in a judge-specific order, `args.size` per
+    chunk, each row as `## row_id N` + what the judge sees. Prompt: judges/AGENT_PROMPT.md."""
+    d = _chunk_dir(args.judge)
+    d.mkdir(parents=True, exist_ok=True)
+    rows = _rows(args.set, "rich")
+    random.Random(args.seed).shuffle(rows)
+    for i in range(0, len(rows), args.size):
+        text = "\n\n".join(f"## row_id {r['row_id']}\n{_body(args.set, r)}" for r in rows[i:i + args.size])
+        (d / f"{args.set}_{i // args.size + 1:02d}.md").write_text(text + "\n")
+    print(f"{d}: {len(rows)} rows in {(len(rows) + args.size - 1) // args.size} chunks")
     return 0
 
 
@@ -282,7 +311,9 @@ def cmd_report(args) -> int:
 
 
 def main(argv=None) -> int:
+    global STAMP
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--stamp", default=STAMP, help="labelled-set date (file suffix)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("run")
     p.add_argument("judge", choices=list(JUDGE_TIERS))
@@ -290,13 +321,20 @@ def main(argv=None) -> int:
     p.add_argument("--context", choices=["plain", "rich"], default="plain")
     p = sub.add_parser("aggregate")
     p.add_argument("--context", choices=["plain", "rich"], default="plain")
+    p.add_argument("--set", choices=["J", "S", "both"], default="both")
+    p = sub.add_parser("chunks")
+    p.add_argument("judge")
+    p.add_argument("--set", choices=["J", "S"], default="J")
+    p.add_argument("--size", type=int, default=35)
+    p.add_argument("--seed", type=int, required=True, help="judge-specific row order")
     p = sub.add_parser("merge-agents")
     p.add_argument("judge")
     p = sub.add_parser("report")
     p.add_argument("--context", choices=["plain", "rich"], default="rich")
     args = parser.parse_args(argv)
+    STAMP = args.stamp          # every file name below reads the module-level stamp
     return {"run": cmd_run, "aggregate": cmd_aggregate, "merge-agents": cmd_merge_agents,
-            "report": cmd_report}[args.cmd](args)
+            "chunks": cmd_chunks, "report": cmd_report}[args.cmd](args)
 
 
 if __name__ == "__main__":

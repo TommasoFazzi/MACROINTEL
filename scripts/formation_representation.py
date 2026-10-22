@@ -182,6 +182,60 @@ def cmd_build_text(args) -> int:
     return 0
 
 
+NEW_JOIN_SEED = 1022
+RICH_ARTICLES, ARTICLE_LEAD, MEMBER_LEAD = 8, 400, 250    # as the causal review's rich round
+NEW_JOIN_STRATUM_KEY = "J-new-R"                          # = formation_representation.NEW_JOIN_STRATUM
+
+
+def cmd_new_joins_sample(args) -> int:
+    """D8: a random sample of the arms' new joins (pooled, deduplicated), written as a J set
+    for the AI judges. Ids go to `key_J_<stamp>.csv`; the rich judge input holds article
+    text, so it goes to the gitignored `judges/rich_input_J_<stamp>.csv`."""
+    import random
+
+    pool = json.loads((args.run_dir / "new_joins.json").read_text())
+    unique = {}
+    for item in pool:
+        unique.setdefault((item["article_id"], tuple(sorted(item["storyline_members"]))), item)
+    items = sorted(unique.values(), key=lambda x: (x["article_id"], x["run_ts"], x["arm"], x["variant"]))
+    random.Random(NEW_JOIN_SEED).shuffle(items)
+    sample = items[:args.n]
+
+    meta = {json.loads(line)["id"]: json.loads(line)
+            for line in (args.snapshot / "articles.jsonl").read_text().splitlines()}
+    csv.field_size_limit(sys.maxsize)
+    need = {x["article_id"] for x in sample} | {a for x in sample for a in x["storyline_members"][:RICH_ARTICLES]}
+    with gzip.open(args.text, "rt") as f:
+        lead = {int(r["id"]): " ".join((r["full_text"] or "").split())[:ARTICLE_LEAD]
+                for r in csv.DictReader(f) if int(r["id"]) in need}
+    title = lambda a: meta.get(a, {}).get("title") or ""  # noqa: E731
+
+    key_rows, judge_rows = [], []
+    for i, x in enumerate(sample):
+        a = x["article_id"]
+        members = x["storyline_members"][:RICH_ARTICLES]
+        key_rows.append([i, NEW_JOIN_STRATUM_KEY, x["arm"], x["variant"], x["run_ts"], a, len(x["storyline_members"]),
+                         " ".join(map(str, members))])
+        judge_rows.append([i, title(a), meta.get(a, {}).get("source") or "", lead.get(a, ""), x["storyline_title"],
+                           "\n".join(f"- {title(m)} — {lead.get(m, '')[:MEMBER_LEAD]}" for m in members)])
+    with open(REF / f"key_J_{args.stamp}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["row_id", "stratum", "arm", "variant", "run_ts", "article_id", "n_members", "shown_member_ids"])
+        w.writerows(key_rows)
+    with open(REF / "judges" / f"rich_input_J_{args.stamp}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["row_id", "article_title", "article_source", "article_lead", "storyline_title",
+                    "storyline_articles_at_decision_time"])
+        w.writerows(judge_rows)
+    arms = {}
+    for x in sample:
+        arms[f"{x['arm']}/{x['variant']}"] = arms.get(f"{x['arm']}/{x['variant']}", 0) + 1
+    print(json.dumps({"pool": len(pool), "unique": len(unique), "sampled": len(sample), "by_arm": arms,
+                      "missing_leads": sum(1 for x in sample if x["article_id"] not in lead)}, indent=2))
+    return 0
+
+
+
 def cmd_gate(args) -> int:
     from src.nlp import formation_representation as fr
 
@@ -219,12 +273,18 @@ def main(argv=None) -> int:
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--prefix", default="", help='e.g. "query: " for intfloat/multilingual-e5-*')
+    p = sub.add_parser("new-joins-sample")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("run_dir", type=Path, help="artifacts/storyline_replay/<run> of `storyline_replay.py representations`")
+    p.add_argument("text", type=Path)
+    p.add_argument("--n", type=int, default=300)
+    p.add_argument("--stamp", default="20261022")
     p = sub.add_parser("gate")
     p.add_argument("snapshot", type=Path)
     p.add_argument("candidate")
     args = parser.parse_args(argv)
     return {"chunks-query": cmd_chunks_query, "build-r1": cmd_build_r1, "text-query": cmd_text_query,
-            "build-text": cmd_build_text, "gate": cmd_gate}[args.cmd](args)
+            "build-text": cmd_build_text, "new-joins-sample": cmd_new_joins_sample, "gate": cmd_gate}[args.cmd](args)
 
 
 if __name__ == "__main__":

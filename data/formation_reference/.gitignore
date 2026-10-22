@@ -10,6 +10,7 @@ anchor_S_*.csv
 judges/rich_input_*
 judges/opus_input_*
 judges/agent_chunks/*/*.md
+judges/agent_chunks/*/*/*.md
 # storyline-representation-track: cleaned article text (R2/R3) stays local; chunk-mean vectors are large and reproducible
 text_*
 chunk_means_*.csv.gz
