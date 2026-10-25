@@ -25,6 +25,7 @@ sides (D3), and writes the D7 verdict per lever, bracket end and label source
 (rich gold, broadest judge) to `levers.json` (tasks.md 7.2):
 
     python scripts/storyline_replay.py levers artifacts/formation_snapshot_<date> [--grid round2] [--only NAME ...]
+    python scripts/storyline_replay.py representations artifacts/formation_snapshot_<date> --candidate R2
 
 PYTHONHASHSEED is pinned (the process re-executes itself if it is not 0):
 `merge_entities` truncates a set-ordered list, so string hashing would otherwise
@@ -245,6 +246,82 @@ def cmd_levers(args) -> int:
     return 0
 
 
+# storyline-representation-track D8 (pre-registered 2026-10-22): arms on top of L0.
+REPRESENTATION_ARMS = {"A1": {}, "A2": _L1}
+
+
+def cmd_representations(args) -> int:
+    import csv
+
+    from src.nlp import formation_representation as fr
+    from src.nlp import storyline_replay as rp
+    from src.nlp.config import FormationLevers, load_clustering_config
+
+    snap = rp.load_formation_snapshot(args.snapshot)
+    ids = [a.id for a in snap.articles]
+    base_vectors = {a.id: a.embedding for a in snap.articles if a.embedding is not None}
+    cand_vectors = fr.load_vectors(args.snapshot / f"formation_{args.candidate}.npz", ids)
+    gate_path = LABELS_DIR / f"gate_{args.candidate}_{args.stamp}.json"
+    gate = json.loads(gate_path.read_text()) if gate_path.exists() else None
+    if not (gate and gate["passes"]) and not args.override_gate:
+        raise SystemExit(f"{args.candidate} has not passed the D3 gate ({gate_path.name}); "
+                         "pass --override-gate \"<reason>\" to replay it anyway (recorded in the report)")
+    cand_articles = fr.with_formation_vectors(snap.articles, cand_vectors)
+    labels = _j_labels(args.stamp)
+    members_s = json.loads((LABELS_DIR / f"members_{args.stamp}.json").read_text())["S"]
+    gold_s = {r["row_id"]: r["label"] for r in csv.DictReader(open(LABELS_DIR / f"gold_S_rich_{args.stamp}.csv"))}
+    new_join_labels = None
+    if args.new_join_labels:
+        rows = list(csv.DictReader(open(args.new_join_labels)))
+        new_join_labels = {name: [1.0 if r[col] == "yes" else 0.0 for r in rows if r[col] != "unsure"]
+                           for name, col in LABEL_SOURCES.items()}
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = args.out / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    report = {"snapshot": str(args.snapshot), "candidate": args.candidate, "burn_in_days": args.burn_in,
+              "gate": {k: gate[k] for k in ("J", "S", "passes")} if gate else None,
+              "override_gate": args.override_gate,
+              "baseline_levers": _L0, "arms": REPRESENTATION_ARMS, "label_sources": LABEL_SOURCES,
+              "new_join_labels": str(args.new_join_labels) if args.new_join_labels else None, "variants": {}}
+
+    calibration, pool = None, []
+    for variant, boost in BRACKET.items():
+        cfg = load_clustering_config().model_copy(deep=True)
+        if boost is not None:
+            cfg.matching.entity_boost = boost
+
+        def replay(articles, c, levers):
+            return rp.StorylineReplay(articles, c, levers=FormationLevers(**levers),
+                                      burn_in_days=args.burn_in).run(snap.run_starts)
+
+        base = replay(snap.articles, cfg, _L0)
+        if calibration is None:      # D4: once, at the spaCy end, against B
+            calibration = fr.calibrate(fr.calibration_pairs(base, base_vectors, cand_vectors),
+                                       cfg.micro_cluster.threshold, cfg.matching.threshold)
+            report["calibration"] = calibration
+        cand_cfg = cfg.model_copy(deep=True)
+        cand_cfg.micro_cluster.threshold = calibration["matched"]["micro"]
+        cand_cfg.matching.threshold = calibration["matched"]["match"]
+        print(f"[{variant}] baseline done; thresholds {calibration['matched']}", flush=True)
+        report["variants"][variant] = {}
+        for arm, levers in REPRESENTATION_ARMS.items():
+            res, new = fr.representation_result(base, replay(cand_articles, cand_cfg, _L0 | levers), snap.articles,
+                                                labels, gold_s, members_s, new_join_labels)
+            report["variants"][variant][arm] = res
+            pool += [n | {"arm": arm, "variant": variant} for n in new]
+            (out / "representations.json").write_text(json.dumps(report, indent=2))
+            verdicts = " ".join(f"{k}:{v.get('status')}" + (f"(Δ{v['delta']:+.3f} [{v['ci95'][0]:+.3f},"
+                                                             f"{v['ci95'][1]:+.3f}])" if "delta" in v else "")
+                                for k, v in res["j_precision"].items())
+            print(f"[{variant}] {arm} cov {res['coverage_gain_pp']:+.2f}pp "
+                  f"co-assign same {res['co_assignment']['same_gain_rel']:+.1%} "
+                  f"benefit={res['benefit']} joins {res['joins']}  {verdicts}", flush=True)
+    (out / "new_joins.json").write_text(json.dumps(pool))
+    print(f"Representations written to {out} ({len(pool)} new joins pooled)")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -263,8 +340,17 @@ def main(argv=None) -> int:
     p.add_argument("--grid", choices=list(GRIDS), default="round2")
     p.add_argument("--only", nargs="*", help="subset of the grid's names")
     p.add_argument("--out", type=Path, default=project_root / "artifacts" / "storyline_replay")
+    p = sub.add_parser("representations", help="D8 verdict of a formation-vector candidate (with and without L1)")
+    p.add_argument("snapshot", type=Path)
+    p.add_argument("--candidate", default="R2")
+    p.add_argument("--burn-in", type=int, default=30)
+    p.add_argument("--stamp", default="20261016", help="labelled-set date in data/formation_reference/")
+    p.add_argument("--override-gate", help="reason for replaying a candidate that failed the D3 gate")
+    p.add_argument("--new-join-labels", type=Path, help="gold CSV for the J-new-R sample (columns as gold_J_rich)")
+    p.add_argument("--out", type=Path, default=project_root / "artifacts" / "storyline_replay")
     args = parser.parse_args(argv)
-    return {"fidelity": cmd_fidelity, "attribution": cmd_attribution, "levers": cmd_levers}[args.cmd](args)
+    return {"fidelity": cmd_fidelity, "attribution": cmd_attribution, "levers": cmd_levers,
+            "representations": cmd_representations}[args.cmd](args)
 
 
 if __name__ == "__main__":

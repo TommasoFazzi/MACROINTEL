@@ -1,0 +1,31 @@
+{
+  "J": {
+    "judges": [
+      "gemini31pro_rich",
+      "claude_opus_agent_rich",
+      "claude_sonnet_agent_rich"
+    ],
+    "n_rows": 300,
+    "pairwise": {
+      "gemini31pro_rich vs claude_opus_agent_rich": {
+        "kappa": 0.767,
+        "agreement": 0.897
+      },
+      "gemini31pro_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.474,
+        "agreement": 0.79
+      },
+      "claude_opus_agent_rich vs claude_sonnet_agent_rich": {
+        "kappa": 0.586,
+        "agreement": 0.85
+      }
+    },
+    "gate_passed": false,
+    "gold_counts": {
+      "no": 83,
+      "yes": 216,
+      "unsure": 1
+    },
+    "unanimous": 231
+  }
+}
