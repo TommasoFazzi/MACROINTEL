@@ -205,6 +205,7 @@ flowchart TD
     clustering_validation["clustering_validation.py"]
     config["config.py"]
     formation_labels["formation_labels.py"]
+    formation_representation["formation_representation.py"]
     narrative_processor["narrative_processor.py"]
     processing["processing.py"]
     relevance_filter["relevance_filter.py"]
@@ -233,6 +234,7 @@ flowchart TD
     clustering_validation --> EXT_sklearn
     config --> EXT_pydantic
     formation_labels --> EXT_numpy
+    formation_representation --> EXT_numpy
     narrative_processor --> EXT_numpy
     narrative_processor --> EXT_psycopg2
     narrative_processor --> EXT_sentence_transformers
