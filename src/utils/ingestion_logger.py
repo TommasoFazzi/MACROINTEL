@@ -29,7 +29,7 @@ class IngestionRunStats:
     count_raw: int = 0             # After RSS/fallback parsing
     count_post_dedup: int = 0      # After quick-hash deduplication
     count_post_blocklist: int = 0  # After keyword blocklist filter
-    count_post_age: int = 0        # After age filter
+    count_post_age: int = 0        # After selection (new link, within window, capped)
     extraction_attempted: int = 0  # Sent to content extractor
     extraction_ok: int = 0         # Successfully extracted text
 
@@ -40,8 +40,11 @@ class IngestionRunStats:
     # Each entry: (pattern_string, feed_source, title[:80])
     blocklist_hits: List[Tuple[str, str, str]] = field(default_factory=list)
 
-    # ── Age filter ────────────────────────────────────────────────────────────
-    age_filtered: int = 0
+    # ── Selection (stage 1.7) ─────────────────────────────────────────────────
+    age_filtered: int = 0          # Outside the window (or legacy 24h filter on fallback)
+    already_attempted: int = 0     # Link in articles or ingestion_seen_links
+    over_cap: int = 0              # Eligible but beyond MAX_SELECTED_PER_RUN
+    scraped_too_old: int = 0       # Scraped page date older than the window (after extraction)
 
     # ── Extraction method distribution ────────────────────────────────────────
     extraction_by_method: Dict[str, int] = field(default_factory=dict)
@@ -113,11 +116,14 @@ class IngestionRunStats:
         blocklist_pct = (n_blocked / max(self.count_post_dedup, 1)) * 100
         logger.info(f"    After blocklist       {self.count_post_blocklist:>6,}  "
                     f"(-{n_blocked:,} = {blocklist_pct:.1f}%)")
-        logger.info(f"    After age filter      {self.count_post_age:>6,}  "
-                    f"(-{self.age_filtered:,})")
+        logger.info(f"    After selection       {self.count_post_age:>6,}  "
+                    f"(-{self.already_attempted:,} attempted, -{self.age_filtered:,} old, "
+                    f"-{self.over_cap:,} over cap)")
         ok_pct = (self.extraction_ok / max(self.extraction_attempted, 1)) * 100
         logger.info(f"    Extraction success    {self.extraction_ok:>6,}  "
                     f"/ {self.extraction_attempted} ({ok_pct:.1f}%)")
+        if self.scraped_too_old:
+            logger.info(f"    Old scraped pages     {self.scraped_too_old:>6,}  dropped after extraction")
 
         # Extraction method distribution
         if self.extraction_by_method:

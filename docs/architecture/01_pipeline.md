@@ -14,7 +14,9 @@ flowchart TD
     4-tier extraction: Trafilatura → Scrapling → StealthyFetcher → Newspaper3k
     2-phase dedup: hash(link+title) → content_hash DB check
     Keyword blocklist Filtro 1
-    timeout: 3600s"]
+    Selection before extraction: link never attempted and published within 7 days
+    (articles + ingestion_seen_links, cap 600, links recorded after extraction)
+    timeout: 900s, 1 retry on native crash"]
 
     S1 --> S2
 

@@ -8,9 +8,10 @@ Includes fallback scraping for feeds with broken RSS.
 import feedparser
 import requests
 import random
+import re
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from pathlib import Path
 from urllib.parse import urljoin
@@ -65,12 +66,15 @@ FALLBACK_SCRAPERS = {
         'needs_cloudscraper': False,
     },
     'CSIS - Center for Strategic and International Studies': {
+        # rss.xml serves 2016 events (last real article 2026-07-08), so feeds.yaml
+        # points at the listing page itself: feedparser finds 0 entries and this
+        # scraper runs. The listing renders ~8 current items as /analysis/{slug}.
         'url': 'https://www.csis.org/analysis',
-        'selector': 'article, div.node--type-commentary',
-        'title_sel': 'h2 a, h3 a, .title a',
-        'link_sel': 'h2 a, h3 a, .title a',
+        'selector': 'a[href]',
+        'link_based': True,
+        'link_filter': r'^/analysis/[a-z0-9-]+$',
         'category': 'intelligence',
-        'subcategory': 'geopolitics',
+        'subcategory': 'think_tank',
         'needs_cloudscraper': False,
     },
     'Council on Foreign Relations': {
@@ -87,6 +91,8 @@ FALLBACK_SCRAPERS = {
     },
     # NOTE: Chatham House — moved to SCRAPLING-BACKED section below
     'European Council on Foreign Relations': {
+        # Backup only: feeds.yaml uses the Atom feed. This listing shows ~10 long
+        # publications that change weekly, so as the only path it found ~1 new item a month.
         'url': 'https://ecfr.eu/publications/',
         'selector': 'article, .publication-item, .card',
         'title_sel': 'h3 a, h2 a, .title a',
@@ -144,6 +150,8 @@ FALLBACK_SCRAPERS = {
         'subcategory': 'think_tank',
     },
     'RUSI': {
+        # Backup only: feeds.yaml uses the RSS feed. The listing's server-side HTML
+        # has category links only; article links need browser rendering (Tier 2).
         # Gatsby 5 site — client-side rendered, requires browser (StealthyFetcher)
         # URL pattern: /explore-our-research/publications/{type}/{slug}
         'url': 'https://www.rusi.org/explore-our-research/publications/',
@@ -156,6 +164,7 @@ FALLBACK_SCRAPERS = {
         'subcategory': 'think_tank',
     },
     'Chatham House': {
+        # Backup only: feeds.yaml uses the RSS feed (this listing 403s from GitHub runners).
         # /expert-comment redirects to homepage which has latest article links
         'url': 'https://www.chathamhouse.org/expert-comment',
         # Articles use /YYYY/MM/slug pattern
@@ -176,6 +185,28 @@ FALLBACK_SCRAPERS = {
     #     'needs_cloudscraper': False,
     # },
 }
+
+
+# A feed whose newest dated entry is older than this counts as failed, so its
+# fallback scraper runs. CSIS rss.xml kept answering with 2016 events from
+# 2026-07 on, and the fallback never fired because it only ran on 0 entries.
+STALE_FEED_DAYS = 60
+
+MAX_LISTING_ELEMENTS = 50   # DOM elements read from a listing without link_filter
+MAX_SCRAPED_ARTICLES = 20   # items kept per scraped listing
+
+
+def _is_stale_feed(articles: List[Dict], feed_name: str) -> bool:
+    """True when entries exist, some are dated, and the newest is older than STALE_FEED_DAYS."""
+    dates = [a['published'] for a in articles if a.get('published')]
+    if not dates:
+        return False
+    newest = max(dates)
+    if newest >= datetime.now() - timedelta(days=STALE_FEED_DAYS):
+        return False
+    action = "trying fallback scraper" if feed_name in FALLBACK_SCRAPERS else "no fallback configured"
+    logger.warning(f"Stale feed {feed_name}: newest entry {newest.date()}, {action}")
+    return True
 
 
 class FeedParser:
@@ -240,14 +271,77 @@ class FeedParser:
             return None
 
     def _load_config(self) -> List[Dict]:
-        """Load feeds configuration from YAML file."""
+        """Load feeds configuration from YAML file, skipping `status: unsupported` feeds."""
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-                return config.get('feeds', [])
+                feeds = config.get('feeds', [])
         except Exception as e:
             logger.error(f"Error loading feed configuration: {e}")
             return []
+        unsupported = [f.get('name') for f in feeds if f.get('status') == 'unsupported']
+        if unsupported:
+            logger.info(f"Skipping {len(unsupported)} unsupported feed(s): {', '.join(unsupported)}")
+        return [f for f in feeds if f.get('status') != 'unsupported']
+
+    @staticmethod
+    def _articles_from_listing(soup, config: Dict, feed_name: str) -> List[Dict]:
+        """
+        Turn a scraped listing page into feed items (shared by sync and async fallbacks).
+
+        `link_filter` is applied before any cap: on large pages (CSIS, ~1200
+        links) the article links sit near the end of the DOM, and an earlier
+        "first 500 elements" cap silently dropped all of them.
+        """
+        link_based = config.get('link_based', False)  # item IS the link element (e.g. CFR)
+        link_filter = config.get('link_filter')
+        link_filter_re = re.compile(link_filter) if link_filter else None
+        items = soup.select(config['selector'])
+        if not link_filter_re:
+            items = items[:MAX_LISTING_ELEMENTS]
+
+        articles = []
+        seen_links = set()
+        for item in items:
+            if link_based:
+                raw_link = item.get('href')
+                title = item.get_text(strip=True)
+            else:
+                title_el = item.select_one(config['title_sel'])
+                link_el = item.select_one(config['link_sel'])
+                if not (title_el and link_el):
+                    continue
+                raw_link = link_el.get('href')
+                title = title_el.get_text(strip=True)
+
+            if not raw_link or (link_filter_re and not link_filter_re.match(raw_link)):
+                continue
+
+            full_link = urljoin(config['url'], raw_link)
+            # Image links repeat the href with no text: skip them without marking seen
+            if full_link in seen_links or not title:
+                continue
+            seen_links.add(full_link)
+
+            articles.append({
+                'title': title,
+                'link': full_link,
+                'source': feed_name,
+                # Fetch time, not the page date: downstream 1-day windows rely on it.
+                # The pipeline drops the item after extraction if the page is old.
+                'published': datetime.now(),
+                'scraped': True,
+                'summary': '',
+                'authors': [],
+                'tags': [],
+                'fetched_at': datetime.now(),
+                'category': config.get('category'),
+                'subcategory': config.get('subcategory'),
+                'extraction_method': 'fallback_scraper',
+            })
+            if len(articles) >= MAX_SCRAPED_ARTICLES:
+                break
+        return articles
 
     def scrape_fallback(self, feed_name: str) -> List[Dict]:
         """
@@ -302,59 +396,7 @@ class FeedParser:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            articles = []
-            seen_links = set()  # Avoid duplicates
-            max_items = 500 if config.get('link_filter') else 30
-            items = soup.select(config['selector'])[:max_items]
-
-            # Check if this is a link-based scraper (like CFR)
-            link_based = config.get('link_based', False)
-
-            for item in items:
-                if link_based:
-                    # Item IS the link element
-                    raw_link = item.get('href')
-                    title = item.get_text(strip=True)
-                else:
-                    # Traditional: item contains title and link sub-elements
-                    title_el = item.select_one(config['title_sel'])
-                    link_el = item.select_one(config['link_sel'])
-
-                    if not (title_el and link_el):
-                        continue
-
-                    raw_link = link_el.get('href')
-                    title = title_el.get_text(strip=True)
-
-                if not raw_link:
-                    continue
-
-                # Fix relative links
-                full_link = urljoin(config['url'], raw_link)
-
-                # Skip duplicates and empty titles
-                if full_link in seen_links or not title:
-                    continue
-                seen_links.add(full_link)
-
-                # Stop at 20 unique articles
-                if len(articles) >= 20:
-                    break
-
-                articles.append({
-                    'title': title,
-                    'link': full_link,
-                    'source': feed_name,
-                    'published': datetime.now(),  # Placeholder date
-                    'summary': '',
-                    'authors': [],
-                    'tags': [],
-                    'fetched_at': datetime.now(),
-                    'category': config.get('category'),
-                    'subcategory': config.get('subcategory'),
-                    'extraction_method': 'fallback_scraper',
-                })
-
+            articles = self._articles_from_listing(soup, config, feed_name)
             logger.info(f"Fallback scraper extracted {len(articles)} articles from {feed_name}")
             return articles
 
@@ -386,10 +428,12 @@ class FeedParser:
                 if article:
                     articles.append(article)
 
-            # If RSS parsing failed or returned 0 articles, try fallback scraper
+            # If RSS returned 0 articles or only very old ones, try fallback scraper
             if not articles and feed_name in FALLBACK_SCRAPERS:
                 logger.info(f"RSS returned 0 articles, trying fallback scraper for {feed_name}")
                 articles = self.scrape_fallback(feed_name)
+            elif _is_stale_feed(articles, feed_name) and feed_name in FALLBACK_SCRAPERS:
+                articles = self.scrape_fallback(feed_name) or articles
 
             logger.info(f"Extracted {len(articles)} articles from {feed_name or feed_url}")
             return articles
@@ -497,10 +541,12 @@ class FeedParser:
                 if article:
                     articles.append(article)
 
-            # Fallback if RSS returned 0 articles
+            # Fallback if RSS returned 0 articles or only very old ones
             if not articles and feed_name in FALLBACK_SCRAPERS:
                 logger.info(f"RSS returned 0 articles, trying fallback scraper for {feed_name}")
                 articles = await self._scrape_fallback_async(feed_name, session)
+            elif _is_stale_feed(articles, feed_name) and feed_name in FALLBACK_SCRAPERS:
+                articles = await self._scrape_fallback_async(feed_name, session) or articles
 
             # Add category/subcategory
             for article in articles:
@@ -573,62 +619,7 @@ class FeedParser:
             # BeautifulSoup parsing — offload to thread
             soup = await asyncio.to_thread(BeautifulSoup, html_text, 'html.parser')
 
-            articles = []
-            seen_links = set()
-            # For link_filter scrapers (e.g. Chatham House) article links appear late in DOM
-            max_items = 500 if config.get('link_filter') else 50
-            items = soup.select(config['selector'])[:max_items]
-
-            link_based = config.get('link_based', False)
-            link_filter = config.get('link_filter')  # Optional regex to filter hrefs
-            if link_filter:
-                import re
-                link_filter_re = re.compile(link_filter)
-            else:
-                link_filter_re = None
-
-            for item in items:
-                if link_based:
-                    raw_link = item.get('href')
-                    title = item.get_text(strip=True)
-                else:
-                    title_el = item.select_one(config['title_sel'])
-                    link_el = item.select_one(config['link_sel'])
-                    if not (title_el and link_el):
-                        continue
-                    raw_link = link_el.get('href')
-                    title = title_el.get_text(strip=True)
-
-                # Apply link_filter if defined (e.g. Chatham House /YYYY/MM/ pattern)
-                if link_filter_re and raw_link and not link_filter_re.match(raw_link):
-                    continue
-
-                if not raw_link:
-                    continue
-
-                full_link = urljoin(config['url'], raw_link)
-
-                if full_link in seen_links or not title:
-                    continue
-                seen_links.add(full_link)
-
-                if len(articles) >= 20:
-                    break
-
-                articles.append({
-                    'title': title,
-                    'link': full_link,
-                    'source': feed_name,
-                    'published': datetime.now(),
-                    'summary': '',
-                    'authors': [],
-                    'tags': [],
-                    'fetched_at': datetime.now(),
-                    'category': config.get('category'),
-                    'subcategory': config.get('subcategory'),
-                    'extraction_method': 'fallback_scraper',
-                })
-
+            articles = self._articles_from_listing(soup, config, feed_name)
             logger.info(f"Fallback scraper extracted {len(articles)} articles from {feed_name}")
             return articles
 

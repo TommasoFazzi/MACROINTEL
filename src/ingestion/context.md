@@ -18,7 +18,12 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
   - `_parse_all_feeds_async(category)` - Async: `aiohttp.ClientSession` with `TCPConnector(limit=20, limit_per_host=3)`, launches all feeds via `asyncio.gather()`
   - `parse_all_feeds(category)` - Sync wrapper (`asyncio.run()`) for standalone use only
   - `scrape_fallback(feed_name)` - Sync BeautifulSoup fallback for broken RSS
+  - `_articles_from_listing(soup, config, feed_name)` - Shared by both scrapers: applies `link_filter` **before** any cap, then keeps at most `MAX_SCRAPED_ARTICLES` (20); without a filter it reads the first `MAX_LISTING_ELEMENTS` (50) DOM elements. Until 2026-10-26 a "first 500 elements" cap ran before the filter, so CSIS's article links (DOM position ~1160) were always dropped, and the sync scraper ignored `link_filter` entirely
+  - **Scraped items** carry `scraped: True` and `published = fetched_at` (fetch time, on purpose: ISW/CFR must stay inside the 1-day clustering and report windows). The pipeline drops them after extraction if the page date is older than the window
+  - **Stale-feed trigger** (`STALE_FEED_DAYS = 60`, `_is_stale_feed`): a feed whose newest dated entry is older than 60 days counts as failed and its fallback runs (fallback items replace the feed items when it returns any). Before 2026-10-26 the fallback ran only on 0 entries, so CSIS `rss.xml` serving 2016 events never reached it
+  - **`status: unsupported`** in `feeds.yaml`: `_load_config` skips the feed (logged once per run); `scripts/check_source_freshness.py` still lists it. Optional `max_stale_days` per feed is read only by that script
   - `FALLBACK_SCRAPERS` - Config for sites needing HTML scraping (Defense One, CFR, CSIS, ECFR, ISS Africa)
+    - **Think-tank feeds repaired 2026-10-26** (change `ingestion-freshness-fix`): CSIS → `feeds.yaml` points at the `/analysis` HTML listing (rss.xml serves 2016 events; last real article 2026-07-08), scraper `link_based` with `link_filter ^/analysis/[a-z0-9-]+$` (~8 current items); RUSI → `rss/latest-publications.xml` (0 articles ever from the JS listing); Chatham House → `path/whatsnew.xml` (the HTML listing 403s to the GitHub runner since 2026-10-07; article pages also 403 to curl_cffi's newest `chrome` fingerprint but pass with Scrapling `Fetcher`); ECFR → `feed/atom/` (`/feed/` 403s; the `/publications/` scraper listed ~10 slowly changing items). The RUSI/Chatham/ECFR scrapers stay as backup
     - **CFR selector fixed 2026-07-09**: CFR restructured their site, retiring `/article/`, `/blog/`, `/report/` paths in favor of a single `/articles/` (plural) path for all content types. Selector updated accordingly. The RSS URL in `feeds.yaml` (`cfr.org/feed/all`) 404s — CFR has no public RSS anymore — so this fallback is the *only* path for CFR content, triggered on every run via the RSS-failure branch in `parse_feed`/`_fetch_and_parse_feed`. This is expected, not a bug.
     - **ISW (`ISW - Ukraine Conflict`, `ISW - Iran Update`) intentionally has no RSS**: `feeds.yaml` points directly at the HTML analysis page (`understandingwar.org/analysis/...`), which `feedparser` always fails to parse as XML ("not well-formed" warning is expected noise on every run) before falling through to the Scrapling Tier-1 fallback configured here. See also `content_extractor.py`'s `SCRAPLING_TIER1_DOMAINS` comment.
     - **Janes Defence Weekly has no fallback and no working RSS** (`feeds.yaml:105`, 404) — reliably produces 0 articles. No public feed found (likely a paid-service RSS retirement); left as-is pending a manual decision on whether to build a dedicated scraper or drop the source.
@@ -49,8 +54,17 @@ A single `asyncio.run()` in `pipeline.run()` orchestrates both feed parsing and 
 
 - `pipeline.py` - Main orchestration
   - `IngestionPipeline` class - End-to-end workflow
-  - `_run_async(category, extract_content, max_age_days)` - Async core: calls `_parse_all_feeds_async()` and `_extract_batch_async()` directly (no sync wrappers)
-  - `run(category, max_age_days)` - Single `asyncio.run(self._run_async(...))` entry point
+  - `_run_async(category, extract_content, window_days)` - Async core: calls `_parse_all_feeds_async()` and `_extract_batch_async()` directly (no sync wrappers)
+  - `run(category, window_days=7)` - Single `asyncio.run(self._run_async(...))` entry point
+  - **Selection, stage 1.7 (2026-10-26, change `ingestion-freshness-fix`)** — replaced the 24h publication-date filter, which lost ~60% of RAND reports and every EveryCRSReport item (they stamp a nominal time and post later):
+    - `select_new_items(items, attempted_links, now, window_days=7, max_items=600)` - pure rule: link not attempted, published within the window (naive datetimes = UTC). Undated items are kept as copies with `published = fetched_at`. Newest first, undated last
+    - "Attempted" = in `articles.link` or `ingestion_seen_links` (migration 049), one query via `DatabaseManager.get_attempted_links`, run **before** extraction
+    - `MAX_SELECTED_PER_RUN = 600` bounds the first-run backfill (~4 min extraction vs the 900 s step timeout); items over the cap are not recorded, so the next run takes them
+    - Links are recorded **after** extraction (`_record_attempted`), never before: `daily_pipeline.py` retries ingestion once after a libxml2 abort, and a pre-extraction record would make the retry select nothing. Recording covers every selected link, including old scraped pages dropped at step 2.1, so they are not retried. Nothing is recorded when `extract_content=False`
+    - Rows older than 30 days are pruned at the start of each run. `INGESTION_RETRY_RUN=true` (workflow input `retry_ingestion`) first deletes today's (UTC) rows, for a same-day manual re-run
+    - DB failure: lookup error → `report_run_warning` + legacy 24h filter (`_legacy_age_filter`); insert error → warning, items kept. Ingestion never fails because of `ingestion_seen_links`
+    - Step 2.1 `_drop_old_scraped_pages`: a `scraped` item whose extracted page date (`full_content['date']`) is older than the window is dropped (`stats.scraped_too_old`); `published` is never overwritten
+    - Funnel counters in `IngestionRunStats`: `already_attempted`, `age_filtered`, `over_cap`, `scraped_too_old`
   - `deduplicate_by_quick_hash()` - MD5 hash(link + title) deduplication (Phase 1)
   - `get_summary()` - Statistics by category/source
   - Auto-saves JSON to `data/articles_{timestamp}.json`

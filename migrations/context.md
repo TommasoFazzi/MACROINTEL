@@ -175,6 +175,13 @@ The **OntologyManager** (`src/knowledge/ontology_manager.py`) loads `config/asse
   - Applied in prod automatically by the deploy (backend entrypoint, 2026-10-10). Idempotent (`CREATE TABLE IF NOT EXISTS`), additive.
   - Rollback: `048_report_generation_context_rollback.sql` (drops the table — lossy, captured prompts cannot be regenerated).
 
+### Ingestion Freshness (2026-10-26)
+
+- `049_ingestion_seen_links.sql` — `ingestion_seen_links(link TEXT PK, source TEXT, first_seen_at TIMESTAMPTZ DEFAULT NOW())` + index on `first_seen_at` (`openspec/changes/ingestion-freshness-fix/`). Links ingestion has selected and extracted. Together with `articles.link` it defines "already attempted" for `select_new_items` in `src/ingestion/pipeline.py`, which replaced the 24h publication-date filter. Needed because links dropped after extraction (relevance filter, content-hash duplicate, failed extraction, old scraped page) never reach `articles`.
+  - Written after extraction (never before: the crash retry must reselect the same items); rows older than 30 days pruned each run; `INGESTION_RETRY_RUN` deletes today's rows.
+  - Not exposed to Oracle. Idempotent, additive.
+  - Rollback: `049_ingestion_seen_links_rollback.sql` (drops the table; lossless for articles — ingestion then falls back to the 24h filter until the code is reverted).
+
 ## Applied in Production
 
 > **How migrations reach prod:** `deploy/entrypoint.sh` runs `scripts/run_migrations.py` on every backend container start, so each deploy applies any new file automatically and records it in `schema_migrations`. A failing migration blocks the backend from starting (`set -euo pipefail`). `migrate.yml` runs the same script inside the running container. It is useful only *after* a deploy has finished: before that, the old image does not contain the new files. The source of truth is `SELECT * FROM schema_migrations`, not the list below.
@@ -218,6 +225,7 @@ Migrations applied to the Hetzner production database (as of 2026-03-24):
   → 045 (narrative_themes centroid registry + community_id_kmeans_shadow — additive, numbered before 046 but written later; no dependency on 046)
   → 047 (one-off archive of stuck emerging storylines)
   → 048 (report_generation_context — additive, depends only on reports)
+  → 049 (ingestion_seen_links — additive, no dependencies)
 ```
 
 Run a single migration:

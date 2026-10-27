@@ -21,6 +21,7 @@ RSS Feeds (56 sources) + Structured Data (OpenSanctions, UCDP, World Bank, IMF W
     ▼
 Ingestion ── async aiohttp (parallel) ── Trafilatura → Scrapling → Newspaper3k
     │        2-phase deduplication      Filtro 1: keyword blocklist
+    │        New-link selection (7-day window, ingestion_seen_links — not a 24h age filter)
     │        PDF auto-detection (2-level, pymupdf4llm)
     │
     ▼

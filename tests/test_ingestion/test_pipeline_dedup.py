@@ -25,7 +25,8 @@ def pipeline():
         pipeline = IngestionPipeline(
             config_path="config/feeds.yaml",
             output_dir="data",
-            extract_full_content=True
+            extract_full_content=True,
+            db=MagicMock(**{'get_attempted_links.return_value': set()})
         )
 
         return pipeline
@@ -216,7 +217,7 @@ def test_run_calls_deduplicate_after_parsing(pipeline):
             result = pipeline.run(
                 save_output=False,
                 extract_content=False,
-                max_age_days=7
+                window_days=7
             )
 
             # Verifica che deduplicate sia stato chiamato
@@ -240,7 +241,7 @@ def test_run_returns_empty_if_all_duplicates(pipeline):
         result = pipeline.run(
             save_output=False,
             extract_content=False,
-            max_age_days=7
+            window_days=7
         )
 
         # Dovrebbe rimanere 1 articolo (il primo)
@@ -266,7 +267,7 @@ def test_run_dedup_before_content_extraction(pipeline):
             pipeline.run(
                 save_output=False,
                 extract_content=True,
-                max_age_days=7
+                window_days=7
             )
 
             # Verifica che _extract_batch_async riceva solo 2 articoli (post-dedup)

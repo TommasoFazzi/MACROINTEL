@@ -9,15 +9,81 @@ import os
 import re
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Optional, Set, Tuple
 
 from .feed_parser import FeedParser
 from .content_extractor import ContentExtractor
 from ..utils.logger import get_logger
 from ..utils.ingestion_logger import IngestionRunStats
+from ..utils.run_summary import report_run_warning
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Feed item selection (change ingestion-freshness-fix)
+# An item is extracted when its link was never attempted (not in articles,
+# not in ingestion_seen_links) and it was published within the window.
+# Selecting by publication age alone lost late-posted items: RAND and
+# EveryCRSReport stamp a nominal time and add the entry to the feed hours later.
+# ---------------------------------------------------------------------------
+DEFAULT_WINDOW_DAYS = 7
+MAX_SELECTED_PER_RUN = 600  # first-run backfill bound (~4 min extraction, step timeout 900s)
+SEEN_LINKS_RETENTION_DAYS = 30
+LEGACY_WINDOW_DAYS = 1  # fallback rule when the attempted-links lookup fails
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Naive datetimes are UTC (feedparser *_parsed values are UTC)."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def _parse_page_date(value) -> Optional[datetime]:
+    """Parse an extracted page date (trafilatura 'YYYY-MM-DD', newspaper isoformat)."""
+    if not value:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(str(value)))
+    except ValueError:
+        return None
+
+
+def select_new_items(
+    items: List[Dict],
+    attempted_links: Set[str],
+    now: datetime,
+    window_days: int = DEFAULT_WINDOW_DAYS,
+    max_items: int = MAX_SELECTED_PER_RUN,
+) -> List[Dict]:
+    """
+    Pure selection rule: new link, published within `window_days` of `now` (or undated).
+
+    Undated items are returned as copies with `published = fetched_at`, so they
+    stay inside downstream published_date windows. Result is newest first,
+    undated last, at most `max_items` long. Input items are not modified.
+    """
+    cutoff = _as_utc(now) - timedelta(days=window_days)
+    dated, undated = [], []
+    for item in items:
+        if item.get('link') in attempted_links:
+            continue
+        published = item.get('published')
+        if published is None:
+            undated.append({**item, 'published': item.get('fetched_at') or now})
+        elif _as_utc(published) >= cutoff:
+            dated.append(item)
+    dated.sort(key=lambda a: _as_utc(a['published']), reverse=True)
+    return (dated + undated)[:max_items]
+
+
+def _legacy_age_filter(items: List[Dict], now: datetime, days: int = LEGACY_WINDOW_DAYS) -> List[Dict]:
+    """Pre-change rule, used only when the DB lookup fails: dated and within `days`."""
+    cutoff = _as_utc(now) - timedelta(days=days)
+    return [a for a in items if a.get('published') and _as_utc(a['published']) >= cutoff]
+
+
+def _is_retry_run() -> bool:
+    return os.environ.get("INGESTION_RETRY_RUN", "").strip().lower() in ("1", "true", "yes")
 
 # ---------------------------------------------------------------------------
 # Off-topic keyword blocklist
@@ -159,7 +225,8 @@ class IngestionPipeline:
         self,
         config_path: str = "config/feeds.yaml",
         output_dir: str = "data",
-        extract_full_content: bool = True
+        extract_full_content: bool = True,
+        db=None
     ):
         """
         Initialize the ingestion pipeline.
@@ -168,13 +235,99 @@ class IngestionPipeline:
             config_path: Path to feeds configuration
             output_dir: Directory to save extracted data
             extract_full_content: Whether to extract full article content
+            db: Optional DatabaseManager for attempted-link lookups; created
+                lazily from DATABASE_URL when first needed
         """
         self.feed_parser = FeedParser(config_path)
         self.content_extractor = ContentExtractor() if extract_full_content else None
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        self._db = db
 
         logger.info("Ingestion pipeline initialized")
+
+    def _get_db(self):
+        if self._db is None:
+            from ..storage.database import DatabaseManager
+            self._db = DatabaseManager()
+        return self._db
+
+    def _select_items(
+        self, articles: List[Dict], stats: IngestionRunStats, window_days: int
+    ) -> Tuple[List[Dict], bool]:
+        """
+        Stage 1.7: keep never-attempted links published within the window.
+
+        Returns (selected, used_db). On any DB error, warns and applies the
+        legacy 24h filter (used_db=False), so ingestion never fails on
+        ingestion_seen_links.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            db = self._get_db()
+            if _is_retry_run():
+                day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                cleared = db.clear_seen_links_since(day_start)
+                logger.info(f"INGESTION_RETRY_RUN: cleared {cleared} links first seen today (UTC)")
+            pruned = db.prune_seen_links(SEEN_LINKS_RETENTION_DAYS)
+            if pruned:
+                logger.info(f"Pruned {pruned} attempted links older than {SEEN_LINKS_RETENTION_DAYS} days")
+            attempted = db.get_attempted_links([a['link'] for a in articles if a.get('link')])
+        except Exception as e:
+            logger.error(f"Attempted-links lookup failed: {e}")
+            report_run_warning(
+                "Ingestion selection fallback",
+                f"attempted-links lookup failed ({type(e).__name__}); used the 24h publication filter",
+            )
+            selected = _legacy_age_filter(articles, now)
+            stats.age_filtered = len(articles) - len(selected)
+            return selected, False
+
+        eligible = select_new_items(articles, attempted, now, window_days, max_items=len(articles))
+        selected = eligible[:MAX_SELECTED_PER_RUN]
+        stats.already_attempted = sum(1 for a in articles if a.get('link') in attempted)
+        stats.over_cap = len(eligible) - len(selected)
+        stats.age_filtered = len(articles) - stats.already_attempted - len(eligible)
+        logger.info(
+            f"Selected {len(selected)} new items (already attempted {stats.already_attempted}, "
+            f"older than {window_days}d {stats.age_filtered}, over cap {stats.over_cap})"
+        )
+        return selected, True
+
+    def _record_attempted(self, selected: List[Dict]) -> None:
+        """Record selected links after extraction. Never before: a crash must leave nothing recorded."""
+        try:
+            inserted = self._get_db().record_seen_links(selected)
+            logger.info(f"Recorded {inserted} new attempted links")
+        except Exception as e:
+            logger.error(f"Recording attempted links failed: {e}")
+            report_run_warning(
+                "Ingestion attempted-links insert failed",
+                f"{type(e).__name__}; these {len(selected)} links may be re-extracted next run",
+            )
+
+    @staticmethod
+    def _drop_old_scraped_pages(
+        articles: List[Dict], now: datetime, window_days: int
+    ) -> Tuple[List[Dict], int]:
+        """
+        Drop scraped items whose extracted page date is older than the window.
+
+        Scrapers list whatever a listing page shows, including old pages. Their
+        `published` stays the fetch time (ISW/CFR must remain inside the 1-day
+        clustering and report windows); the page date is used only to drop.
+        """
+        cutoff = _as_utc(now) - timedelta(days=window_days)
+        kept, dropped = [], 0
+        for a in articles:
+            if a.get('scraped'):
+                page_date = _parse_page_date((a.get('full_content') or {}).get('date'))
+                if page_date is not None and page_date < cutoff:
+                    dropped += 1
+                    logger.debug(f"Dropped old scraped page ({page_date.date()}): {a.get('link')}")
+                    continue
+            kept.append(a)
+        return kept, dropped
 
     def deduplicate_by_quick_hash(self, articles: List[Dict]) -> List[Dict]:
         """
@@ -227,7 +380,7 @@ class IngestionPipeline:
         self,
         category: Optional[str] = None,
         extract_content: bool = True,
-        max_age_days: int = 1
+        window_days: int = DEFAULT_WINDOW_DAYS
     ) -> Tuple[List[Dict], IngestionRunStats]:
         """
         Async core of the ingestion pipeline.
@@ -321,22 +474,13 @@ class IngestionPipeline:
                     logger.info(f"[Romania allowlist] {blk}/{total} filtered (source: {src})")
             articles = post_allowlist
 
-        # Filter articles by age (sync, pure computation)
+        # Step 1.7: Select new links within the window (DB lookup, before extraction)
+        logger.info("\n[STEP 1.7] Selecting never-attempted items...")
         stats.stage_start("1.7_age_filter")
-        if max_age_days > 0:
-            cutoff_date = datetime.now() - timedelta(days=max_age_days)
-            original_count = len(articles)
-            articles = [
-                a for a in articles
-                if a.get('published') and a['published'] >= cutoff_date
-            ]
-            filtered_count = original_count - len(articles)
-            stats.age_filtered = filtered_count
-            if filtered_count > 0:
-                logger.info(f"Filtered out {filtered_count} articles older than {max_age_days} day(s)")
-            logger.info(f"{len(articles)} recent articles remaining")
+        articles, used_db = self._select_items(articles, stats, window_days)
         stats.stage_end("1.7_age_filter")
         stats.count_post_age = len(articles)
+        selected = articles
 
         # Step 2: Extract full content concurrently
         if extract_content and self.content_extractor:
@@ -367,6 +511,19 @@ class IngestionPipeline:
             logger.info(
                 f"Extracted full content for {stats.extraction_ok}/{stats.extraction_attempted} articles"
             )
+
+            # Step 2.1: Drop scraped pages older than the window (by extracted page date)
+            articles, stats.scraped_too_old = self._drop_old_scraped_pages(
+                articles, datetime.now(timezone.utc), window_days
+            )
+            if stats.scraped_too_old:
+                logger.info(f"Dropped {stats.scraped_too_old} scraped pages older than {window_days}d")
+
+            # Step 2.2: Record every selected link, including the pages dropped above.
+            # Only after extraction completed: a crash mid-extraction (daily_pipeline
+            # retries ingestion once) must leave nothing recorded.
+            if used_db:
+                self._record_attempted(selected)
         else:
             logger.info("\n[STEP 2] Skipping full content extraction")
 
@@ -377,7 +534,7 @@ class IngestionPipeline:
         category: Optional[str] = None,
         save_output: bool = True,
         extract_content: bool = True,
-        max_age_days: int = 1
+        window_days: int = DEFAULT_WINDOW_DAYS
     ) -> List[Dict]:
         """
         Run the complete ingestion pipeline.
@@ -388,8 +545,9 @@ class IngestionPipeline:
         Args:
             category: Optional category filter
             save_output: Whether to save output to file
-            extract_content: Whether to extract full content from URLs
-            max_age_days: Maximum age of articles in days (default: 1)
+            extract_content: Whether to extract full content from URLs.
+                Links are recorded as attempted only when extraction runs.
+            window_days: Publication window for never-attempted links (default: 7)
 
         Returns:
             List of processed articles
@@ -399,7 +557,7 @@ class IngestionPipeline:
         logger.info("=" * 80)
 
         articles, stats = asyncio.run(
-            self._run_async(category, extract_content, max_age_days)
+            self._run_async(category, extract_content, window_days)
         )
 
         # Step 3: Save output (sync I/O, outside async loop)
@@ -514,7 +672,7 @@ if __name__ == "__main__":
         category=None,  # Use None for all categories, or specify: 'intelligence', 'tech_economy', etc.
         save_output=True,
         extract_content=True,  # Extract full article content (required for NLP analysis)
-        max_age_days=1  # Only articles from last 24 hours
+        window_days=DEFAULT_WINDOW_DAYS  # Never-attempted links published in the last 7 days
     )
 
     # Print summary

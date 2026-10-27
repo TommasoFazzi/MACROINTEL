@@ -13,7 +13,7 @@ from datetime import datetime, date
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2.extras import Json, execute_batch
+from psycopg2.extras import Json, execute_batch, execute_values
 from psycopg2.pool import SimpleConnectionPool
 from pgvector.psycopg2 import register_vector
 
@@ -647,6 +647,59 @@ class DatabaseManager:
         logger.info(f"  Total chunks inserted: {stats['total_chunks']}")
 
         return stats
+
+    # ── Ingestion attempted links (migration 049) ────────────────────────────
+    # Errors propagate: the ingestion pipeline decides how to degrade.
+
+    def get_attempted_links(self, links: List[str]) -> set:
+        """Return the subset of links already in articles or ingestion_seen_links."""
+        if not links:
+            return set()
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT link FROM articles WHERE link = ANY(%s)
+                       UNION
+                       SELECT link FROM ingestion_seen_links WHERE link = ANY(%s)""",
+                    (links, links)
+                )
+                return {row[0] for row in cur.fetchall()}
+
+    def record_seen_links(self, items: List[Dict]) -> int:
+        """Insert the items' links into ingestion_seen_links; existing links are kept."""
+        rows = [(a['link'], a.get('source')) for a in items if a.get('link')]
+        if not rows:
+            return 0
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    "INSERT INTO ingestion_seen_links (link, source) VALUES %s "
+                    "ON CONFLICT (link) DO NOTHING",
+                    rows
+                )
+                return cur.rowcount
+
+    def prune_seen_links(self, days: int = 30) -> int:
+        """Delete ingestion_seen_links rows first seen more than `days` days ago."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ingestion_seen_links "
+                    "WHERE first_seen_at < NOW() - make_interval(days => %s)",
+                    (days,)
+                )
+                return cur.rowcount
+
+    def clear_seen_links_since(self, since: datetime) -> int:
+        """Delete ingestion_seen_links rows first seen at or after `since` (same-day re-run)."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ingestion_seen_links WHERE first_seen_at >= %s",
+                    (since,)
+                )
+                return cur.rowcount
 
     def semantic_search(
         self,

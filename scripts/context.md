@@ -132,6 +132,9 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 ### Quality Auditing
 - `audit_entity_quality.py` - Audit entity data quality: checks for garbage entities, geocoding gaps, low-mention counts, and duplicate names. Outputs a quality report to stdout.
 
+### Source Freshness
+- `check_source_freshness.py` - **Per-feed staleness report** (change `ingestion-freshness-fix`). For every feed in `config/feeds.yaml`, one query for the newest `articles.created_at` with `source` = feed name; lists stale feeds (older than `max_stale_days`, default 14, per-feed override in `feeds.yaml`), never-ingested feeds and `status: unsupported` feeds. Prints a markdown table and appends it to `$GITHUB_STEP_SUMMARY`. Runs as the `Source freshness` step of `pipeline.yml` with `if: always()`. Exit 0 whatever it finds; 2 only if the DB query fails. Flag: `--config`.
+
 ### Static Data Freshness
 - `check_static_data_freshness.py` - **Upstream freshness checker**: queries the DB for current state of each static table and does lightweight upstream checks (no bulk downloads) to detect available updates. Covers IMF WEO, World Bank, UCDP, and OpenSanctions. CLI flag: `--no-db` (upstream only, no DB access). Requires `UCDP_API_TOKEN` for UCDP checks.
 
