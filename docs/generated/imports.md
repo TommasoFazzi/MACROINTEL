@@ -32,6 +32,7 @@ flowchart LR
     hitl --> llm
     hitl --> storage
     hitl --> utils
+    ingestion --> storage
     ingestion --> utils
     integrations --> storage
     integrations --> utils
@@ -119,7 +120,7 @@ flowchart LR
 **src/api** → `src/ingestion`, `src/integrations`, `src/llm`, `src/nlp`, `src/services`, `src/storage`, `src/utils`
 **src/finance** → `src/integrations`, `src/storage`, `src/utils`
 **src/hitl** → `src/llm`, `src/storage`, `src/utils`
-**src/ingestion** → `src/utils`
+**src/ingestion** → `src/storage`, `src/utils`
 **src/integrations** → `src/storage`, `src/utils`
 **src/knowledge** → `src/utils`
 **src/llm** → `src/finance`, `src/integrations`, `src/knowledge`, `src/macro`, `src/nlp`, `src/services`, `src/storage`, `src/utils`
