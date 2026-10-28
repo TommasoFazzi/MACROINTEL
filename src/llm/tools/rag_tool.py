@@ -208,7 +208,7 @@ class RAGTool(BaseTool):
                     "What decay rate matches this query type?"
                 ),
             },
-            "query": {"type": "string", "description": "Natural language search query (core topic, without temporal noise)"},
+            "query": {"type": "string", "description": "Natural language search query IN ENGLISH (core topic, without temporal noise). Translate the user's question into English: the corpus is mostly English."},
             "mode": {
                 "type": "string",
                 "enum": ["both", "factual", "strategic"],

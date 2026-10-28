@@ -119,12 +119,12 @@ def test_system_prompt_sourcing_rules():
     text invited "topic assente nel DB" claims with no check (query 285).
     """
     prompt = OracleOrchestrator._build_system_prompt(None)
-    assert "REGOLA FONTI — CITA O OMETTI" in prompt
-    assert "OMETTI il dettaglio" in prompt
-    assert "REGOLA ASSENZA" in prompt
-    assert "SOLO se nessun blocco restituito" in prompt
-    assert "Rispetta la forza della fonte" in prompt
-    assert "attribuiscila alla fonte" in prompt
+    assert "SOURCE RULE — CITE OR OMIT" in prompt
+    assert "OMIT the detail" in prompt
+    assert "ABSENCE RULE" in prompt
+    assert "ONLY if no block returned" in prompt
+    assert "Respect the strength of the source" in prompt
+    assert "attribute it to the source" in prompt
     assert "topic assente nel DB" not in prompt
     assert "Non omettere mai le citazioni" not in prompt
 
