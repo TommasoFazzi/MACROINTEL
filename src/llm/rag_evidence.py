@@ -169,7 +169,7 @@ def select_context_documents(data: Dict[str, Any], max_chars: int) -> List[Evide
 def render_verbatim(docs: Sequence[EvidenceDoc], numbers: Sequence[int]) -> str:
     """Header + full text per document (no condensation)."""
     if not docs:
-        return "[RAG: nessun documento trovato]"
+        return "[RAG: no documents found]"
     return "\n\n".join(f"{doc.header(n)}\n{doc.text}" for doc, n in zip(docs, numbers))
 
 

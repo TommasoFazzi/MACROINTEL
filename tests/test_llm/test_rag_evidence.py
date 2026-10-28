@@ -174,7 +174,7 @@ class TestDigestRagResult:
     def test_empty_result(self):
         result = digest_rag_result([], [], MagicMock())
         assert result.mode == "verbatim"
-        assert "nessun documento" in result.text
+        assert "no documents found" in result.text
 
 
 # ── Schema guard ─────────────────────────────────────────────────────────────

@@ -326,7 +326,7 @@ class ReferenceTool(BaseTool):
 
     def _format_sanctions(self, results: List[Dict]) -> str:
         """Format sanctions results (from v_sanctions_public)."""
-        lines = [f"Trovate {len(results)} entità sanzionate:"]
+        lines = [f"Found {len(results)} sanctioned entities:"]
         for r in results:
             datasets = ", ".join(r.get('datasets', [])[:3]) if r.get('datasets') else "N/A"
             line = f"- **{r.get('caption', '?')}** ({r.get('schema_type', '?')}) — Datasets: {datasets}"
@@ -365,7 +365,7 @@ class ReferenceTool(BaseTool):
     def _format_macro_forecast_indicator(self, results: List[Dict]) -> str:
         """Format cross-country IMF WEO comparison for one indicator."""
         if not results:
-            return "[MACRO FORECASTS: Nessun dato trovato]"
+            return "[MACRO FORECASTS: No data found]"
 
         indicator_code = results[0].get("indicator_code") if results else "?"
         label = IMF_INDICATOR_NAMES.get(indicator_code, indicator_code)
@@ -392,7 +392,7 @@ class ReferenceTool(BaseTool):
     def _format_trade_flow(self, results: List[Dict]) -> str:
         """Format trade flow indicators."""
         if not results:
-            return "[TRADE FLOWS: Nessun dato trovato]"
+            return "[TRADE FLOWS: No data found]"
 
         reporter = results[0].get("reporter_name") or results[0].get("reporter_iso3", "?")
         lines = [f"## Flussi commerciali — {reporter}"]

@@ -98,7 +98,8 @@ Intelligence synthesis layer that consumes context from the vector database and 
   - `_t5_client` — `LLMFactory.get("t5")` instance, initialized in `__init__` alongside `_claude_client`
   - `_extract_text_from_response(response)` — extracts text from `response.content` blocks where `block.type == "text"`
   - Forced synthesis on max-iterations: calls `ClaudeClient.generate()` directly (no tool_choice manipulation)
-  - The system prompt asks for a `<DOCUMENTO>…</DOCUMENTO>` wrapper; `_DOCUMENTO_TAG_RE` strips it from the final answer (before memory/logging/response), since react-markdown in `OracleMessage.tsx` escapes raw HTML and would show the tags as literal text
+  - **Language policy (2026-10-28):** prompts, tool descriptions and canned messages are English. The system prompt's `## LANGUAGE` section makes the final answer follow the language of the user's question, and forces tool arguments (`rag_search.query`, `gpe_filter`, `rationale`) into English because the corpus is mostly English and FTS (`websearch_to_tsquery('multilingual')`) matches lexically. Not yet A/B-evaluated: compare `oracle_query_log.metadata->'rag_calls'` before/after 2026-10-28 once enough queries accumulate.
+  - The system prompt is written in English (since 2026-10-28) and asks for a `<DOCUMENT>…</DOCUMENT>` wrapper; `_DOCUMENT_TAG_RE` (also accepts the legacy `<DOCUMENTO>`) strips it from the final answer (before memory/logging/response), since react-markdown in `OracleMessage.tsx` escapes raw HTML and would show the tags as literal text
   - **BYOK removed**: Oracle uses server-side `ANTHROPIC_API_KEY` exclusively (breaking change 2026-04-17)
   - Session management with TTL cleanup daemon thread (2h TTL, 10min cleanup interval)
   - `TTLCache` for SQL results (5min) preserved
