@@ -55,6 +55,27 @@ def get_openbb_service():
 
 logger = get_logger(__name__)
 
+# condense_macro_context(): observed 5-16 s per call (runs 2026-10-11..28).
+CONDENSE_TIMEOUT_S = 90
+CONDENSE_MAX_ATTEMPTS = 2
+
+# Plain JSON-schema dict for Gemini's response_schema: google-generativeai 0.8.5
+# rejects Pydantic constraint keywords (maxItems), so length limits stay in
+# schemas.MacroCondensedContext, which validates the reply.
+MACRO_CONDENSED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "key_themes": {"type": "array", "items": {"type": "string"}},
+        "dominant_sentiment": {"type": "string", "enum": ["RISK_ON", "RISK_OFF", "MIXED"]},
+        "priority_sectors": {"type": "array", "items": {"type": "string"}},
+        "tickers_mentioned": {"type": "array", "items": {"type": "string"}},
+        "geopolitical_hotspots": {"type": "array", "items": {"type": "string"}},
+        "time_horizon_focus": {"type": "string", "enum": ["IMMEDIATE", "SHORT_TERM", "MEDIUM_TERM"]},
+    },
+    "required": ["key_themes", "dominant_sentiment", "priority_sectors",
+                 "tickers_mentioned", "geopolitical_hotspots", "time_horizon_focus"],
+}
+
 
 # =============================================================================
 # Module-level helpers — used by both v1 and v2 report paths
@@ -3602,20 +3623,31 @@ MACRO REPORT TO CONDENSE:
 
 Respond with JSON only:"""
 
-        try:
-            response = self.model.generate_content(
-                contents=[prompt],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.2,
-                }
-            )
+        from .schemas import MacroCondensedContext
 
-            raw_output = response.text
-
-            # Validate with Pydantic
-            from .schemas import MacroCondensedContext
-            validated = MacroCondensedContext.model_validate_json(raw_output)
+        # JSON mode alone let Gemini emit malformed JSON (4 of 14 runs, 2026-10-17..28);
+        # the schema constrains decoding, Pydantic still validates the reply.
+        last_error = None
+        for attempt in range(1, CONDENSE_MAX_ATTEMPTS + 1):
+            raw_output = None
+            try:
+                response = self.model.generate_content(
+                    contents=[prompt],
+                    generation_config={
+                        "response_mime_type": "application/json",
+                        "response_schema": MACRO_CONDENSED_SCHEMA,
+                        "temperature": 0.2,
+                    },
+                    request_options={"timeout": CONDENSE_TIMEOUT_S},
+                )
+                raw_output = response.text
+                validated = MacroCondensedContext.model_validate_json(raw_output)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Condensation attempt {attempt}/{CONDENSE_MAX_ATTEMPTS} failed: {e}")
+                if raw_output is not None:
+                    logger.warning(f"Condensation raw output (first 2000 chars): {raw_output[:2000]!r}")
+                continue
 
             # Estimate tokens (rough: 1 token ~ 4 chars)
             token_estimate = len(raw_output) // 4
@@ -3630,13 +3662,12 @@ Respond with JSON only:"""
                 'token_estimate': token_estimate
             }
 
-        except Exception as e:
-            logger.error(f"Failed to condense macro context: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'condensed': None
-            }
+        logger.error(f"Failed to condense macro context: {last_error}")
+        return {
+            'success': False,
+            'error': str(last_error),
+            'condensed': None
+        }
 
     def extract_macro_signals(
         self,
