@@ -11,6 +11,11 @@ on:
         description: "Report article window end (ISO YYYY-MM-DDTHH:MM). Empty = default last-N-days behavior."
         required: false
         default: ""
+      retry_ingestion:
+        description: "Same-day re-run: forget links first attempted today (UTC) so ingestion selects them again."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -114,9 +119,21 @@ jobs:
           # window so news + macro stay coherent on a late/recovery re-run).
           REPORT_FROM_TIME: ${{ github.event.inputs.from_time }}
           REPORT_TO_TIME: ${{ github.event.inputs.to_time }}
+          # Clears today's ingestion_seen_links rows before selection (src/ingestion/pipeline.py).
+          INGESTION_RETRY_RUN: ${{ github.event.inputs.retry_ingestion }}
         run: |
           mkdir -p logs reports data
           python scripts/daily_pipeline.py
+
+      - name: Source freshness
+        # Always runs, also after a failed pipeline: lists feeds with no recent
+        # article in the run summary. Exits 0 on stale feeds, non-zero only if
+        # the DB cannot be queried.
+        if: always()
+        env:
+          DATABASE_URL: postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@127.0.0.1:5432/intelligence_ita
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/check_source_freshness.py
 
       - name: Upload logs as artifact
         if: always()

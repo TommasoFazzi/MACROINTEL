@@ -14,6 +14,13 @@ Foundation layer that supports all other modules. The logger ensures consistent 
   - Format: `YYYY-MM-DD HH:MM:SS - name - LEVEL - message`
   - Respects `LOG_LEVEL` environment variable (default: INFO)
 
+- `run_summary.py` - Warnings that must reach the GitHub Actions run page
+  - `report_run_warning(title, message)` - Always `logger.warning`; when `GITHUB_STEP_SUMMARY` is set (inherited by `daily_pipeline.py`'s child processes) also appends one markdown line to that file. Never raises
+  - Why not `::warning`: `daily_pipeline.py` captures child output and re-logs it with a prefix, so workflow commands printed by a step never reach the runner
+  - Used by ingestion selection (`src/ingestion/pipeline.py`) for the 24h fallback and failed link inserts
+
+- `ingestion_logger.py` - `IngestionRunStats`, per-run funnel/timing counters for ingestion (incl. `already_attempted`, `over_cap`, `scraped_too_old`); `log_report()` at the end of the run
+
 - `stopwords.py` - Intelligence domain query cleaning
   - `INTELLIGENCE_STOPWORDS` - Set of domain terms to filter (e.g., "report", "briefing", "analysis")
   - `PRESERVE_TERMS` - Critical terms to keep (e.g., "nato", "cyber", "sanctions")

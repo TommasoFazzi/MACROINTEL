@@ -40,7 +40,8 @@ feeds:
     subcategory: "americas"
 
   - name: "European Council on Foreign Relations"
-    url: "https://ecfr.eu/feed/"
+    # /feed/ answers 403 (checked 2026-10-26); the Atom feed carries articles + publications
+    url: "https://ecfr.eu/feed/atom/"
     category: "intelligence"
     subcategory: "european_affairs"
 
@@ -109,7 +110,8 @@ feeds:
 
   # THINK TANKS
   - name: "CSIS - Center for Strategic and International Studies"
-    url: "https://www.csis.org/rss.xml"
+    # HTML listing, not RSS: rss.xml serves 2016 events. FALLBACK_SCRAPERS does the work.
+    url: "https://www.csis.org/analysis"
     category: "intelligence"
     subcategory: "think_tank"
 
@@ -119,7 +121,8 @@ feeds:
     subcategory: "think_tank"
 
   - name: "RUSI"
-    url: "https://www.rusi.org/explore-our-research/publications/"
+    # The listing page has no server-side article links (0 articles ever); RSS found 2026-10-26
+    url: "https://www.rusi.org/rss/latest-publications.xml"
     category: "intelligence"
     subcategory: "think_tank"
 
@@ -205,7 +208,8 @@ feeds:
     subcategory: "defense"
 
   - name: "Chatham House"
-    url: "https://www.chathamhouse.org/expert-comment"
+    # The HTML listing answers 403 to the GitHub runner since 2026-10-07; RSS found 2026-10-26
+    url: "https://www.chathamhouse.org/path/whatsnew.xml"
     category: "intelligence"
     subcategory: "think_tank"
 

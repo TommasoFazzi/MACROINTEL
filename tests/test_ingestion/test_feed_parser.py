@@ -397,3 +397,21 @@ def test_extract_article_handles_exception(feed_parser):
     article = feed_parser._extract_article_data(bad_entry, "Test")
 
     assert article is None  # Ritorna None invece di crashare
+
+
+@pytest.mark.unit
+def test_listing_link_filter_applies_before_any_cap():
+    """CSIS: article links sit after ~1150 other links; an early DOM cap used to drop them all."""
+    from bs4 import BeautifulSoup
+    noise = ''.join(f'<a href="/about/{i}">About {i}</a>' for i in range(1200))
+    arts = ''.join(f'<a href="/analysis/item-{i}"></a><a href="/analysis/item-{i}">Item {i}</a>' for i in range(25))
+    soup = BeautifulSoup(f'<html><body>{noise}{arts}</body></html>', 'html.parser')
+    config = {'url': 'https://www.csis.org/analysis', 'selector': 'a[href]', 'link_based': True,
+              'link_filter': r'^/analysis/[a-z0-9-]+$', 'category': 'intelligence', 'subcategory': 'think_tank'}
+
+    items = FeedParser._articles_from_listing(soup, config, 'CSIS')
+
+    assert len(items) == 20  # output cap
+    assert items[0]['link'] == 'https://www.csis.org/analysis/item-0'
+    assert items[0]['title'] == 'Item 0'  # empty image link skipped, titled link kept
+    assert all(a['scraped'] and a['extraction_method'] == 'fallback_scraper' for a in items)

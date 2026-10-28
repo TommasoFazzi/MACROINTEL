@@ -33,6 +33,10 @@ Central persistence layer between the processing pipeline and intelligence gener
   **Core Operations:**
   - `save_article(article, _known_links=None, _known_hashes=None)` - Store a single article with content-hash deduplication; optional pre-loaded sets skip DB duplicate-check round-trips
   - `batch_save()` - Bulk insert with bulk dedup pre-check: pre-loads existing links + content_hashes in 2 queries (instead of 2 per-article DB queries), eliminating N+1 round-trips. Falls back to per-article checks if bulk pre-check fails. Auto-populates `source_id` and `domain` via source cache.
+  - **Ingestion attempted links (migration 049)** — errors propagate, the ingestion pipeline decides how to degrade:
+    - `get_attempted_links(links) -> set` - one query, `articles.link` UNION `ingestion_seen_links.link` with `= ANY(%s)`
+    - `record_seen_links(items)` - `execute_values` insert of `(link, source)`, `ON CONFLICT (link) DO NOTHING`
+    - `prune_seen_links(days=30)` / `clear_seen_links_since(ts)` - retention prune; same-day re-run (`INGESTION_RETRY_RUN`)
   - `semantic_search()` - Vector similarity search on chunks with filters
   - `full_text_search()` - PostgreSQL `ts_query` for keyword search; like `semantic_search()` it `LEFT JOIN`s `intelligence_sources` and returns `source_type` / `authority_score` (needed by RAGTool's source-type decay override and authority rerank)
   - `hybrid_search()` - Combines vector + keyword with RRF fusion (or `_weighted_fusion`). On a chunk found by both searches the **vector entry wins** (it carries `similarity`/`embedding`); before 2026-10 the keyword entry overwrote it and dropped the source metadata
@@ -98,6 +102,7 @@ These views are consumed by both the report generator (top 10 storylines for nar
 | **`intelligence_sources`** | Anagrafica fonti: name, domain, source_type, authority_score (1-5), llm_context, feed_names[], has_rss (migration 024) |
 | `articles` | Full articles, embeddings, NLP metadata, entities (JSONB); `source_id` FK → intelligence_sources, `domain` denormalizzato (migration 024) |
 | `chunks` | 500-word chunks with 384-dim embeddings for RAG |
+| `ingestion_seen_links` | Links ingestion already selected and extracted (link PK, source, first_seen_at); 30-day retention; read with `articles.link` to pick never-attempted feed items (migration 049) |
 | `reports` | Generated intelligence reports (draft/final/status) |
 | `report_feedback` | Human corrections, ratings, comments |
 | `entities` | Named entities with coordinates for map; includes `intelligence_score` column (migration 019) |
