@@ -339,7 +339,7 @@ class SpatialTool(BaseTool):
         radius = metadata.get("radius_km", "?")
 
         lines = [f"## Analisi Spaziale — Centro: {center}, Raggio: {radius}km"]
-        lines.append(f"Totale risultati: {data['total']}")
+        lines.append(f"Total results: {data['total']}")
 
         for layer, items in data.get("by_layer", {}).items():
             lines.append(f"\n### {layer.upper()} ({len(items)} elementi)")
