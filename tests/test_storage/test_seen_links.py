@@ -51,13 +51,23 @@ def test_empty_inputs_make_no_query(db_and_cursor):
 
 def test_record_inserts_link_and_source_on_conflict_do_nothing(db_and_cursor):
     db, cur = db_and_cursor
-    with patch("src.storage.database.execute_values") as ev:
-        db.record_seen_links([{"link": "https://a", "source": "RAND"}, {"link": "https://b"}])
+    with patch("src.storage.database.execute_values", return_value=[(1,), (1,)]) as ev:
+        assert db.record_seen_links([{"link": "https://a", "source": "RAND"}, {"link": "https://b"}]) == 2
 
     _, sql, rows = ev.call_args.args
     assert sql.startswith("INSERT INTO ingestion_seen_links (link, source) VALUES %s")
-    assert "ON CONFLICT (link) DO NOTHING" in sql
+    assert "ON CONFLICT (link) DO NOTHING RETURNING 1" in sql
     assert rows == [("https://a", "RAND"), ("https://b", None)]
+    assert ev.call_args.kwargs == {"fetch": True}
+
+
+def test_record_counts_rows_across_pages(db_and_cursor):
+    # 2026-10-29 first run logged "Recorded 91" for 391 links: rowcount of the last page only.
+    db, cur = db_and_cursor
+    cur.rowcount = 91
+    items = [{"link": f"https://x/{i}"} for i in range(391)]
+    with patch("src.storage.database.execute_values", return_value=[(1,)] * 391):
+        assert db.record_seen_links(items) == 391
 
 
 def test_prune_and_clear(db_and_cursor):

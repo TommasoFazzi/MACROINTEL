@@ -672,13 +672,16 @@ class DatabaseManager:
             return 0
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                execute_values(
+                # execute_values sends pages of 100 rows and cur.rowcount holds only the
+                # last page, so count the RETURNING rows instead.
+                inserted = execute_values(
                     cur,
                     "INSERT INTO ingestion_seen_links (link, source) VALUES %s "
-                    "ON CONFLICT (link) DO NOTHING",
-                    rows
+                    "ON CONFLICT (link) DO NOTHING RETURNING 1",
+                    rows,
+                    fetch=True
                 )
-                return cur.rowcount
+                return len(inserted)
 
     def prune_seen_links(self, days: int = 30) -> int:
         """Delete ingestion_seen_links rows first seen more than `days` days ago."""
