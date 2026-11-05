@@ -21,6 +21,8 @@ feeds:
 
   - name: "China Power - The Diplomat"
     url: "https://thediplomat.com/category/china-power/feed/"
+    # Every recent item is also in /feed/, which is parsed first and gets the credit (2026-11-04)
+    max_stale_days: 365
     category: "intelligence"
     subcategory: "china"
 
@@ -58,6 +60,8 @@ feeds:
 
   - name: "Security - The Diplomat"
     url: "https://thediplomat.com/topics/security/feed/"
+    # Every recent item is also in /feed/, which is parsed first and gets the credit (2026-11-04)
+    max_stale_days: 365
     category: "intelligence"
     subcategory: "security"
 
@@ -78,11 +82,13 @@ feeds:
     subcategory: "middle_east"
 
   - name: "The Jerusalem Post"
-    url: "https://www.jpost.com/rss/rssfeedsheadlines.aspx"
+    # rssfeedsheadlines.aspx is frozen at 2025-06 (checked 2026-11-04)
+    url: "https://rss.jpost.com/rss/rssfeedsfrontpage.aspx"
     category: "intelligence"
     subcategory: "middle_east"
 
   - name: "Times of Israel"
+    # Works locally, but the runner gets HTML (0 entries since 2026-07). FALLBACK_SCRAPERS is the backup.
     url: "https://www.timesofisrael.com/feed/"
     category: "intelligence"
     subcategory: "middle_east"
@@ -104,6 +110,8 @@ feeds:
     subcategory: "defense"
 
   - name: "Janes Defence Weekly"
+    # 404, no public replacement found (checked 2026-11-04)
+    status: unsupported
     url: "https://www.janes.com/feeds/defence-news"
     category: "intelligence"
     subcategory: "defense"
@@ -148,6 +156,8 @@ feeds:
 
   # AMERICAS
   - name: "Americas Quarterly"
+    # 403 Cloudflare challenge; never produced a saved article (checked 2026-11-04)
+    status: unsupported
     url: "https://www.as-coa.org/rss.xml"
     category: "intelligence"
     subcategory: "americas"

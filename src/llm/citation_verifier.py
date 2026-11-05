@@ -37,6 +37,7 @@ _MAX_CLAIMS = 40
 _JUDGE_BATCH_SIZE = 10
 _MAX_REFS_PER_CLAIM = 3
 _MAX_FLAGGED = 30
+_JSON_ATTEMPTS = 2
 _T3_TIMEOUT_S = 180  # extraction emits up to ~4k tokens; the tier default (45s) is too short
 _MARKER_RE = re.compile(r"\[(Article|Storyline)s?\s+([\d,\s]+)\]")
 
@@ -149,10 +150,17 @@ class CitationVerifier:
     # -- steps ----------------------------------------------------------------
 
     def _call(self, system: str, user: str, max_tokens: int) -> dict:
-        raw = self._client.generate(
-            user, system=system, temperature=0.0, max_tokens=max_tokens, json_mode=True
-        )
-        return json.loads(raw)
+        # T3 occasionally returns malformed JSON (2026-11-03 run went red on one reply)
+        for attempt in range(1, _JSON_ATTEMPTS + 1):
+            raw = self._client.generate(
+                user, system=system, temperature=0.0, max_tokens=max_tokens, json_mode=True
+            )
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                if attempt == _JSON_ATTEMPTS:
+                    raise
+                logger.warning(f"T3 returned malformed JSON, retrying: {e}")
 
     def _extract(self, report_text: str) -> List[ExtractedClaim]:
         text = report_text[:_MAX_REPORT_CHARS]
