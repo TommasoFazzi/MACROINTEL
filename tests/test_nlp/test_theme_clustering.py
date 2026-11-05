@@ -11,8 +11,8 @@ Tested behaviors (tasks 3.5, 4.6, 5.4, 6.4):
   near-identity case and a case with one genuinely new cluster.
 - _run_hdbscan_shadow_and_score: degrades gracefully when unavailable (skip
   if actually available in this env — see skip marker).
-- detect_drift / count_consecutive_drift_signals: pure-logic threshold checks
-  via a stub DB connection (no real Postgres needed).
+- run_theme_clustering: re-fits on cadence only, always at k_current.
+- _is_refit_due / _read_previous_partition: query shape via a stub DB.
 
 DB-backed functions (_fetch_active_centroids, refit_with_warm_start's DB writes,
 write_*_shadow) are exercised only at the pure-logic boundary here — the actual
@@ -220,7 +220,7 @@ def test_hdbscan_shadow_runs_on_synthetic_clusters(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# detect_drift / count_consecutive_drift_signals (task 6.4)
+# Stub DB connection
 # ---------------------------------------------------------------------------
 
 class _FakeCursor:
@@ -265,86 +265,6 @@ class _FakeDB:
 
     def get_connection(self):
         return _FakeConn(self._cursor)
-
-
-class _Thresholds:
-    tcs_drop_ratio = 0.80
-    coherence_drop_ratio = 0.85
-    epr_drop_ratio = 0.80
-    churn_shift_ratio = 0.30
-
-
-class _DriftCfg:
-    baseline_window_days = 30
-    thresholds = _Thresholds()
-
-
-def test_detect_drift_no_history_returns_false():
-    cursor = _FakeCursor(fetchone_results=[None])
-    db = _FakeDB(cursor)
-    result = tc.detect_drift(db, _DriftCfg())
-    assert result["drift"] is False
-    assert result["reasons"] == []
-
-
-def test_detect_drift_flags_tcs_drop():
-    # latest tcs=0.5, baseline p50=0.8 -> 0.5 < 0.8*0.8=0.64 -> drift on tcs
-    cursor = _FakeCursor(fetchone_results=[
-        (0.5, 0.6, 0.9),      # latest row
-        (0.8, 0.65, 0.9),     # baseline row (tcs_p50, coh_p50, epr_p50)
-    ])
-    db = _FakeDB(cursor)
-    result = tc.detect_drift(db, _DriftCfg())
-    assert result["drift"] is True
-    assert "tcs_drop" in result["reasons"]
-    assert "epr_drop" not in result["reasons"]
-
-
-def test_detect_drift_no_drift_when_within_threshold():
-    cursor = _FakeCursor(fetchone_results=[
-        (0.79, 0.6, 0.9),
-        (0.8, 0.6, 0.9),
-    ])
-    db = _FakeDB(cursor)
-    result = tc.detect_drift(db, _DriftCfg())
-    assert result["drift"] is False
-
-
-def test_count_consecutive_drift_signals_stops_at_first_clean_run():
-    cursor = _FakeCursor(fetchall_results=[[
-        ({"drift": True},),
-        ({"drift": True},),
-        ({"drift": False},),
-        ({"drift": True},),
-    ]])
-    db = _FakeDB(cursor)
-    assert tc.count_consecutive_drift_signals(db) == 2
-
-
-def test_count_consecutive_drift_signals_zero_when_latest_clean():
-    cursor = _FakeCursor(fetchall_results=[[
-        ({"drift": False},),
-        ({"drift": True},),
-    ]])
-    db = _FakeDB(cursor)
-    assert tc.count_consecutive_drift_signals(db) == 0
-
-
-def test_count_consecutive_drift_signals_filters_on_drift_signals_not_pipeline_step():
-    """Regression test (2026-10-08): the query must filter on
-    `drift_signals IS NOT NULL`, not `pipeline_step = 'community_detection'`.
-    Louvain's own rows always have drift_signals=NULL but share the same
-    pipeline_step value as theme_clustering's rows — filtering on
-    pipeline_step alone would interleave Louvain's NULL rows into the
-    ORDER BY ts DESC sequence and break the consecutive-count loop after at
-    most 1 row, making the documented ">=2 consecutive" check unreachable.
-    """
-    cursor = _FakeCursor(fetchall_results=[[]])
-    db = _FakeDB(cursor)
-    tc.count_consecutive_drift_signals(db)
-    query, _params = cursor.queries[0]
-    assert "drift_signals is not null" in query.lower()
-    assert "pipeline_step" not in query.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +323,57 @@ def test_is_refit_due_false_within_cadence():
     ])
     db = _FakeDB(cursor)
     assert tc._is_refit_due(db, refit_cadence_days=7) is False
+
+
+# ---------------------------------------------------------------------------
+# run_theme_clustering: cadence-only re-fit at fixed k (2026-11-04)
+# ---------------------------------------------------------------------------
+
+def _stub_run(monkeypatch, refit_due):
+    """Stub every DB-backed step of run_theme_clustering; return the k values
+    the re-fit received and a flag set if the daily path ran."""
+    calls = {"refit_k": [], "daily": False}
+
+    def _refit(db, ids, k, **kwargs):
+        calls["refit_k"].append(k)
+        return {"name": "kmeans_embedding", "partition_persistent_id": {1: 1}}
+
+    def _daily(*args, **kwargs):
+        calls["daily"] = True
+        return {1: 1}
+
+    monkeypatch.setattr(tc, "DatabaseManager", lambda: None)
+    monkeypatch.setattr(tc, "_active_storyline_ids", lambda db: [1, 2])
+    monkeypatch.setattr(tc, "_fetch_storyline_embeddings", lambda db, ids: ({}, {}))
+    monkeypatch.setattr(tc, "_is_refit_due", lambda db, days: refit_due)
+    monkeypatch.setattr(tc, "_read_previous_partition", lambda db, name: None)
+    monkeypatch.setattr(tc, "refit_with_warm_start", _refit)
+    monkeypatch.setattr(tc, "assign_storylines_nearest_centroid", _daily)
+    monkeypatch.setattr(tc, "_run_hdbscan_shadow_and_score", lambda *a, **kw: ({}, {}))
+    monkeypatch.setattr(tc, "_fetch_live_community_ids", lambda db, ids: {})
+    monkeypatch.setattr(tc, "_persist_run_metrics", lambda *a, **kw: None)
+    return calls
+
+
+def test_run_refits_at_k_current_when_cadence_elapsed(monkeypatch):
+    from src.nlp.config import load_clustering_config
+
+    calls = _stub_run(monkeypatch, refit_due=True)
+    stats = tc.run_theme_clustering(dry_run=True)
+    assert calls["refit_k"] == [load_clustering_config().theme_clustering.k_current]
+    assert calls["daily"] is False
+    assert "shadow_partitions" in stats
+
+
+def test_run_takes_daily_path_within_cadence(monkeypatch):
+    """Regression test (2026-11-04): metrics in narrative_run_metrics must not
+    trigger a re-fit. detect_drift read Louvain's rows and re-fit almost daily."""
+    calls = _stub_run(monkeypatch, refit_due=False)
+    stats = tc.run_theme_clustering(dry_run=True)
+    assert calls["refit_k"] == []
+    assert calls["daily"] is True
+    assert "shadow_partitions" not in stats
+    assert "drift_signals" not in stats
 
 
 # ---------------------------------------------------------------------------

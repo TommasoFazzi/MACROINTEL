@@ -33,7 +33,6 @@ def _reset_config_cache():
 def test_theme_clustering_defaults():
     cfg = NarrativeClusteringConfig()
     assert cfg.theme_clustering.k_current == 12
-    assert cfg.theme_clustering.k_sweep_range == [10, 30]
     assert cfg.theme_clustering.warm_start is True
     assert cfg.theme_clustering.outlier_threshold == 0.15
     assert cfg.theme_clustering.refit_cadence_days == 7
@@ -69,7 +68,6 @@ def test_theme_clustering_yaml_round_trip(tmp_path: Path):
         """
         theme_clustering:
           k_current: 22
-          k_sweep_range: [15, 35]
           warm_start: false
           outlier_threshold: 0.2
           refit_cadence_days: 14
@@ -91,7 +89,6 @@ def test_theme_clustering_yaml_round_trip(tmp_path: Path):
     cfg = load_clustering_config(path=config_path, force_reload=True)
 
     assert cfg.theme_clustering.k_current == 22
-    assert cfg.theme_clustering.k_sweep_range == [15, 35]
     assert cfg.theme_clustering.warm_start is False
     assert cfg.theme_clustering.outlier_threshold == 0.2
     assert cfg.theme_clustering.refit_cadence_days == 14
