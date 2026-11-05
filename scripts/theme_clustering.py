@@ -10,7 +10,7 @@ stability architecture (design.md § Decision 2):
     DAILY (every pipeline run):    nearest-centroid assignment against the
                                     active centroids in `narrative_themes` —
                                     no re-clustering, O(n_new * k), deterministic.
-    PERIODIC (weekly or on drift): full k-means re-fit with warm-start (init
+    PERIODIC (weekly, fixed k):    full k-means re-fit with warm-start (init
                                     from the previous active centroids) +
                                     Hungarian matching for cross-run lineage.
                                     HDBSCAN runs in parallel as a permanent
@@ -671,130 +671,6 @@ def _fetch_live_community_ids(db: DatabaseManager, storyline_ids: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Drift detection + retune trigger (tasks 6.1-6.3)
-# ---------------------------------------------------------------------------
-
-def detect_drift(db: DatabaseManager, cfg_drift, baseline_window_days: Optional[int] = None) -> dict:
-    """Compare the latest community_detection run's metrics against the rolling
-    p50/30d baseline in narrative_run_metrics (design.md § Decision 5).
-
-    Returns {"drift": bool, "reasons": [str, ...], "latest": dict, "baseline": dict}.
-    No history / not enough rows -> drift=False (nothing to compare against yet).
-    """
-    window_days = baseline_window_days or cfg_drift.baseline_window_days
-    with db.get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT tcs, community_coherence_med, epr
-                FROM narrative_run_metrics
-                WHERE pipeline_step = 'community_detection'
-                ORDER BY ts DESC LIMIT 1
-                """
-            )
-            latest_row = cur.fetchone()
-            if latest_row is None:
-                return {"drift": False, "reasons": [], "latest": {}, "baseline": {}}
-
-            cur.execute(
-                """
-                SELECT
-                    percentile_cont(0.5) WITHIN GROUP (ORDER BY tcs) AS tcs_p50,
-                    percentile_cont(0.5) WITHIN GROUP (ORDER BY community_coherence_med) AS coh_p50,
-                    percentile_cont(0.5) WITHIN GROUP (ORDER BY epr) AS epr_p50
-                FROM narrative_run_metrics
-                WHERE pipeline_step = 'community_detection'
-                  AND ts >= NOW() - (%s || ' days')::interval
-                """,
-                (window_days,),
-            )
-            baseline_row = cur.fetchone()
-
-    latest = {"tcs": latest_row[0], "coherence_med": latest_row[1], "epr": latest_row[2]}
-    baseline = {"tcs_p50": baseline_row[0], "coherence_med_p50": baseline_row[1], "epr_p50": baseline_row[2]}
-
-    reasons = []
-    th = cfg_drift.thresholds
-    if latest["tcs"] is not None and baseline["tcs_p50"]:
-        if latest["tcs"] < th.tcs_drop_ratio * baseline["tcs_p50"]:
-            reasons.append("tcs_drop")
-    if latest["coherence_med"] is not None and baseline["coherence_med_p50"]:
-        if latest["coherence_med"] < th.coherence_drop_ratio * baseline["coherence_med_p50"]:
-            reasons.append("coherence_drop")
-    if latest["epr"] is not None and baseline["epr_p50"]:
-        if latest["epr"] < th.epr_drop_ratio * baseline["epr_p50"]:
-            reasons.append("epr_drop")
-
-    return {"drift": bool(reasons), "reasons": reasons, "latest": latest, "baseline": baseline}
-
-
-def count_consecutive_drift_signals(db: DatabaseManager) -> int:
-    """Count how many of the most recent theme_clustering.py runs (starting
-    from the latest) had drift_signals populated with a non-empty reasons list.
-
-    Used by the retune-k trigger (design.md § Decision 5): k-retune fires only
-    on >=2 consecutive drift-flagged runs, not on a single isolated one.
-
-    Filters on `drift_signals IS NOT NULL`, NOT on `pipeline_step` (which is
-    hardcoded to "community_detection" for every caller of
-    _persist_run_metrics, including Louvain's own rows — see design.md
-    Decision 6a in clustering-shadow-metrics-umap). Louvain never sets
-    drift_signals, so filtering on pipeline_step alone would interleave
-    Louvain's always-NULL rows between theme_clustering's own, breaking the
-    loop after at most 1 row and making ">=2 consecutive" unreachable —
-    fixed 2026-10-08 (found while investigating 2 months of near-zero
-    k-retune activity post the 2026-08-12 drift_signals persistence fix).
-    """
-    with db.get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT drift_signals FROM narrative_run_metrics
-                WHERE drift_signals IS NOT NULL
-                ORDER BY ts DESC LIMIT 10
-                """
-            )
-            rows = cur.fetchall()
-
-    count = 0
-    for (drift_signals,) in rows:
-        if drift_signals and drift_signals.get("drift"):
-            count += 1
-        else:
-            break
-    return count
-
-
-def sweep_k_for_best_silhouette(
-    db: DatabaseManager,
-    storyline_ids: list,
-    k_sweep_range: list,
-    embedding_cache: tuple | None = None,
-) -> int:
-    """Silhouette-sweep over k_sweep_range (design.md § Decision 5), used only
-    when drift persists for >=2 consecutive re-fits. Returns the k with the
-    best silhouette score (ties broken by smaller k).
-    """
-    if embedding_cache is not None:
-        current_by_id, _ = embedding_cache
-    else:
-        current_by_id, _ = _fetch_storyline_embeddings(db, storyline_ids)
-
-    best_k, best_sil = k_sweep_range[0], float("-inf")
-    for k in range(k_sweep_range[0], k_sweep_range[1] + 1):
-        if k >= len(current_by_id):
-            continue
-        _, score = _run_kmeans_embedding_and_score(
-            db, storyline_ids, k=k, init=None, embedding_cache=(current_by_id, {}),
-        )
-        sil = score.get("silhouette")
-        if sil is not None and sil > best_sil:
-            best_sil = sil
-            best_k = k
-    return best_k
-
-
-# ---------------------------------------------------------------------------
 # LLM naming — same mechanism, new input (tasks 7.1-7.3)
 # ---------------------------------------------------------------------------
 
@@ -885,8 +761,8 @@ def run_theme_clustering(
               directly (design.md § Migration Plan step 5, tasks.md 8.5).
 
     Dispatches daily nearest-centroid assignment vs periodic warm-start re-fit
-    based on theme_clustering.refit_cadence_days and detect_drift() — mirrors
-    the two-tier architecture in design.md § Decision 2.
+    based on theme_clustering.refit_cadence_days — mirrors the two-tier
+    architecture in design.md § Decision 2.
     """
     from src.nlp.config import load_clustering_config
     cfg = load_clustering_config()
@@ -905,24 +781,14 @@ def run_theme_clustering(
         "promoted": promoted,
     }
 
-    drift_result = detect_drift(db, cfg.drift_detection)
-    refit_due = _is_refit_due(db, theme_cfg.refit_cadence_days) or drift_result["drift"]
-    stats["drift_signals"] = drift_result
-
+    # Re-fit on cadence only, always at k_current. The drift trigger and the
+    # silhouette k-retune were removed 2026-11-04: detect_drift read Louvain's
+    # tcs/coherence (k-means rows never store them), so it fired almost daily,
+    # and each drift re-fit let the silhouette sweep override the label-chosen
+    # k=12 (11-18 over two weeks). k changes only through a labelled evaluation.
+    refit_due = _is_refit_due(db, theme_cfg.refit_cadence_days)
     k = theme_cfg.k_current
     if refit_due:
-        # Retune k only when drift has persisted >=2 consecutive re-fits
-        # (design.md § Decision 5) — a single isolated drift keeps k fixed.
-        # count_consecutive_drift_signals() is called BEFORE today's own row
-        # is persisted, so it counts PRIOR consecutive drift-flagged runs
-        # only (not today) — threshold >=1 prior + today's own drift_result
-        # being True == >=2 consecutive total. Not an off-by-one bug.
-        if drift_result["drift"] and count_consecutive_drift_signals(db) >= 1:
-            k = sweep_k_for_best_silhouette(
-                db, storyline_ids, theme_cfg.k_sweep_range, embedding_cache=embedding_cache,
-            )
-            logger.info("Drift persisted >=2 runs — retuned k to %d", k)
-
         # Read previous re-fits' partitions BEFORE this run's row is persisted
         # (task 3.1) — must happen before _persist_run_metrics at the end of
         # this function inserts the current run's shadow_partitions.
@@ -1066,7 +932,7 @@ def main():
     print(f"Storylines (active):    {stats['storylines_total']}")
     print(f"Communities found:      {stats.get('n_communities', 'N/A')}")
     print(f"Silhouette:             {stats.get('silhouette', 'N/A')}")
-    print(f"Drift detected:         {stats['drift_signals']['drift']} ({stats['drift_signals']['reasons']})")
+    print(f"Periodic re-fit:        {'shadow_partitions' in stats}")
     print(f"Themes named:           {stats.get('themes_named', 'N/A (daily path or dry-run)')}")
     if args.dry_run:
         print("\n[DRY RUN] No changes written to database.")

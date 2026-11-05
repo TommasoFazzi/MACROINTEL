@@ -1330,11 +1330,8 @@ def _persist_run_metrics(db: DatabaseManager, stats: dict, dry_run: bool) -> Non
         stats.get("runtime_seconds"),
         stats.get("backbone_weight_p50"),
         stats.get("backbone_weight_p75"),
-        # migration 043 defines this column but it was never wired into the
-        # INSERT — _is_refit_due()/count_consecutive_drift_signals() in
-        # theme_clustering.py query it and silently always saw NULL, so
-        # refit_due was permanently stuck True (bootstrap fallback) and
-        # k-retune could never fire. Fixed 2026-08-12.
+        # migration 043. theme_clustering.py stopped setting it on 2026-11-04
+        # (drift trigger removed), so new rows write NULL; older rows keep it.
         Json(stats["drift_signals"]) if stats.get("drift_signals") is not None else None,
     ]
 

@@ -150,7 +150,6 @@ class HDBSCANShadowConfig(_StrictBase):
 
 class ThemeClusteringConfig(_StrictBase):
     k_current: int = 12
-    k_sweep_range: List[int] = Field(default_factory=lambda: [10, 30])
     warm_start: bool = True
     outlier_threshold: float = 0.15
     refit_cadence_days: int = 7
@@ -187,19 +186,6 @@ class CommunityLineageConfig(_StrictBase):
     inclusion_override: float = 0.60
 
 
-class DriftThresholds(_StrictBase):
-    tcs_drop_ratio: float = 0.80
-    coherence_drop_ratio: float = 0.85
-    epr_drop_ratio: float = 0.80
-    churn_shift_ratio: float = 0.30
-
-
-class DriftDetectionConfig(_StrictBase):
-    enabled: bool = True
-    baseline_window_days: int = 30
-    thresholds: DriftThresholds = Field(default_factory=DriftThresholds)
-
-
 class BaselineMetrics(_StrictBase):
     tcs_p50_30d: Optional[float] = None
     coherence_med_p50_30d: Optional[float] = None
@@ -228,7 +214,6 @@ class NarrativeClusteringConfig(_StrictBase):
     summary_cache: SummaryCacheConfig = Field(default_factory=SummaryCacheConfig)
     source_diversity: SourceDiversityConfig = Field(default_factory=SourceDiversityConfig)
     community_lineage: CommunityLineageConfig = Field(default_factory=CommunityLineageConfig)
-    drift_detection: DriftDetectionConfig = Field(default_factory=DriftDetectionConfig)
     meta: MetaConfig = Field(default_factory=MetaConfig)
 
 
