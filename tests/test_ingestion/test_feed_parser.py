@@ -415,3 +415,19 @@ def test_listing_link_filter_applies_before_any_cap():
     assert items[0]['link'] == 'https://www.csis.org/analysis/item-0'
     assert items[0]['title'] == 'Item 0'  # empty image link skipped, titled link kept
     assert all(a['scraped'] and a['extraction_method'] == 'fallback_scraper' for a in items)
+
+
+@pytest.mark.unit
+def test_times_of_israel_filter_keeps_headlines_only():
+    """Homepage hrefs are absolute; section links and the daily liveblog must not become articles."""
+    from bs4 import BeautifulSoup
+    from src.ingestion.feed_parser import FALLBACK_SCRAPERS
+    base = 'https://www.timesofisrael.com'
+    links = ['/signup/', '/real-estate-israel-edition/', '/israel-and-the-region/', '/liveblog-november-5-2026/',
+             '/writers/some-long-author-name-here-now/', '/how-democrats-could-stop-trumps-war-in-iran/']
+    html = ''.join(f'<a href="{base}{path}">Title</a>' for path in links)
+    soup = BeautifulSoup(html, 'html.parser')
+
+    items = FeedParser._articles_from_listing(soup, FALLBACK_SCRAPERS['Times of Israel'], 'Times of Israel')
+
+    assert [a['link'] for a in items] == [f'{base}/how-democrats-could-stop-trumps-war-in-iran/']

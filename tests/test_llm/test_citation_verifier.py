@@ -53,6 +53,22 @@ def test_supported_claim_not_flagged():
     assert "Excerpt 3: X announced Y." in t3.judge_prompts[0]  # evidence = exact excerpt
 
 
+def test_malformed_json_is_retried_once():
+    client = MagicMock()
+    client.generate.side_effect = ['{"claims": [,]}', json.dumps({"claims": []})]
+    result = CitationVerifier(client=client).verify("No claims.", CONTEXT)
+    assert client.generate.call_count == 2
+    assert sum(result.verdict_counts.values()) == 0
+
+
+def test_malformed_json_twice_raises():
+    client = MagicMock()
+    client.generate.return_value = '{"claims": [,]}'
+    with pytest.raises(json.JSONDecodeError):
+        CitationVerifier(client=client).verify("No claims.", CONTEXT)
+    assert client.generate.call_count == 2
+
+
 def test_specific_beyond_source_is_flagged():
     t3 = FakeT3([_claim("X announced a $4B deal", a=[2])], verdict_for=lambda c: "PARTIAL")
     result = CitationVerifier(client=t3).verify("...", CONTEXT)

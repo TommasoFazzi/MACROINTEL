@@ -137,6 +137,19 @@ FALLBACK_SCRAPERS = {
         'scrapling_tier': 1,
         'link_based': True,
     },
+    'Times of Israel': {
+        # RSS answers locally but the GitHub runner gets an HTML page (0 entries since 2026-07).
+        # Homepage hrefs are absolute. Four or more hyphens keeps headline slugs and
+        # drops section links (/real-estate-israel-edition/, /israel-and-the-region/).
+        'url': 'https://www.timesofisrael.com/',
+        'selector': 'a[href]',
+        'link_based': True,
+        'needs_scrapling': True,
+        'scrapling_tier': 1,
+        'link_filter': r'^https://www\.timesofisrael\.com/(?:[a-z0-9]+-){4,}[a-z0-9]+/$',
+        'category': 'intelligence',
+        'subcategory': 'middle_east',
+    },
     "King's College War Studies": {
         # KCL news page (SSR, standard HTML). Articles at /news/{slug}.
         # Filter excludes category filter links (/news/kings-news?cat=...) and
