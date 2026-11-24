@@ -46,7 +46,7 @@ from scripts.pipeline_manifest import create_manifest, cleanup_old_manifests
 
 # Exit code meaning "completed but degraded" (scripts/generate_report.py: report
 # saved, but signals/condensation/verifier failed). The step counts as completed
-# — later steps and delivery still run — but the pipeline ends non-zero.
+# — later steps still run — but the pipeline ends non-zero.
 EXIT_DEGRADED = 3
 
 
@@ -224,13 +224,6 @@ DEFAULT_STEPS = [
         description="Generazione report giornaliero Romania",
         timeout_seconds=600,  # 10 min — no macro-first LLM analysis
         continue_on_failure=True  # Romania report non blocca la pipeline globale
-    ),
-    PipelineStep(
-        name="send_report_email",
-        command="python scripts/send_report_email.py",
-        description="Invio report via email (markdown→HTML+PDF → Brevo SMTP)",
-        timeout_seconds=120,  # 2 min
-        continue_on_failure=True  # Email non blocca la pipeline
     ),
 ]
 
@@ -579,21 +572,6 @@ class DailyPipeline:
                 self.logger.info("")
                 self.logger.info(f"Skipping monthly recap ({weekly_count}/4 weekly reports since last recap)")
 
-            # Step 8: Send weekly/recap email (after all Sunday reports are generated)
-            report_types = "weekly,recap" if should_recap else "weekly"
-            send_weekly_email_step = PipelineStep(
-                name="send_weekly_email",
-                command=f"python scripts/send_report_email.py --report-types {report_types}",
-                description="Invio email settimanale (weekly + recap se disponibile)",
-                timeout_seconds=120,
-                continue_on_failure=True,
-            )
-            self.logger.info("")
-            self.logger.info(f"[STEP 8] {send_weekly_email_step.name}")
-            weekly_email_result = self._execute_step(send_weekly_email_step)
-            step_results.append(weekly_email_result)
-            emoji = "✓" if weekly_email_result.success else "✗"
-            self.logger.info(f"[STEP 8] {emoji} {send_weekly_email_step.name} ({weekly_email_result.duration_seconds:.1f}s)")
         else:
             self.logger.info("")
             self.logger.info("Skipping weekly/monthly reports (not Sunday)")
@@ -801,7 +779,7 @@ class DailyPipeline:
         return "DEGRADED" if result.error is None and result.degraded_steps else "FAILED"
 
     def _send_notification(self, result: PipelineResult):
-        """Send pipeline notification (cross-platform)."""
+        """Show a desktop notification (macOS local runs; no-op on Linux/CI)."""
         notify_on_success = os.getenv("PIPELINE_NOTIFY_ON_SUCCESS", "true").lower() == "true"
         notify_on_failure = os.getenv("PIPELINE_NOTIFY_ON_FAILURE", "true").lower() == "true"
 
@@ -819,14 +797,6 @@ class DailyPipeline:
         else:
             message = f"Pipeline FAILED at step {result.steps_completed + 1}"
 
-        # Try email notification first (production / Linux)
-        smtp_host = os.getenv("SMTP_HOST")
-        notify_email = os.getenv("NOTIFY_EMAIL")
-        if smtp_host and notify_email:
-            self._send_email_notification(title, message, smtp_host, notify_email)
-            return
-
-        # Fallback to macOS desktop notification (local dev)
         try:
             subprocess.run(
                 ["terminal-notifier", "-title", title, "-message", message, "-sound", "default"],
@@ -844,33 +814,6 @@ class DailyPipeline:
                 pass
         except Exception:
             pass
-
-    def _send_email_notification(self, subject: str, body: str, smtp_host: str, to_email: str):
-        """Send email notification for production deployments."""
-        import smtplib
-        from email.message import EmailMessage
-
-        try:
-            msg = EmailMessage()
-            msg['Subject'] = subject
-            msg['From'] = os.getenv("SMTP_FROM", "pipeline@intelligence-ita.com")
-            msg['To'] = to_email
-            msg.set_content(body)
-
-            smtp_port = int(os.getenv("SMTP_PORT", "587"))
-            smtp_user = os.getenv("SMTP_USER", "")
-            smtp_pass = os.getenv("SMTP_PASS", "")
-
-            with smtplib.SMTP(smtp_host, smtp_port) as s:
-                if smtp_port != 25:
-                    s.starttls()
-                if smtp_user:
-                    s.login(smtp_user, smtp_pass)
-                s.send_message(msg)
-
-            self.logger.info(f"Notification email sent to {to_email}")
-        except Exception as e:
-            self.logger.warning(f"Failed to send email notification: {e}")
 
     def _cleanup_old_logs(self, max_days: int = None):
         """Rimuove log files piu vecchi di max_days."""
@@ -923,7 +866,6 @@ Steps (see DEFAULT_STEPS — market data is NOT here, it runs in the evening wor
      9. refresh_map_data       - Refresh map + intelligence scores
     10. generate_report        - Generate daily report
     11. generate_romania_report- Romania daily report
-    12. send_report_email      - Email delivery
     Conditional: weekly_report (Sundays), monthly_recap (after 4 weekly reports)
         """
     )

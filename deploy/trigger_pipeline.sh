@@ -24,7 +24,7 @@ read_env_var() {
   grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' || true
 }
 
-# Best-effort ops alert over the Brevo SMTP relay already configured for reports.
+# Best-effort ops alert over the Brevo SMTP relay (its only user: reports are not emailed).
 # Never allowed to mask the underlying failure, hence the `|| true` at the call site.
 notify_failure() {
   local reason="$1" detail="${2:-}"

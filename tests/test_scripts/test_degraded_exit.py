@@ -1,4 +1,4 @@
-"""Degraded exit path: generate_report.py exits 3, daily_pipeline.py keeps delivering and ends red."""
+"""Degraded exit path: generate_report.py exits 3, daily_pipeline.py runs the later steps and ends red."""
 import logging
 import sys
 from unittest.mock import MagicMock
@@ -74,16 +74,14 @@ def pipeline_factory(tmp_path, monkeypatch):
     return make
 
 
-def test_degraded_report_still_delivers_and_ends_red(pipeline_factory):
+def test_degraded_report_runs_later_steps_and_ends_red(pipeline_factory):
     pipeline = pipeline_factory([
         _step("generate_report", dp.EXIT_DEGRADED),
         _step("generate_romania_report", 0, continue_on_failure=True),
-        _step("send_report_email", 0, continue_on_failure=True),
     ])
     result = pipeline.run()
 
-    assert [r.step_name for r in result.step_results] == [
-        "generate_report", "generate_romania_report", "send_report_email"]
+    assert [r.step_name for r in result.step_results] == ["generate_report", "generate_romania_report"]
     assert result.step_results[0].success and result.step_results[0].degraded
     assert result.degraded_steps == ["generate_report"]
     assert result.success is False
@@ -93,7 +91,7 @@ def test_degraded_report_still_delivers_and_ends_red(pipeline_factory):
 
 
 def test_healthy_run_unchanged(pipeline_factory):
-    pipeline = pipeline_factory([_step("generate_report", 0), _step("send_report_email", 0)])
+    pipeline = pipeline_factory([_step("generate_report", 0), _step("generate_romania_report", 0)])
     result = pipeline.run()
     assert result.success is True
     assert result.degraded_steps == []
@@ -102,7 +100,7 @@ def test_healthy_run_unchanged(pipeline_factory):
 def test_hard_failure_still_stops(pipeline_factory):
     pipeline = pipeline_factory([
         _step("generate_report", 1),
-        _step("send_report_email", 0, continue_on_failure=True),
+        _step("generate_romania_report", 0, continue_on_failure=True),
     ])
     result = pipeline.run()
     assert [r.step_name for r in result.step_results] == ["generate_report"]
@@ -119,3 +117,28 @@ def test_main_exits_1_when_degraded(monkeypatch):
     monkeypatch.setattr(dp, "DailyPipeline", MagicMock(return_value=fake))
     monkeypatch.setattr(sys, "argv", ["daily_pipeline.py"])
     assert dp.main() == 1
+
+
+# ---------------------------------------------------------------------------
+# Reports are never emailed automatically
+# ---------------------------------------------------------------------------
+
+def test_no_daily_step_sends_email():
+    assert not [s.name for s in dp.DEFAULT_STEPS if "email" in s.name or "email" in s.command]
+
+
+@pytest.mark.parametrize("recap_due, expected", [
+    (False, ["weekly_report"]),
+    (True, ["weekly_report", "monthly_recap"]),
+])
+def test_sunday_steps_send_no_email(pipeline_factory, monkeypatch, recap_due, expected):
+    monkeypatch.setattr(dp, "is_sunday", lambda: True)
+    monkeypatch.setattr(dp, "should_generate_monthly_recap", lambda: (recap_due, 4 if recap_due else 1))
+    pipeline = pipeline_factory([_step("generate_report", 0)])
+    del pipeline._run_conditional_steps  # drop the fixture's mock, run the real method
+    pipeline._execute_step = MagicMock(side_effect=lambda s: dp.StepResult(s.name, True, 0))
+
+    results = []
+    pipeline._run_conditional_steps(results)
+
+    assert [r.step_name for r in results] == expected

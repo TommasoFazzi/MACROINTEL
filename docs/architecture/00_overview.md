@@ -38,7 +38,7 @@ C4Container
     Container(frontend, "Next.js 16", "TypeScript 5 / React 19 / Tailwind CSS 4", "Public routes: Landing, Insights, Dashboard, Map, Stories, Oracle")
     Container(backend, "FastAPI", "Python 3.12 / uvicorn", "9 REST routers + Oracle 2.0 agentic engine (Claude Sonnet 4.6)")
     ContainerDb(db, "PostgreSQL 17 + pgvector + PostGIS", "psycopg2 connection pool", "Articles, storylines, reports, macro indicators + regimes, entities, sanctions, narrative themes")
-    Container(pipeline, "Daily Pipeline", "Python scripts (GitHub Actions 08:00 UTC)", "12-step orchestrator: ingest → NLP → narratives → clustering (live+shadow) → geocoding → reports → email")
+    Container(pipeline, "Daily Pipeline", "Python scripts (GitHub Actions 08:00 UTC)", "11-step orchestrator: ingest → NLP → narratives → clustering (live+shadow) → geocoding → reports")
 
     Rel(analyst, nginx, "HTTPS :443")
     Rel(nginx, frontend, "Port 3000")

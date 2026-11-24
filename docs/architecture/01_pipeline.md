@@ -2,7 +2,7 @@
 
 Orchestrated by `scripts/daily_pipeline.py`. Triggered daily at 08:00 UTC via GitHub Actions (`.github/workflows/pipeline.yml`). Market data is fetched by a separate evening workflow (`evening_market_fetch.yml`, 21:30 UTC Mon–Fri, post-NYSE close) — morning reports read the previous session's close.
 
-## 12-Step Flow
+## 11-Step Flow
 
 ```mermaid
 flowchart TD
@@ -99,13 +99,7 @@ flowchart TD
     scripts/generate_report.py --report-type romania-daily
     Romania relevance scoring + RO macro header + 1-hop graph expansion"]
 
-    S10 --> S11
-
-    S11["**Step 12: Send Report Email** ⚠️ continue_on_failure
-    scripts/send_report_email.py
-    Markdown → HTML → PDF (weasyprint) → Brevo SMTP"]
-
-    S11 --> COND{Sunday?}
+    S10 --> COND{Sunday?}
     COND -- Yes --> WEEKLY["Weekly Report
     generate_weekly_report.py"]
     COND -- No --> DONE

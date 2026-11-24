@@ -27,7 +27,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Report saved, but signal extraction / condensation / verifier degraded.
-# daily_pipeline.py treats it as "completed but degraded": delivery continues,
+# daily_pipeline.py treats it as "completed but degraded": later steps continue,
 # the run still ends non-zero.
 EXIT_DEGRADED = 3
 

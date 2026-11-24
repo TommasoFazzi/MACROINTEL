@@ -1,12 +1,8 @@
-# Lista destinatari per il report giornaliero di Intelligence ITA.
-# Aggiungere/rimuovere voci qui; nessun riavvio necessario.
+# Recipients for scripts/send_report_email.py (manual only: no pipeline step calls it).
+# Empty on purpose: with no recipients the script aborts before contacting SMTP.
 #
-# Formato:
-#   - email: indirizzo@dominio.com
-#     name: Nome Opzionale
+# Format:
+#   - email: address@domain.com
+#     name: Optional Name
 
-recipients:
-  - email: montaale25@gmail.com
-    name: Alessandro
-  - email: montefabius@gmail.com
-    name: Fabio
+recipients: []
