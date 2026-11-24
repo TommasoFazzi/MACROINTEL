@@ -2,6 +2,10 @@
 """
 Send daily intelligence report(s) via email.
 
+NOT part of the pipeline: automatic sending was removed in 2026-11 and nothing
+calls this script. The code is kept for reference. To send by hand, add recipients
+to config/report_recipients.yaml and export the BREVO_* variables read below.
+
 Fetches today's reports from the database, converts markdown → HTML → PDF
 (weasyprint), and sends a single HTML email with PDF attachments to all
 configured recipients via Brevo SMTP relay.

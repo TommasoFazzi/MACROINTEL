@@ -162,7 +162,7 @@ INTELLIGENCE_ITA/
 │   │   └── streamlit_utils.py            # Streamlit HITL shared utilities
 │   └── utils/                            # Logging, ingestion stats, NER-aware stopwords
 ├── scripts/
-│   ├── daily_pipeline.py                 # Orchestrator: 12 core steps + weekly/monthly conditional
+│   ├── daily_pipeline.py                 # Orchestrator: 11 core steps + weekly/monthly conditional
 │   ├── process_nlp.py                    # NLP processing (--scope ceseo for Romania vertical)
 │   ├── load_to_database.py               # DB load + schema init
 │   ├── process_narratives.py             # Narrative Engine step
@@ -174,7 +174,7 @@ INTELLIGENCE_ITA/
 │   ├── refresh_map_data.py               # Refresh map cache + recompute intelligence scores
 │   ├── generate_report.py                # LLM report generation (global + Romania report types)
 │   ├── fetch_daily_market_data.py        # Macro fetch (evening workflow, post-NYSE close)
-│   ├── send_report_email.py              # Markdown → PDF → email dispatch (Brevo SMTP)
+│   ├── send_report_email.py              # Report email (manual only, not in the pipeline)
 │   ├── recompute_macro_derived.py        # Resync derived macro columns after backfills
 │   └── check_setup.py                    # System prerequisites check
 ├── migrations/                           # 43 incremental SQL files (through 046, applied via psql)
@@ -289,7 +289,7 @@ docker compose logs backend --tail 50
 python scripts/daily_pipeline.py
 ```
 
-Twelve core steps + two conditional:
+Eleven core steps + two conditional:
 
 | Step | Name | Description | On failure |
 |------|------|-------------|-----------|
@@ -304,9 +304,8 @@ Twelve core steps + two conditional:
 | 9 | `refresh_map_data` | Map cache invalidation + intelligence scores | Continue |
 | 10 | `generate_report` | Macro 2-call analysis + RAG + strategic report | Fail fast |
 | 11 | `generate_romania_report` | Romania vertical daily briefing | Continue |
-| 12 | `send_report_email` | Markdown → PDF → email (Brevo SMTP) | Continue |
-| 13* | `weekly_report` | Weekly meta-analysis | Sundays only |
-| 14* | `monthly_recap` | Monthly recap | After 4 weekly reports |
+| 12* | `weekly_report` | Weekly meta-analysis | Sundays only |
+| 13* | `monthly_recap` | Monthly recap | After 4 weekly reports |
 
 Market data is fetched separately by `evening_market_fetch.yml` (21:30 UTC, post-NYSE close); morning reports read the previous session's close.
 
@@ -472,7 +471,7 @@ quantitative KPI, both values are annotated with sources instead of silently pic
 4. Extract article-level signals with macro alignment score
 5. Verify citations: T3 judges each `[Article N]` / `[Storyline N]` claim against exactly what the writer saw, and writes `reports.metadata.faithfulness` (advisory only)
 
-If the report is saved but condensation, signal extraction (failure or 0 signals) or the verifier fails, `generate_report.py` exits **3** (degraded). The daily pipeline still delivers the email, then ends non-zero. The writer's full context (prompts, article excerpts, storylines, macro snapshot) is stored in `report_generation_context` (migration 048).
+If the report is saved but condensation, signal extraction (failure or 0 signals) or the verifier fails, `generate_report.py` exits **3** (degraded). The daily pipeline still runs the remaining steps, then ends non-zero. The writer's full context (prompts, article excerpts, storylines, macro snapshot) is stored in `report_generation_context` (migration 048).
 
 **Intelligence Score (0–100):**
 

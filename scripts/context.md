@@ -22,7 +22,7 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
 
 ### Pipeline Execution
 - `daily_pipeline.py` - **Orchestrator**: runs full pipeline in one command. `PipelineStep.retries_on_crash` re-runs a step killed by a signal (native crash, `is_native_crash`: exit < -1 or 129–159); only `ingestion` has it (1 retry, idempotent thanks to dedup). Ordinary failures and timeouts are not retried.
-  - **Core steps** (always run unless filtered): ingestion → nlp_processing → load_to_database → narrative_processing → community_detection (Louvain) → **theme_clustering_shadow** (k-means-on-embedding shadow, `continue_on_failure=True`, never writes live `community_id`) → entity_extraction → geocoding → refresh_map_data → generate_report → generate_romania_report → send_report_email (market_data step removed — now handled by evening workflow)
+  - **Core steps** (always run unless filtered): ingestion → nlp_processing → load_to_database → narrative_processing → community_detection (Louvain) → **theme_clustering_shadow** (k-means-on-embedding shadow, `continue_on_failure=True`, never writes live `community_id`) → entity_extraction → geocoding → refresh_map_data → generate_report → generate_romania_report (market_data step removed — now handled by evening workflow)
   - **Conditional steps** (run after core pipeline, if not `--skip-weekly`): weekly_report (Sundays only) → monthly_recap (after 4 weekly reports since last recap)
   - Default `generate_report` command: `python scripts/generate_report.py --macro-first --skip-article-signals`
   - `--dry-run` - Validate without executing
@@ -33,9 +33,9 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
   - **Auto weekly**: Runs on Sundays (after main pipeline succeeds)
   - **Auto monthly**: Runs after 4 weekly reports since last recap (DB-counted)
   - **narrative_processing** has `continue_on_failure=True` (report generated even if storylines fail)
-  - **Degraded steps** (`EXIT_DEGRADED = 3`): a step exiting 3 is recorded as `StepResult(success=True, degraded=True)`. Later steps (Romania, email) and the conditional weekly/monthly steps still run, but `PipelineResult.success` is False, so `main()` returns 1 and the GitHub Actions run goes red. The summary and notification list DEGRADED steps separately from FAILED ones. Only `generate_report.py --macro-first` uses exit 3 today.
+  - **Degraded steps** (`EXIT_DEGRADED = 3`): a step exiting 3 is recorded as `StepResult(success=True, degraded=True)`. Later steps (Romania) and the conditional weekly/monthly steps still run, but `PipelineResult.success` is False, so `main()` returns 1 and the GitHub Actions run goes red. The summary and notification list DEGRADED steps separately from FAILED ones. Only `generate_report.py --macro-first` uses exit 3 today.
   - Logs written to `logs/daily_pipeline_{run_id}.log`; old logs auto-cleaned after `PIPELINE_MAX_LOG_DAYS` (default 30)
-  - Notifications: macOS `osascript`/`terminal-notifier` locally; SMTP email in production (if `SMTP_HOST` + `NOTIFY_EMAIL` env vars set)
+  - Notifications: macOS `terminal-notifier`/`osascript` on local runs only (`PIPELINE_NOTIFY_ON_SUCCESS`/`_ON_FAILURE`); no email is sent by the pipeline
 - `pipeline_status_check.py` - **Daily status checker**: runs at 9:00 AM via launchd (separate plist)
   - Checks if pipeline processes are still running (`ps aux` scan for pipeline keywords)
   - Finds today's most recent log file and scans last 30 lines for success/error keywords
@@ -49,11 +49,11 @@ Operational layer that orchestrates the core modules. Scripts tie together inges
   - `--dry-run` - Validate without DB writes
   - `--verbose` - Enable DEBUG logging
 - `load_to_database.py` - Load processed articles to PostgreSQL
-- `send_report_email.py` - **Email dispatch**: fetches today's reports from DB, converts markdown → HTML → PDF (weasyprint), sends a single HTML email with both PDF attachments to all recipients in `config/report_recipients.yaml` via Brevo SMTP.
+- `send_report_email.py` - **Report email, manual only** (automatic sending removed 2026-11; kept as code): fetches today's reports from DB, converts markdown → HTML → PDF (weasyprint), sends a single HTML email with both PDF attachments to all recipients in `config/report_recipients.yaml` via Brevo SMTP.
   - `--dry-run` - Render without sending (prints preview to log)
   - `--date YYYY-MM-DD` - Target date (default: today)
   - Env vars: `BREVO_SMTP_HOST/PORT/USER/PASS`, `BREVO_FROM_EMAIL/NAME`, `REPORT_GLOBAL_URL`, `REPORT_ROMANIA_URL`
-  - Called as step 11 in `daily_pipeline.py` (`continue_on_failure=True`)
+  - Not called by any pipeline step or workflow. `report_recipients.yaml` is empty, so the script aborts until recipients are added and `BREVO_*` are exported by hand
 - `generate_report.py` - Generate daily intelligence reports (now includes Storyline Tracker section)
   - `--macro-first` flag for serialized pipeline with trade signals
   - **Exit codes (`--macro-first`)**: 0 = healthy; 1 = hard failure (no report); **3 = `EXIT_DEGRADED`**: the report was saved but `degraded_reasons` is non-empty (`condensation_failed`, `signals_extraction_failed`, `signals_zero`, `verifier_failed`); each reason is logged at ERROR.
@@ -186,7 +186,6 @@ python scripts/geocode_geonames.py --limit 50
 python scripts/refresh_map_data.py
 python scripts/generate_report.py --macro-first --skip-article-signals
 python scripts/generate_report.py --report-type romania-daily
-python scripts/send_report_email.py
 
 # Refresh map data + intelligence scores (after narratives step)
 python scripts/refresh_map_data.py
